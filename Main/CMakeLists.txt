@@ -146,8 +146,9 @@ if(NOT ANDROID AND EXISTS "${CMAKE_SOURCE_DIR}/Library/mathc.c")
     target_link_libraries(mathc PRIVATE mathengine)
 
     add_custom_target(stdlib
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/precompiled"
         COMMAND mathc
-            "${CMAKE_SOURCE_DIR}/Library/stdlib.mathc"
+            "${CMAKE_SOURCE_DIR}/precompiled/stdlib.mathc"
             "${CMAKE_SOURCE_DIR}/Core/Headers/stdlib_precompiled.h"
             k_stdlib_mathc
             "${CMAKE_SOURCE_DIR}/Library/algebra.math"
@@ -165,10 +166,8 @@ if(NOT ANDROID AND EXISTS "${CMAKE_SOURCE_DIR}/Library/mathc.c")
             "${CMAKE_SOURCE_DIR}/Library/trig.math"
             "${CMAKE_SOURCE_DIR}/Library/units.math"
             "${CMAKE_SOURCE_DIR}/Library/vec.math"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/precompiled"
-        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/Library/stdlib.mathc" "${CMAKE_SOURCE_DIR}/precompiled/stdlib.mathc"
         DEPENDS mathc
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        COMMENT "Compiling & linking Library/*.math -> Library/stdlib.mathc, precompiled/stdlib.mathc & Core/Headers/stdlib_precompiled.h"
+        COMMENT "Compiling & linking Library/*.math -> precompiled/stdlib.mathc & Core/Headers/stdlib_precompiled.h"
     )
 endif()

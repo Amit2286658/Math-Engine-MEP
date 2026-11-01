@@ -131,7 +131,7 @@ Full details, every overload, and per-module catalogs:
 ```
 Main/Core/       engine core (parser, evaluator, compiler/linker, sessions,
                  snapshots, hardcode grammar layer, @-intrinsics registry)
-Main/Library/    the .math standard library + linked stdlib.mathc image
+Main/Library/    the .math standard library source files + mathc compiler
 Main/Test/       myapp CLI, 574-case test suite, user extension sample
 Main/docs/       the two deep references (architecture, language)
 Main/precompiled/ separated precompiled Android engine (arm64-v8a/libmathengine.so) + stdlib.mathc

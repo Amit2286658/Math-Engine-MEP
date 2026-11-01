@@ -1,19 +1,22 @@
 #!/bin/sh
-# Build precompiled/arm64-v8a/libmathengine.so (Android bionic, API 24)
-# and sync precompiled/stdlib.mathc.
-#
-# Usage:
-#   build_android_arm64.sh [NDK_TOOLCHAIN_BIN_DIR]
-# Default toolchain path: $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-*/bin
-#
-# Requires: CMakeLists.txt (sources list), NDK >= 27.
+# Recompile precompiled/arm64-v8a/libmathengine.so from the ground up
+# WITHOUT embedded stdlib (-DMATH_ENGINE_SEPARATE_STDLIB=1, ~287 KB stripped)
+# and link with -lm -ldl -lc for Android Bionic.
 set -eu
 
-NDK_BIN="${ANDROID_NDK_TOOLCHAIN_BIN:-}"
+NDK_BIN="${1:-${ANDROID_NDK_TOOLCHAIN_BIN:-}}"
 if [ -z "$NDK_BIN" ]; then
-    for cand in "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin \
-                "$(dirname "$(command -v clang 2>/dev/null || true)")"; do
-        if [ -x "$cand/clang" ]; then NDK_BIN="$cand"; break; fi
+    for cand in \
+        "${ANDROID_NDK_HOME:-}/toolchains/llvm/prebuilt/"*/bin \
+        "${ANDROID_NDK_ROOT:-}/toolchains/llvm/prebuilt/"*/bin \
+        "${ANDROID_HOME:-}/ndk/"*/toolchains/llvm/prebuilt/*/bin \
+        /opt/android_sdk/ndk/*/toolchains/llvm/prebuilt/*/bin \
+        "$(dirname "$(command -v aarch64-linux-android24-clang 2>/dev/null || command -v clang 2>/dev/null || true)")"
+    do
+        if [ -n "$cand" ] && [ -x "$cand/aarch64-linux-android24-clang" ]; then
+            NDK_BIN="$cand"
+            break
+        fi
     done
 fi
 [ -n "$NDK_BIN" ] || { echo "error: cannot locate NDK toolchain bin (set ANDROID_NDK_TOOLCHAIN_BIN)" >&2; exit 1; }
@@ -31,10 +34,9 @@ LD="$NDK_BIN/lld"
 
 INCS="-I$ROOT/Core/Headers -I$ROOT/Core/compile -I$ROOT/Core/session -I$ROOT/Core/jni -I$ROOT/Core/lib/delegate -I$ROOT/Core/lib/hardcode"
 
-# Build with -DMATH_ENGINE_SEPARATE_STDLIB=1 so k_stdlib_mathc is not duplicated
-# inside libmathengine.so; the app loads precompiled/stdlib.mathc separately.
-CFLAGS="-O2 -std=c11 -fPIC -fvisibility=hidden -fstack-protector-strong \
- -DANDROID -DMATH_ENGINE_SHARED=1 -DMATH_ENGINE_SEPARATE_STDLIB=1 -D_FORTIFY_SOURCE=2 -ffunction-sections"
+# -DMATH_ENGINE_SEPARATE_STDLIB=1 excludes k_stdlib_mathc from .rodata (~287 KB .so)
+CFLAGS="--sysroot=$NDK_BIN/../sysroot -O2 -std=c11 -fPIC -fvisibility=hidden -fstack-protector-strong \
+ -DANDROID -DMATH_ENGINE_SHARED=1 -DMATH_ENGINE_SEPARATE_STDLIB=1 -D_FORTIFY_SOURCE=2 -ffunction-sections -fdata-sections"
 
 rm -rf "$TMP"; mkdir -p "$TMP" "$OUT"
 
@@ -55,22 +57,16 @@ do
     echo "cc  $(basename "$src")"
 done
 
-# Link directly with lld (avoids the clang driver's cc1 re-spawn path, which
-# is problematic under qemu-user emulation hosts).
 "$LD" -flavor gnu -m aarch64linux \
     -shared --sysroot="$NDK_BIN/../sysroot" \
+    --gc-sections \
     -soname libmathengine.so \
     -o "$TMP/libmathengine.so" \
     -L"$NDK_BIN/../sysroot/usr/lib/$ARCH-linux-android/$API" \
-    -lm \
+    -lm -ldl -lc \
     $OBJS
 
 "$NDK_BIN/llvm-strip" "$TMP/libmathengine.so"
 mv "$TMP/libmathengine.so" "$OUT/libmathengine.so"
 rm -rf "$TMP"
-
-if [ -f "$ROOT/Library/stdlib.mathc" ]; then
-    cp "$ROOT/Library/stdlib.mathc" "$PRECOMPILED/stdlib.mathc"
-    echo "synced: $PRECOMPILED/stdlib.mathc"
-fi
-echo "built:  $OUT/libmathengine.so"
+echo "built:  $OUT/libmathengine.so ($(ls -lh "$OUT/libmathengine.so" | awk '{print $5}'))"

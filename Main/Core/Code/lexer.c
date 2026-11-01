@@ -326,13 +326,13 @@ void lex_next(Lexer *lex) {
     uint8_t best_syntax_tag = 0;
 
     for (uint16_t sid = 0; sid < tab->sym_count; ++sid) {
-        uint8_t syn_tag = sym_get_active_syntax(tab, sid);
-        bool    is_op   = sym_has_active_op(tab, sid);
-        if (!syn_tag && !is_op) continue;
-
         StrSlice s = tab->syms[sid];
         if (s.len == 0 || lex->pos + s.len > lex->len) continue;
         const char *s_ptr = mem_str_ptr(mem, s);
+        if (s_ptr[0] != lex->src[lex->pos]) continue;
+        uint8_t syn_tag = sym_get_active_syntax(tab, sid);
+        bool    is_op   = sym_has_active_op(tab, sid);
+        if (!syn_tag && !is_op) continue;
         if (memcmp(lex->src + lex->pos, s_ptr, s.len) == 0) {
             if (is_ascii_word(s_ptr, s.len)) {
                 if (ident_continues_at(lex->src, (uint16_t)(lex->pos + s.len), lex->len)) {
@@ -431,10 +431,12 @@ void lex_next(Lexer *lex) {
             if ((unsigned char)lex->src[lex->pos] >= 0x80 && lex->pos > start) {
                 bool sym_starts_here = false;
                 for (uint16_t sid = 0; sid < tab->sym_count; ++sid) {
-                    if (!sym_has_active_op(tab, sid) && !sym_get_active_syntax(tab, sid)) continue;
                     StrSlice s = tab->syms[sid];
-                    if (s.len > 0 && lex->pos + s.len <= lex->len &&
-                        memcmp(lex->src + lex->pos, mem_str_ptr(mem, s), s.len) == 0) {
+                    if (s.len == 0 || lex->pos + s.len > lex->len) continue;
+                    const char *s_ptr = mem_str_ptr(mem, s);
+                    if (s_ptr[0] != lex->src[lex->pos]) continue;
+                    if (!sym_has_active_op(tab, sid) && !sym_get_active_syntax(tab, sid)) continue;
+                    if (memcmp(lex->src + lex->pos, s_ptr, s.len) == 0) {
                         sym_starts_here = true;
                         break;
                     }

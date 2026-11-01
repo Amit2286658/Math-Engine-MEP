@@ -162,7 +162,6 @@ stdlib:
 		mkdir -p $(BUILD_DIR); \
 		$(CC) -std=c11 $(WARN_FLAGS) $(CFLAGS_OPT) $(SAN_FLAGS) \
 			$(INCLUDES) $(CORE_SRCS) Library/mathc.c -lm -o $(MATHC); \
-		./$(MATHC) Library/stdlib.mathc Core/Headers/stdlib_precompiled.h k_stdlib_mathc $(STDLIB_SOURCES); \
 		mkdir -p precompiled; \
-		cp Library/stdlib.mathc precompiled/stdlib.mathc; \
+		./$(MATHC) precompiled/stdlib.mathc Core/Headers/stdlib_precompiled.h k_stdlib_mathc $(STDLIB_SOURCES); \
 	fi

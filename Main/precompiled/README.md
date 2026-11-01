@@ -14,7 +14,7 @@ Drop-in precompiled artifacts for Android apps (`Ecalc`). The native C11 engine 
    ```console
    $ make stdlib
    ```
-   This compiles and links `Library/*.math` into `Library/stdlib.mathc`, copies it to `precompiled/stdlib.mathc`, and updates `Core/Headers/stdlib_precompiled.h` for the host CLI test suite.
+   This compiles and links `Library/*.math` directly into `precompiled/stdlib.mathc` (and updates `Core/Headers/stdlib_precompiled.h` for the host CLI test suite).
 
 2. **Rebuild `arm64-v8a/libmathengine.so` (after editing `Core/`):**
    ```console

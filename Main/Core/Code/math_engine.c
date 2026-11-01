@@ -34,7 +34,7 @@ bool eng_init(Engine *eng) {
 #if !defined(MATH_ENGINE_SEPARATE_STDLIB)
     return ext_load_mathc_mem(&eng->mem, &eng->sym, k_stdlib_mathc, sizeof(k_stdlib_mathc));
 #else
-    mem_err(&eng->mem, "Engine built with MATH_ENGINE_SEPARATE_STDLIB; load stdlib.mathc via eng_create_blank() + user_load_mathc()");
+    mem_err(&eng->mem, "Engine uses separate stdlib.mathc; initialize via nativeCreateBlank() + nativeLoadMathc()");
     return false;
 #endif
 }
