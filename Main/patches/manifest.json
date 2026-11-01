@@ -2,6 +2,11 @@
   "version": 1,
   "patches": [
     {
+      "file": "currency.math",
+      "sha256": "49ebf11f7fa56b4367c760d7bab66d1a8904c6ef578f60f6a669f5f9f03c39a9",
+      "size": 1882
+    },
+    {
       "file": "user_trig.math",
       "sha256": "4570b8086679c84876e8c26d5e99d21c8024aba65baeb07efb35520fbeca8753",
       "size": 672

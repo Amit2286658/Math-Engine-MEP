@@ -475,3 +475,200 @@ Java_com_mathengine_MathEngineBridge_nativeScratchPoolUsed(JNIEnv *env, jclass c
     if (!eng) return 0;
     return (jint)eng_scratch_pool_used(eng);
 }
+
+/* ============================================================================
+ * 11. HOST-BRIDGE EXTERNS (Kotlin / Java callback backed `@<name>(...)`)
+ * ============================================================================
+ * Lets Android apps back `.math` extension patches (e.g. the `[currency]`
+ * patch's `@currency_convert`) with app-side callbacks:
+ *
+ *   Kotlin: engine.registerExtern("currency_convert") { _, nums, strs ->
+ *       fxProvider.rateToUsd(strs.first()) * nums[0]
+ *   }
+ *
+ * The bridges callback (`ExternCallback.apply`) receives:
+ *   - `name`    : the `@` extern name that was invoked
+ *   - `numbers` : every numeric (real) argument, in call order
+ *   - `strings` : every string argument, in call order
+ * and must return the numeric result (`double`). `void` / unsupported
+ * argument types turn into `0.0` / `""` placeholders so arity stays stable. */
+
+#if defined(__has_include) && __has_include(<jni.h>)
+#define MEP_JNI_REAL_BRIDGE 1
+#include <pthread.h>
+#endif
+
+#define MEP_JNI_BRIDGE_MAX_ARGS 16
+#define MEP_JNI_JVM_OK 0
+
+#if defined(MEP_JNI_REAL_BRIDGE)
+typedef struct JniBridgeCtx {
+    JavaVM    *vm;
+    jobject    callback;
+    jmethodID  method;
+    char       ext_name[32];
+} JniBridgeCtx;
+#endif
+
+#if defined(MEP_JNI_REAL_BRIDGE)
+
+static bool jni_bridge_is_str(const MemArena *mem, Value v) {
+    uint16_t tid = val_get_type(mem, v);
+    return mem->str_type_id != 0 && tid == mem->str_type_id;
+}
+
+/* EngExternFn adapter: marshal engine args -> Java, invoke, unmarshal result. */
+static bool jni_bridge_cb(MemArena *mem, const SymTable *tab,
+                          const Value *args, uint8_t argc,
+                          void *user_ctx, Value *out_val) {
+    (void)tab;
+    JniBridgeCtx *ctx = (JniBridgeCtx *)user_ctx;
+    if (!ctx || !(ctx->vm)) {
+        mem_err(mem, "JNI extern bridge missing context");
+        return false;
+    }
+    JNIEnv *env = NULL;
+    if ((*ctx->vm)->GetEnv(ctx->vm, (void **)&env, JNI_VERSION_1_4) != MEP_JNI_JVM_OK || !env) {
+        mem_err(mem, "JNI extern bridge used outside a Java thread");
+        return false;
+    }
+
+    uint8_t num_count = 0;
+    uint8_t str_count = 0;
+    jdouble nums[MEP_JNI_BRIDGE_MAX_ARGS];
+    jstring strs[MEP_JNI_BRIDGE_MAX_ARGS];
+    memset(nums, 0, sizeof(nums));
+    memset(strs, 0, sizeof(strs));
+
+    bool ok = true;
+    for (uint8_t i = 0; i < argc && ok; ++i) {
+        uint16_t tid = val_get_type(mem, args[i]);
+        if (tid == MEM_TYPE_VOID) continue; /* 0.0 / "" placeholder already set */
+        if (jni_bridge_is_str(mem, args[i])) {
+            if (str_count >= MEP_JNI_BRIDGE_MAX_ARGS) {
+                mem_err(mem, "JNI extern bridge supports max %d string args",
+                        MEP_JNI_BRIDGE_MAX_ARGS);
+                return false;
+            }
+            StrSlice s = val_get_str(mem, args[i]);
+            size_t len = s.len < 224 ? s.len : 224;
+            char tmp[256];
+            if (len > 0) memcpy(tmp, mem_str_ptr(mem, s), len);
+            tmp[len] = '\0';
+            strs[str_count] = (*env)->NewStringUTF(env, tmp);
+            if ((*env)->ExceptionCheck(env) == JNI_TRUE) {
+                (*env)->ExceptionClear(env);
+                mem_err(mem, "JNI extern bridge: non-UTF-8 string argument '%.*s'",
+                        (int)(len < 60 ? len : 60), mem_str_ptr(mem, s));
+                ok = false;
+            } else {
+                str_count++;
+            }
+        } else if (tid == mem->fast_real_type) {
+            if (num_count >= MEP_JNI_BRIDGE_MAX_ARGS) {
+                mem_err(mem, "JNI extern bridge supports max %d numeric args",
+                        MEP_JNI_BRIDGE_MAX_ARGS);
+                return false;
+            }
+            nums[num_count++] = val_get_f64(mem, args[i]);
+        } else {
+            char tid_buf[32];
+            snprintf(tid_buf, sizeof(tid_buf), "%u", (unsigned)tid);
+            mem_err(mem, "JNI extern bridge: unsupported argument type id %s (numeric/string/void only)",
+                    tid_buf);
+            ok = false;
+        }
+    }
+
+    if (ok) {
+        jdoubleArray num_arr = (*env)->NewDoubleArray(env, (jsize)num_count);
+        if (num_arr && num_count > 0) {
+            (*env)->SetDoubleArrayRegion(env, num_arr, 0, (jsize)num_count, nums);
+        }
+        jclass str_cls = (*env)->FindClass(env, "java/lang/String");
+        jobjectArray str_arr = str_cls
+            ? (*env)->NewObjectArray(env, (jsize)str_count, str_cls, NULL) : NULL;
+        if (str_arr) {
+            for (uint8_t j = 0; j < str_count; ++j) {
+                (*env)->SetObjectArrayElement(env, str_arr, (jsize)j, strs[j]);
+            }
+        }
+        if (!num_arr || !str_arr) {
+            mem_err(mem, "JNI extern bridge array allocation failed");
+            ok = false;
+        } else {
+            jdouble result = (*env)->CallDoubleMethod(env, ctx->callback, ctx->method,
+                                                      jni_new_safe_utf(env, ctx->ext_name),
+                                                      num_arr, str_arr);
+            if ((*env)->ExceptionCheck(env) == JNI_TRUE) {
+                (*env)->ExceptionDescribe(env);
+                (*env)->ExceptionClear(env);
+                mem_err(mem, "Host extern bridge callback threw an exception");
+                ok = false;
+            } else if (result != result) { /* NaN */
+                mem_err(mem, "Host extern bridge returned NaN");
+                ok = false;
+            } else {
+                *out_val = val_from_f64(mem, (double)result);
+            }
+        }
+        if (num_arr) (*env)->DeleteLocalRef(env, num_arr);
+        if (str_arr) (*env)->DeleteLocalRef(env, str_arr);
+    }
+    for (uint8_t j = 0; j < str_count; ++j) {
+        if (strs[j]) (*env)->DeleteLocalRef(env, strs[j]);
+    }
+    return ok;
+}
+#endif /* MEP_JNI_REAL_BRIDGE */
+
+JNIEXPORT jboolean JNICALL
+Java_com_mathengine_MathEngineBridge_nativeRegisterExtern(JNIEnv *env, jclass clazz,
+                                                          jlong handle, jstring name,
+                                                          jobject callback) {
+    (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+#if defined(MEP_JNI_REAL_BRIDGE)
+    if (!eng || !name || !callback) return JNI_FALSE;
+    const char *ext_name = (*env)->GetStringUTFChars(env, name, NULL);
+    if (!ext_name) return JNI_FALSE;
+
+    JniBridgeCtx *ctx = (JniBridgeCtx *)calloc(1, sizeof(JniBridgeCtx));
+    if (!ctx) {
+        (*env)->ReleaseStringUTFChars(env, name, ext_name);
+        return JNI_FALSE;
+    }
+    snprintf(ctx->ext_name, sizeof(ctx->ext_name), "%s", ext_name);
+    (*env)->ReleaseStringUTFChars(env, name, ext_name);
+
+    jmethodID mid = (*env)->GetMethodID(env, (*env)->GetObjectClass(env, callback),
+                                        "apply",
+                                        "(Ljava/lang/String;[D[Ljava/lang/String;)D");
+    if (!mid) {
+        free(ctx);
+        return JNI_FALSE;
+    }
+    jobject ref = (*env)->NewGlobalRef(env, callback);
+    if (!ref) {
+        free(ctx);
+        return JNI_FALSE;
+    }
+    if ((*env)->GetJavaVM(env, &ctx->vm) != MEP_JNI_JVM_OK) {
+        (*env)->DeleteGlobalRef(env, ref);
+        free(ctx);
+        return JNI_FALSE;
+    }
+    ctx->method = mid;
+    ctx->callback = ref;
+
+    bool ok = eng_register_extern(eng, ctx->ext_name, jni_bridge_cb, ctx);
+    if (!ok) {
+        (*env)->DeleteGlobalRef(env, ref);
+        free(ctx);
+    }
+    return ok ? JNI_TRUE : JNI_FALSE;
+#else
+    (void)eng; (void)env; (void)name; (void)callback;
+    return JNI_FALSE;
+#endif
+}

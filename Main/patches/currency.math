@@ -1,0 +1,42 @@
+# =============================================================================
+# patches/currency.math — Currency Conversion Foundation
+# =============================================================================
+# Full-rate conversion needs a HOST extern (network rates live on the Android
+# side), but this module is engine-complete: register the tiny two-value host
+# extern `@currency_convert` and every function below comes alive; until that
+# registration happens, every call here returns a loud STRING diagnostic like
+#
+#   "unavailable: host extern '@currency_convert' not implemented yet"
+#
+# instead of silently failing — so app code can detect the missing backend
+# and display a friendly message.
+#
+# HOST CONTRACT (the ONLY thing a backend has to implement):
+#
+#   @currency_convert(to: str, amount: real) -> real
+#     - `to`     : target currency code, e.g. "EUR", "INR", "JPY"
+#     - `amount` : how many units of the app's BASE currency to convert
+#     - returns  : the converted amount in the target currency
+#
+# Kotlin registration via this repo's JNI bridge (one line):
+#
+#   engine.registerExtern("currency_convert") { _, nums, strs ->
+#       fxProvider.rateToBase(strs.first()) * nums[0]   // your rate source
+#   }
+#
+# (numbers[0] = amount, strings[0] = `to`; the engine marshals them for you)
+
+[currency]
+<[boot_types]
+<[arith]
+<[string]
+
+# 1. Core primitive — mirrors the two-value host extern contract exactly.
+#    Order matches the contract: `to` first, `amount` second.
+convert(amount: real, to: str) = @currency_convert(to, amount)
+
+# 2. Ready-to-display string form (live once the host extern is registered).
+convert_str(amount: real, to: str) -> str = fmt("%g %s", convert(amount, to), to)
+
+# 3. Batch form: convert a vec of base-currency amounts in one call.
+convert_all(amounts: vec, to: str) -> vec = [convert(a, to) for a in amounts]

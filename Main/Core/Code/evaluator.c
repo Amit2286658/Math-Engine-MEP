@@ -12,6 +12,7 @@
 #include "../lib/delegate/delegate.h"
 #include "../lib/hardcode/hardcode.h"
 #include <math.h>
+#include <stdio.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -1375,7 +1376,20 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
             }
             const ExternDef *ext = sym_find_extern(tab, mem, n->ref);
             if (!ext || !ext->fn) {
+                /* No host implementation registered yet: degrade to a loud
+                 * STRING result instead of failing the whole expression, so
+                 * extension patches (currency, location services, etc.) stay
+                 * evaluable while the host app implements the extern. */
                 StrSlice s = tab->syms[n->ref];
+                char name[40];
+                snprintf(name, sizeof(name), "%.*s", (int)s.len,
+                         mem_str_ptr(mem, s));
+                char msg[96];
+                snprintf(msg, sizeof(msg),
+                         "unavailable: host extern '@%s' not implemented yet",
+                         name);
+                Value out = val_from_cstr(mem, msg);
+                if (!mem->has_error) return out;
                 mem_err(mem, "Unregistered host extern '@%.*s'",
                         (int)s.len, mem_str_ptr(mem, s));
                 return val_void();

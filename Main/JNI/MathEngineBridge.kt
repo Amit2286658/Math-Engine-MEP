@@ -76,6 +76,22 @@ class MathEngineKt(stdlibMathcBytes: ByteArray? = null) : Closeable {
     fun simplify(expr: String): String? =
         MathEngineBridge.nativeSymSimplify(requireOpenHandle(), expr)
 
+    /**
+     * Registers an app-backed extern callable as `@<name>(...)` from `.math`
+     * code. The callback receives `(name, numbers, strings)` — numeric and
+     * string arguments in original call order — and returns the numeric
+     * result (`double`).
+     *
+     * Example (currency patch): register the tiny 2-argument host extern
+     *   engine.registerExtern("currency_convert") { _, nums, strs ->
+     *       fxProvider.rate(strs.first()) * nums[0]
+     *   }
+     * after which `convert(100, "EUR")` from the `[currency]` patch converts
+     * 100 units of the app's base currency into EUR live.
+     */
+    fun registerExtern(name: String, callback: MathEngineBridge.ExternCallback): Boolean =
+        MathEngineBridge.nativeRegisterExtern(requireOpenHandle(), name, callback)
+
     @Synchronized
     fun diff(varName: String, expr: String): String? =
         MathEngineBridge.nativeSymDiff(requireOpenHandle(), varName, expr)

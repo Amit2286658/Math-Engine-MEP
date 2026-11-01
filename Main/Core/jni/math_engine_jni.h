@@ -157,6 +157,13 @@ Java_com_mathengine_MathEngineBridge_nativeCompactScratch(JNIEnv *env, jclass cl
 JNIEXPORT jint JNICALL
 Java_com_mathengine_MathEngineBridge_nativeScratchPoolUsed(JNIEnv *env, jclass clazz, jlong handle);
 
+/* 5b. Host-Bridge Externs: app-backed Kotlin/Java `@<name>(...)` functions.
+ * `callback.apply(name, numbers, strings)` returns the numeric result. */
+JNIEXPORT jboolean JNICALL
+Java_com_mathengine_MathEngineBridge_nativeRegisterExtern(JNIEnv *env, jclass clazz,
+                                                          jlong handle, jstring name,
+                                                          jobject callback);
+
 #ifdef __cplusplus
 }
 #endif

@@ -556,6 +556,11 @@ static const TestCase k_tests[] = {
     { "molar_mass_h2o() + molar_mass_co2()", "62.024", "real",
       "Host '@elem_mass' Periodic Table: H2O (18.015) + CO2 (44.009)" },
 
+    /* J2. Unregistered Extern Fallback: loud STRING, never a silent failure */
+    { "probe_unregistered_extern(100, \"EUR\")",
+      "\"unavailable: host extern '@currency_convert' not implemented yet\"", "str",
+      "Unregistered host extern degrades to a loud string (currency patch contract)" },
+
     /* K. Local Scopes `{ ... }`, `if ... or ... else`, `switch`, `? :` Ternary & `Tag : { ... }` */
     { "x = { a := 3 ; b := 4 ; a^2 + b^2 } ; { x = x + 5 ; 9999 } ; x",
       "30", "real",

@@ -188,4 +188,17 @@ public final class MathEngineBridge implements AutoCloseable {
     public static native String  nativeSymSolve(long handle, String varName, String eq);
     public static native int     nativeCompactScratch(long handle);
     public static native int     nativeScratchPoolUsed(long handle);
+    public static native boolean nativeRegisterExtern(long handle, String name, ExternCallback callback);
+
+    /**
+     * Kotlin/Java-backed host extern callback, invoked by `@<name>(...)` calls
+     * inside `.math` extensions (e.g. the bundled `[currency]` patch).
+     *
+     * `numbers` holds every numeric argument, `strings` every string argument,
+     * both in original call order; return the numeric result as a `double`.
+     * Returning `NaN` (or throwing) surfaces as an engine error string.
+     */
+    public interface ExternCallback {
+        double apply(String name, double[] numbers, String[] strings);
+    }
 }
