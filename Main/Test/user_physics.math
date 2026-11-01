@@ -103,10 +103,14 @@ fx_sma(from:str, to:str, days, window) =
 save_var(key:str, val) = @kv_set(key, val)
 load_var(key:str)      = @kv_get(key)
 
-# 6b. Unregistered Extern Probe (`@currency_convert` contract test):
+# 6b. Unregistered Extern Probe (`@ccy_probe_ext` contract test):
 # routing a not-yet-registered host extern through a compiled extension must
 # return a loud STRING diagnostic eagerly, not a silent failure/void value.
-probe_unregistered_extern(amount, to: str) = @currency_convert(to, amount)
+probe_unregistered_extern(amount, from: str, to: str) = @ccy_probe_ext(from, to, amount)
+
+# 6c. Registered 3-way Currency Extern Probe (`@currency_convert`, registered
+# by the test host): `from` -> `to` cross-rate multiplied by the amount.
+convert_ccy(amount, from: str, to: str) = @currency_convert(from, to, amount)
 
 # 7. Host-Backed Periodic Table Atomic Mass Lookup (`@elem_mass`)
 elem(sym:str)        = @elem_mass(sym)

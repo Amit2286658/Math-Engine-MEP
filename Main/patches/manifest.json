@@ -3,8 +3,8 @@
   "patches": [
     {
       "file": "currency.math",
-      "sha256": "49ebf11f7fa56b4367c760d7bab66d1a8904c6ef578f60f6a669f5f9f03c39a9",
-      "size": 1882
+      "sha256": "ef02a7e51aa687d27c52fad7691791660fbc0fca02ce4437c83b488d79017bcc",
+      "size": 6108
     },
     {
       "file": "user_trig.math",
