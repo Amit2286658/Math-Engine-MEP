@@ -622,6 +622,7 @@ static bool jni_bridge_cb(MemArena *mem, const SymTable *tab,
 }
 #endif /* MEP_JNI_REAL_BRIDGE */
 
+#if defined(MEP_JNI_REAL_BRIDGE)
 /* Extern destructor: runs when a registration is replaced or the engine is
  * destroyed. Deletes the Java global ref (attaching a thread if the caller is
  * native-only, e.g. engine teardown on a worker) and frees the bridge ctx. */
@@ -649,6 +650,7 @@ static void jni_bridge_free_cb(void *user_ctx) {
     }
     free(ctx);
 }
+#endif /* MEP_JNI_REAL_BRIDGE */
 
 JNIEXPORT jboolean JNICALL
 Java_com_mathengine_MathEngineBridge_nativeRegisterExtern(JNIEnv *env, jclass clazz,
