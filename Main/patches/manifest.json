@@ -5,11 +5,6 @@
       "file": "currency.math",
       "sha256": "ef02a7e51aa687d27c52fad7691791660fbc0fca02ce4437c83b488d79017bcc",
       "size": 6108
-    },
-    {
-      "file": "user_trig.math",
-      "sha256": "9ce5ae66fb79522ba0c835e034d83a00b24ebe7628a560298f87a415f6bf4a3a",
-      "size": 878
     }
   ]
 }

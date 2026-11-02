@@ -6,19 +6,24 @@
 <[arith]
 
 # 1. Circular Trigonometric Functions (radians)
-# NOTE: sec/csc/cot (and all reciprocal/inverse-reciprocal aliases) now live
-# solely in the `[user_trig]` patch (`patches/user_trig.math`), not in the core
-# stdlib — patches/user_trig.math is the single provider for the extended
-# reciprocal set.
 sin(x) = @sin(x)
 cos(x) = @cos(x)
 tan(x) = @tan(x)
+sec(x) = 1 / @cos(x)
+csc(x) = 1 / @sin(x)
+cosec(x) = csc(x)
+cot(x) = @cos(x) / @sin(x)
 
 # 2. Inverse Circular Trigonometric Functions
 asin(x)     = @asin(x)
 acos(x)     = @acos(x)
 atan(x)     = @atan(x)
 atan2(y, x) = @atan2(y, x)
+# Inverse reciprocal circular functions (radians)
+asec(x)   = acos(1 / x)
+acsc(x)   = asin(1 / x)
+acosec(x) = asin(1 / x)
+acot(x)   = atan(1 / x)
 
 # 3. Hyperbolic & Inverse Hyperbolic Functions (Pure MEP over `@exp` & `@ln`)
 sinh(x)  = 0.5 * (@exp(x) - @exp(-x))
@@ -37,6 +42,7 @@ exp(x)        = @exp(x)
 sqrt(x)       = @sqrt(x)
 cbrt(x)       = @cbrt(x)
 root(x, n)    = x ^ (1 / n)
+nthroot(x, n) = root(x, n)
 hypot(a, b)   = √(a^2 + b^2)
 sigmoid(x)    = 1 / (1 + @exp(-x))
 
