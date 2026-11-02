@@ -1,8 +1,8 @@
 /*
  * main.c — Frontend Host Program Demonstrating:
- *   1. Internal zero-parse `eng_init()` auto-boot from embedded `stdlib_precompiled.h`
- *      (bootstrap, arith, trig, complex_ext, geom_ext, algebra, calculus, units,
- *       conversions, physics, chemistry, biology)
+ *   1. Blank-engine boot + separate loading of `precompiled/stdlib.mathc`
+ *      (`eng_init()` returns a blank engine; the host image is loaded with
+ *      `user_load_mathc` — there is no embedded `stdlib_precompiled.h`)
  *   2. Pure in-memory `user_loader.h` workflow (`user_compile_ext` & `user_load_mathc`)
  *      with zero file-extension or filesystem coupling in `Core/`
  *   3. Postfix `"i"` operator (`$iota`) & dimensional unit postfix operators (`deg`, `°`,
@@ -71,6 +71,73 @@ static bool frontend_write_file(const char *path, const uint8_t *data, size_t le
     fclose(fp);
     return ok;
 }
+
+/* ============================================================================
+ * 2. SEPARATE-STDLIB BOOT HELPER (hosts own the stdlib image, not the engine)
+ * ============================================================================ */
+
+static bool test_load_stdlib_file(Engine *eng) {
+    if (!eng) return false;
+    const char *paths[] = {
+#if defined(MEP_TEST_STDLIBC_PATH)
+        MEP_TEST_STDLIBC_PATH,
+#endif
+        "precompiled/stdlib.mathc",
+        "Main/precompiled/stdlib.mathc",
+        "../precompiled/stdlib.mathc",
+        NULL
+    };
+    for (int i = 0; paths[i]; ++i) {
+        size_t len = 0;
+        uint8_t *data = frontend_read_file(paths[i], &len);
+        if (data) {
+            bool ok = user_load_mathc(eng, data, len);
+            free(data);
+            if (ok) return true;
+        }
+    }
+    fprintf(stderr, "test boot: could not load 'precompiled/stdlib.mathc'\n");
+    return false;
+}
+
+/* JNI counterpart for the separate-stdlib flow (mock env only; Android
+ * devices do not run this suite): wrap `precompiled/stdlib.mathc` in a mock
+ * byte array so the tests can `nativeLoadMathc` the blank engine. */
+#if !(defined(__has_include) && __has_include(<jni.h>))
+static jbyteArray test_mock_stdlib_array(JNIEnv *jenv) {
+    static uint8_t *std_bytes = NULL;
+    static size_t std_len = 0;
+    static bool std_ready = false;
+    if (!std_ready) {
+        const char *paths[] = {
+#if defined(MEP_TEST_STDLIBC_PATH)
+            MEP_TEST_STDLIBC_PATH,
+#endif
+            "precompiled/stdlib.mathc",
+            "Main/precompiled/stdlib.mathc",
+            "../precompiled/stdlib.mathc",
+            NULL
+        };
+        for (int i = 0; paths[i]; ++i) {
+            std_bytes = frontend_read_file(paths[i], &std_len);
+            if (std_bytes) break;
+        }
+        std_ready = true;
+    }
+    if (!jenv || !std_bytes || std_len == 0 || !*jenv) return NULL;
+    jbyteArray arr = (*jenv)->NewByteArray(jenv, (jsize)std_len);
+    if (arr) (*jenv)->SetByteArrayRegion(jenv, arr, 0, (jsize)std_len, (const jbyte *)std_bytes);
+    return arr;
+}
+
+static void test_jni_load_stdlib(JNIEnv *jenv, jlong handle) {
+    if (handle == 0) return;
+    jbyteArray arr = test_mock_stdlib_array(jenv);
+    if (!arr) return;
+    (void)Java_com_mathengine_MathEngineBridge_nativeLoadMathc(jenv, NULL, handle, arr);
+    mep_jni_mock_free_byte_array(arr);
+}
+#endif /* mock-only helper */
 
 /* ============================================================================
  * 2. HOST EXTERN CALLBACK IMPLEMENTATIONS (`eng_register_extern`)
@@ -378,7 +445,10 @@ static void *mt_stress_worker(void *arg) {
     MtWorkerArg *w = (MtWorkerArg *)arg;
     w->ok = false;
     Engine *eng = eng_create();
-    if (!eng) return NULL;
+    if (!eng || !test_load_stdlib_file(eng)) {
+        eng_destroy(eng);
+        return NULL;
+    }
 
     int ext_calls = 0;
     if (!eng_register_extern(eng, "checked_recip", host_checked_recip_cb, &ext_calls)) {
@@ -2156,10 +2226,34 @@ static int run_cli_bench(Engine *eng) {
     printf("  MEP ENGINE THROUGHPUT BENCHMARK\n");
     printf("========================================================================\n");
     Value out;
+    /* Benchmark the actual O(1) stdlib boot: blank engine + `user_load_mathc`
+     * on a pre-slurped image (no disk I/O inside the loop). */
+    static size_t bench_stdlib_len = 0;
+    static uint8_t *bench_stdlib = NULL;
+    size_t blen = 0;
+    uint8_t *bdata = NULL;
+    static bool bench_stdlib_ready = false;
+    if (!bench_stdlib_ready) {
+        const char *bpaths[] = {
+#if defined(MEP_TEST_STDLIBC_PATH)
+            MEP_TEST_STDLIBC_PATH,
+#endif
+            "precompiled/stdlib.mathc", "Main/precompiled/stdlib.mathc", "../precompiled/stdlib.mathc", NULL
+        };
+        for (int i = 0; bpaths[i]; ++i) {
+            bdata = frontend_read_file(bpaths[i], &blen);
+            if (bdata) break;
+        }
+        if (!bdata) return 1;
+        bench_stdlib_ready = true;
+        bench_stdlib = bdata;
+        bench_stdlib_len = blen;
+    }
     clock_t t0 = clock();
     const int boot_iters = 5000;
     for (int i = 0; i < boot_iters; ++i) {
         eng_init(eng);
+        (void)user_load_mathc(eng, bench_stdlib, bench_stdlib_len);
     }
     double boot_ms = 1000.0 * (double)(clock() - t0) / (double)CLOCKS_PER_SEC;
     printf("  [1] O(1) .mathc stdlib boot (%d iters)     : %7.2f ms (%.2f us/boot)\n",
@@ -2205,7 +2299,8 @@ static int run_cli_bench(Engine *eng) {
 
 int main(int argc, char **argv) {
     if (argc > 1) {
-        if (!eng_init(&g_eng)) return 1;
+        eng_init(&g_eng);
+        if (!test_load_stdlib_file(&g_eng)) return 1;
         register_all_host_externs(&g_eng);
         size_t ulen = 0;
         char *utxt = (char *)frontend_read_file("Test/user_physics.math", &ulen);
@@ -2228,13 +2323,14 @@ int main(int argc, char **argv) {
            blank_ok ? "EXPECTED REJECTION" : "UNEXPECTED SUCCESS",
            eng_last_error(&g_eng));
 
-    /* 2. Auto-Boot Engine (`eng_init` loads embedded `stdlib_precompiled.h` in memory) */
-    if (!eng_init(&g_eng)) {
-        fprintf(stderr, "Failed to auto-initialize engine: %s\n", eng_last_error(&g_eng));
+    /* 2. Blank-Engine Boot + Separate `stdlib.mathc` Load (there is no embedded stdlib) */
+    eng_init(&g_eng);
+    if (!test_load_stdlib_file(&g_eng)) {
+        fprintf(stderr, "Failed to load 'precompiled/stdlib.mathc': %s\n", eng_last_error(&g_eng));
         return 1;
     }
-    printf("[2] Internal Zero-Parse Auto-Boot (`eng_init(&g_eng)`):\n");
-    printf("    Predefined bootstrap & scientific stdlib loaded from memory (%u modules, %u overloads, %u AST nodes).\n\n",
+    printf("[2] Blank-Engine Boot + Separate `stdlib.mathc` Load (`eng_init` + `user_load_mathc`):\n");
+    printf("    Bootstrap & scientific stdlib loaded from the host image (%u modules, %u overloads, %u AST nodes).\n\n",
            g_eng.sym.mod_count, g_eng.sym.overload_count, g_eng.mem.perm_ast_count);
 
     /* 3. Frontend reads raw source text, passes ONLY raw text to `user_compile_ext`,
@@ -2271,6 +2367,7 @@ int main(int argc, char **argv) {
     size_t disk_mathc_len = 0;
     uint8_t *disk_mathc = frontend_read_file(mathc_path, &disk_mathc_len);
     eng_init(&g_eng);
+    test_load_stdlib_file(&g_eng);
     register_all_host_externs(&g_eng);
 
     bool load_mathc_ok = (disk_mathc != NULL) &&
@@ -2599,6 +2696,7 @@ int main(int argc, char **argv) {
     int rejected_cnt = 0, accepted_cnt = 0;
     if (bug10_ok) {
         eng_init(&s_fuzz_eng);
+        (void)test_load_stdlib_file(&s_fuzz_eng);
         for (int iter = 0; iter < 3000; ++iter) {
             memcpy(mut_buf, uconst_mathc, uconst_len);
             int num_muts = 1 + (int)(rng % 4u);
@@ -2791,13 +2889,16 @@ int main(int argc, char **argv) {
     printf("[10] Heap-Allocated Engines (`eng_create`/`eng_destroy`) & Multi-Engine Isolation:\n");
     Engine *heap_e1 = eng_create();
     Engine *heap_e2 = eng_create();
+    bool heap_stdlib_ok = heap_e1 && heap_e2 &&
+                          test_load_stdlib_file(heap_e1) &&
+                          test_load_stdlib_file(heap_e2);
     UserBuildCtx *heap_b1 = user_build_create();
     UserBuildCtx *heap_b2 = user_build_create();
     const uint8_t *e1_mathc = NULL;
     const uint8_t *e2_mathc = NULL;
     size_t e1_mathc_len = 0, e2_mathc_len = 0;
     bool multi_eng_ok = false;
-    if (heap_e1 && heap_e2 && heap_b1 && heap_b2) {
+    if (heap_stdlib_ok && heap_b1 && heap_b2) {
         /* Interleave compilation across two independent engines and build contexts */
         bool c1 = user_compile_unit(heap_e1, heap_b1, "[mod_e1]\n<[arith]\ne1_fn(x) = x + 111\n");
         bool c2 = user_compile_unit(heap_e2, heap_b2, "[mod_e2]\n<[arith]\ne2_fn(x) = x + 222\n");
@@ -2862,6 +2963,7 @@ int main(int argc, char **argv) {
     printf("[12] Android NDK JNI Bridge (`Java_com_mathengine_MathEngineBridge_*`) Verification:\n");
     JNIEnv *jenv = mep_jni_mock_env();
     jlong jh = Java_com_mathengine_MathEngineBridge_nativeCreate(jenv, NULL);
+    test_jni_load_stdlib(jenv, jh);
     jstring jev = Java_com_mathengine_MathEngineBridge_nativeEval(jenv, NULL, jh, "ke(2 kg, 36 kph)");
     bool jni_eval_ok = (jh != 0) && (jev != NULL) && (strcmp(jev, "OK|real|energy|100") == 0);
 
@@ -2940,6 +3042,7 @@ int main(int argc, char **argv) {
 
     /* Verify JNI snapshot export & restore across 30 large evaluations (>8192 bytes total) */
     jlong jh_g2 = Java_com_mathengine_MathEngineBridge_nativeCreate(jenv, NULL);
+    test_jni_load_stdlib(jenv, jh_g2);
     jint jsid_g2 = Java_com_mathengine_MathEngineBridge_nativeSessionOpen(jenv, NULL, jh_g2);
     bool g2_jni_ok = (jh_g2 != 0 && jsid_g2 >= 0);
     if (g2_jni_ok) {
@@ -3048,7 +3151,7 @@ int main(int argc, char **argv) {
 
     /* Bug 5: Unbounded dynamic module registry supports >64 loaded modules (SBO -> Heap growth + .mathc reload) */
     Engine *eng64 = eng_create();
-    bool audit2_b5_ok = (eng64 != NULL) && (eng64->sym.mod_cap == SYM_SBO_MODULES);
+    bool audit2_b5_ok = eng64 && test_load_stdlib_file(eng64) && (eng64->sym.mod_cap == SYM_SBO_MODULES);
     if (audit2_b5_ok) {
         const uint8_t *m90_img = NULL;
         size_t m90_len = 0;
@@ -3098,6 +3201,7 @@ int main(int argc, char **argv) {
     bool c_sym_solve_ok = eng_sym_solve(&g_eng, "x", "x^2 - 5 * x + 6 = 0", ssolve_buf, sizeof(ssolve_buf)) &&
                           (strcmp(ssolve_buf, "[2, 3]") == 0);
     jlong jh15 = Java_com_mathengine_MathEngineBridge_nativeCreate(jenv, NULL);
+    test_jni_load_stdlib(jenv, jh15);
     jstring jinteg = Java_com_mathengine_MathEngineBridge_nativeSymInteg(jenv, NULL, jh15, "x", "4 * x^3 + cos(x)");
     jstring jsolve = Java_com_mathengine_MathEngineBridge_nativeSymSolve(jenv, NULL, jh15, "x", "x^2 - 9 == 0");
     bool jni_sym15_ok = (jh15 != 0) &&

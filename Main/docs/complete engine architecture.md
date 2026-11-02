@@ -35,7 +35,7 @@ MathEngine_Isolated_Core_Lib/
 │   │   ├── lexer.h                      # Pattern-driven UTF-8 lexer & token stream definitions
 │   │   ├── parser.h                     # Top-down Pratt parser & local variable scope structures
 │   │   ├── evaluator.h                  # AST evaluator entry point
-│   │   └── stdlib_precompiled.h         # Auto-generated C byte array (`k_stdlib_mathc_bin`) of `Library/stdlib.mathc`
+│   ├── Core/Headers/                     # (No stdlib_precompiled.h: engine boots blank, stdlib loads separately)
 │   ├── Code/
 │   │   ├── math_engine.c                # Engine lifecycle, stateless eval, value formatting, symbolic C wrappers
 │   │   ├── mem_arena.c                  # NaN-boxing, pool/AST/stack allocators, SBO/Heap spill, Mark-Sweep GC

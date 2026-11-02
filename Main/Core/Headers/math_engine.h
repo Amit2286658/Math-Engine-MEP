@@ -72,22 +72,26 @@ struct Engine {
  * ============================================================================ */
 
 /*
- * Heap-allocate and initialize an `Engine` (auto-boots embedded stdlib), or
- * heap-allocate a blank-slate `Engine`. Recommended for Android NDK / JNI and
- * multi-threaded hosts so `Engine` never lives on a thread stack.
+ * Heap-allocate & initialize `Engine`. Returns an EMPTY engine: the host is
+ * responsible for loading `precompiled/stdlib.mathc` (`user_load_mathc`) or
+ * a user image (`user_load_mathc` extensions) before evaluating.
+ * Recommended for Android NDK / JNI and multi-threaded hosts so `Engine`
+ * never lives on a thread stack.
  */
 MATH_ENGINE_API Engine     *eng_create(void);
+
+/* Heap-allocate & initialize a blank-slate `Engine`. Equivalent to
+ * `eng_create()`; the host loads `stdlib.mathc` via `user_load_mathc`.
+ */
 MATH_ENGINE_API Engine     *eng_create_blank(void);
 MATH_ENGINE_API void        eng_destroy(Engine *eng);
 
 /*
- * Initialize caller-provided `Engine` storage and INTERNALLY load all bootstrap
- * & predefined `.math` modules (`[boot_syntax]`, `[boot_types]`, `[boot_control]`,
- * `[arith]`, `[trig]`, `[complex_ext]`, `[geom_ext]`, `[algebra]`, `[calculus]`,
- * `[units]`, `[conversions]`, `[physics]`, `[chemistry]`, `[biology]`) from the
- * embedded precompiled `.mathc` image in O(1) `memcpy` time with zero filesystem access.
+ * Initialize caller-provided `Engine` storage as a BLANK engine (no standard
+ * library). The host loads `precompiled/stdlib.mathc` afterwards (O(1)
+ * `memcpy` boot via `user_load_mathc` / JNI `nativeLoadMathc`) before eval.
  */
-MATH_ENGINE_API bool        eng_init(Engine *eng);
+MATH_ENGINE_API void        eng_init(Engine *eng);
 
 /*
  * Initialize a completely blank-slate Engine (zero built-in types or operations).

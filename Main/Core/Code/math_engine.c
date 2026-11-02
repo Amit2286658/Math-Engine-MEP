@@ -1,9 +1,10 @@
 /*
  * math_engine.c — Top-Level Engine Wrapper, Stateless Eval & Value Formatter
  *
- * Internally loads the precompiled bootstrap and standard library modules
- * (`stdlib_precompiled.h`) in O(1) `memcpy` time inside `eng_init()` with
- * zero filesystem, directory, or file extension dependencies.
+ * Every engine boots BLANK ("empty engine") and its host loads the precompiled
+ * standard library image (`stdlib.mathc`) separately in O(1) `memcpy` time via
+ * the user-loader (`Core/compile/user_loader.h`, JNI `nativeLoadMathc()`).
+ * There is no embedded-in-binary stdlib variant anymore.
  *
  * Note:
  *   - Compilation, dependency-resolved linking, `.mathc` serialization, and
@@ -13,9 +14,6 @@
  */
 
 #include "math_engine.h"
-#if !defined(MATH_ENGINE_SEPARATE_STDLIB)
-#include "stdlib_precompiled.h"
-#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,15 +26,10 @@ void eng_init_blank(Engine *eng) {
     memset(eng->sessions, 0, sizeof(eng->sessions));
 }
 
-bool eng_init(Engine *eng) {
-    if (!eng) return false;
+void eng_init(Engine *eng) {
+    /* Blank init; the returned engine has NO standard library. Hosts load
+     * `stdlib.mathc` explicitly (user_load_mathc / nativeLoadMathc). */
     eng_init_blank(eng);
-#if !defined(MATH_ENGINE_SEPARATE_STDLIB)
-    return ext_load_mathc_mem(&eng->mem, &eng->sym, k_stdlib_mathc, sizeof(k_stdlib_mathc));
-#else
-    mem_err(&eng->mem, "Engine uses separate stdlib.mathc; initialize via nativeCreateBlank() + nativeLoadMathc()");
-    return false;
-#endif
 }
 
 Engine *eng_create_blank(void) {
@@ -48,15 +41,9 @@ Engine *eng_create_blank(void) {
 }
 
 Engine *eng_create(void) {
-    Engine *eng = (Engine *)malloc(sizeof(Engine));
-    if (!eng) return NULL;
-    memset(eng, 0, sizeof(Engine));
-    if (!eng_init(eng)) {
-        sym_free_heap(&eng->sym);
-        free(eng);
-        return NULL;
-    }
-    return eng;
+    /* Same as eng_create_blank: an empty engine whose host is responsible
+     * for loading `stdlib.mathc` before evaluating. */
+    return eng_create_blank();
 }
 
 void eng_destroy(Engine *eng) {

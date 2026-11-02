@@ -14,11 +14,11 @@ Drop-in precompiled artifacts for Android apps (`Ecalc`). The native C11 engine 
    ```console
    $ make stdlib
    ```
-   This compiles and links `Library/*.math` directly into `precompiled/stdlib.mathc` (and updates `Core/Headers/stdlib_precompiled.h` for the host CLI test suite).
+   This compiles and links `Library/*.math` directly into `precompiled/stdlib.mathc` (hosts load that image themselves — no embedded header is generated).
 
 2. **Rebuild `arm64-v8a/libmathengine.so` (after editing `Core/`):**
    ```console
    $ ANDROID_NDK_TOOLCHAIN_BIN=<ndk>/toolchains/llvm/prebuilt/<host>/bin \
          tools/build_android_arm64.sh
    ```
-   The script compiles `Core/` with `-DMATH_ENGINE_SEPARATE_STDLIB=1` (omitting the embedded `k_stdlib_mathc` C array from `.rodata` to keep the `.so` lean), strips symbols with `llvm-strip`, writes `precompiled/arm64-v8a/libmathengine.so`, and syncs `precompiled/stdlib.mathc`.
+   The script compiles `Core/` (the engine always boots blank — the stdlib image is loaded by the host, keeping the `.so` lean), strips symbols with `llvm-strip`, writes `precompiled/arm64-v8a/libmathengine.so`, and syncs `precompiled/stdlib.mathc`.

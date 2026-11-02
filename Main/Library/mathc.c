@@ -7,7 +7,8 @@
  *   into `ExtBuildCtx` via `ext_compile_unit()`, links all modules in topological
  *   dependency order (`<[dep]`) via `ext_link_units()`, serializes the single
  *   unified `.mathc` binary image in memory via `ext_save_mathc_mem()`, and writes
- *   `<output_image>` and optionally `<stdlib_precompiled.h>`.
+ *   `<output_image>` and optionally the legacy embedded-array header (pass `-`
+ *   to skip header emission — the engine no longer embeds the stdlib image).
  *
  * Usage:
  *   ./mathc <output_image> <output_header.h|-> <c_array_name> <source_file_1> [source_file_2 ...]

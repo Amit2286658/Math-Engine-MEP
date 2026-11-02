@@ -163,5 +163,5 @@ stdlib:
 		$(CC) -std=c11 $(WARN_FLAGS) $(CFLAGS_OPT) $(SAN_FLAGS) \
 			$(INCLUDES) $(CORE_SRCS) Library/mathc.c -lm -o $(MATHC); \
 		mkdir -p precompiled; \
-		./$(MATHC) precompiled/stdlib.mathc Core/Headers/stdlib_precompiled.h k_stdlib_mathc $(STDLIB_SOURCES); \
+		./$(MATHC) precompiled/stdlib.mathc - k_stdlib_mathc $(STDLIB_SOURCES); \
 	fi
