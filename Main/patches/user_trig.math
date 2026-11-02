@@ -6,7 +6,12 @@
 [user_trig]
 <[trig]
 
-# Reciprocal circular trig alias (sec, csc, cot live in [trig])
+# Reciprocal circular trigonometric functions (moved out of the core stdlib
+# `[trig]` module so this patch is the single provider of the extended
+# reciprocal set; `cosec` stays an alias of `csc`)
+sec(x) = 1 / @cos(x);
+csc(x) = 1 / @sin(x);
+cot(x) = @cos(x) / @sin(x);
 cosec(x: real) = csc(x);
 
 # Inverse reciprocal circular trig functions (radians)

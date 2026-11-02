@@ -6,12 +6,13 @@
 <[arith]
 
 # 1. Circular Trigonometric Functions (radians)
+# NOTE: sec/csc/cot (and all reciprocal/inverse-reciprocal aliases) now live
+# solely in the `[user_trig]` patch (`patches/user_trig.math`), not in the core
+# stdlib — patches/user_trig.math is the single provider for the extended
+# reciprocal set.
 sin(x) = @sin(x)
 cos(x) = @cos(x)
 tan(x) = @tan(x)
-sec(x) = 1 / @cos(x)
-csc(x) = 1 / @sin(x)
-cot(x) = @cos(x) / @sin(x)
 
 # 2. Inverse Circular Trigonometric Functions
 asin(x)     = @asin(x)
