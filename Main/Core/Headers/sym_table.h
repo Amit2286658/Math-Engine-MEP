@@ -328,6 +328,9 @@ typedef struct {
     char        name[32];    /* Self-contained name (survives binary reloads) */
     EngExternFn fn;
     void       *user_ctx;
+    void      (*fn_free)(void *user_ctx); /* Optional destructor: runs when the
+                                            registration is replaced or the
+                                            owning table/engine is destroyed */
 } ExternDef;
 
 /* ============================================================================
@@ -445,6 +448,10 @@ const char *sym_unit_name(const SymTable *tab, const MemArena *mem, uint8_t unit
 IntrinsicId      sym_lookup_intrinsic(const char *s, uint16_t len);
 bool             sym_register_extern(SymTable *tab, MemArena *mem, const char *name,
                                      EngExternFn fn, void *user_ctx);
+bool             sym_register_extern_full(SymTable *tab, MemArena *mem, const char *name,
+                                          EngExternFn fn, void *user_ctx,
+                                          void (*fn_free)(void *user_ctx));
+void             sym_free_externs(SymTable *tab);
 const ExternDef *sym_find_extern(const SymTable *tab, const MemArena *mem, uint16_t sym_id);
 
 #ifdef __cplusplus

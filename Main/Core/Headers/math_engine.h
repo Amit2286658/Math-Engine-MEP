@@ -101,6 +101,13 @@ MATH_ENGINE_API void        eng_init_blank(Engine *eng);
  */
 MATH_ENGINE_API bool        eng_register_extern(Engine *eng, const char *name,
                                                 EngExternFn fn, void *user_ctx);
+MATH_ENGINE_API bool        eng_register_extern_full(Engine *eng, const char *name,
+                                                     EngExternFn fn, void *user_ctx,
+                                                     void (*fn_free)(void *user_ctx));
+/* Runs `fn_free(user_ctx)` for every registered extern that has a destructor,
+ * then empties the extern table. Called by `eng_destroy`; may also be called
+ * manually to recycle an engine's extern table without freeing the engine. */
+MATH_ENGINE_API void        eng_free_externs(Engine *eng);
 
 /* Enable or disable any loaded module in O(1) */
 MATH_ENGINE_API bool        eng_set_module(Engine *eng, const char *mod_name, bool enabled);

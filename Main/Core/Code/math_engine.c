@@ -61,6 +61,9 @@ Engine *eng_create(void) {
 
 void eng_destroy(Engine *eng) {
     if (!eng) return;
+    /* Extern destructors first: JNI bridges free their global refs / payload
+     * allocations here and do not depend on engine heap or symbol memory. */
+    sym_free_externs(&eng->sym);
     mem_free_all_heap(&eng->mem);
     sym_free_heap(&eng->sym);
     free(eng);
@@ -70,6 +73,18 @@ bool eng_register_extern(Engine *eng, const char *name,
                          EngExternFn fn, void *user_ctx) {
     if (!eng) return false;
     return sym_register_extern(&eng->sym, &eng->mem, name, fn, user_ctx);
+}
+
+bool eng_register_extern_full(Engine *eng, const char *name,
+                              EngExternFn fn, void *user_ctx,
+                              void (*fn_free)(void *user_ctx)) {
+    if (!eng) return false;
+    return sym_register_extern_full(&eng->sym, &eng->mem, name, fn, user_ctx, fn_free);
+}
+
+void eng_free_externs(Engine *eng) {
+    if (!eng) return;
+    sym_free_externs(&eng->sym);
 }
 
 bool eng_set_module(Engine *eng, const char *mod_name, bool enabled) {

@@ -346,8 +346,9 @@ IntrinsicId sym_lookup_intrinsic(const char *s, uint16_t len) {
     return delegate_lookup_intrinsic(s, len);
 }
 
-bool sym_register_extern(SymTable *tab, MemArena *mem, const char *name,
-                         EngExternFn fn, void *user_ctx) {
+static bool sym_register_extern_impl(SymTable *tab, MemArena *mem, const char *name,
+                                     EngExternFn fn, void *user_ctx,
+                                     void (*fn_free)(void *user_ctx)) {
     if (!name || !fn) return false;
     size_t nlen = strlen(name);
     if (nlen == 0 || nlen >= sizeof(tab->externs[0].name)) {
@@ -356,8 +357,17 @@ bool sym_register_extern(SymTable *tab, MemArena *mem, const char *name,
     }
     for (uint8_t i = 0; i < tab->extern_count; ++i) {
         if (strcmp(tab->externs[i].name, name) == 0) {
+            /* Replace: hand the previous registration's destructor its ctx
+             * BEFORE the pointers are overwritten (JNI bridges keep global
+             * refs / heap allocations inside user_ctx). */
+            void (*old_free)(void *) = tab->externs[i].fn_free;
+            void       *old_ctx      = tab->externs[i].user_ctx;
             tab->externs[i].fn       = fn;
             tab->externs[i].user_ctx = user_ctx;
+            tab->externs[i].fn_free  = fn_free;
+            if (old_free && old_ctx && !(old_free == fn_free && old_ctx == user_ctx)) {
+                old_free(old_ctx);
+            }
             return true;
         }
     }
@@ -369,7 +379,32 @@ bool sym_register_extern(SymTable *tab, MemArena *mem, const char *name,
     memcpy(tab->externs[id].name, name, nlen + 1);
     tab->externs[id].fn       = fn;
     tab->externs[id].user_ctx = user_ctx;
+    tab->externs[id].fn_free  = fn_free;
     return true;
+}
+
+bool sym_register_extern(SymTable *tab, MemArena *mem, const char *name,
+                         EngExternFn fn, void *user_ctx) {
+    return sym_register_extern_impl(tab, mem, name, fn, user_ctx, NULL);
+}
+
+bool sym_register_extern_full(SymTable *tab, MemArena *mem, const char *name,
+                              EngExternFn fn, void *user_ctx,
+                              void (*fn_free)(void *user_ctx)) {
+    return sym_register_extern_impl(tab, mem, name, fn, user_ctx, fn_free);
+}
+
+void sym_free_externs(SymTable *tab) {
+    if (!tab) return;
+    for (uint8_t i = 0; i < tab->extern_count; ++i) {
+        if (tab->externs[i].fn_free) {
+            tab->externs[i].fn_free(tab->externs[i].user_ctx);
+        }
+        tab->externs[i].fn       = NULL;
+        tab->externs[i].user_ctx = NULL;
+        tab->externs[i].fn_free  = NULL;
+    }
+    tab->extern_count = 0;
 }
 
 const ExternDef *sym_find_extern(const SymTable *tab, const MemArena *mem, uint16_t sym_id) {

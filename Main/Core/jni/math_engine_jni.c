@@ -622,6 +622,34 @@ static bool jni_bridge_cb(MemArena *mem, const SymTable *tab,
 }
 #endif /* MEP_JNI_REAL_BRIDGE */
 
+/* Extern destructor: runs when a registration is replaced or the engine is
+ * destroyed. Deletes the Java global ref (attaching a thread if the caller is
+ * native-only, e.g. engine teardown on a worker) and frees the bridge ctx. */
+static void jni_bridge_free_cb(void *user_ctx) {
+    JniBridgeCtx *ctx = (JniBridgeCtx *)user_ctx;
+    if (!ctx) return;
+    JNIEnv *env = NULL;
+    void    *thr_env = NULL;
+    bool attached = false;
+    if (ctx->vm) {
+        if ((*ctx->vm)->GetEnv(ctx->vm, (void **)&env, JNI_VERSION_1_4) != MEP_JNI_JVM_OK || !env) {
+            env = NULL;
+            if ((*ctx->vm)->AttachCurrentThread(ctx->vm, &thr_env, NULL) == MEP_JNI_JVM_OK && thr_env) {
+                env = (JNIEnv *)thr_env;
+                attached = true;
+            }
+        }
+    }
+    if (env && ctx->callback) {
+        (*env)->DeleteGlobalRef(env, ctx->callback);
+        ctx->callback = NULL;
+    }
+    if (attached && ctx->vm) {
+        (*ctx->vm)->DetachCurrentThread(ctx->vm);
+    }
+    free(ctx);
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_mathengine_MathEngineBridge_nativeRegisterExtern(JNIEnv *env, jclass clazz,
                                                           jlong handle, jstring name,
@@ -661,10 +689,10 @@ Java_com_mathengine_MathEngineBridge_nativeRegisterExtern(JNIEnv *env, jclass cl
     ctx->method = mid;
     ctx->callback = ref;
 
-    bool ok = eng_register_extern(eng, ctx->ext_name, jni_bridge_cb, ctx);
+    bool ok = eng_register_extern_full(eng, ctx->ext_name, jni_bridge_cb, ctx,
+                                       jni_bridge_free_cb);
     if (!ok) {
-        (*env)->DeleteGlobalRef(env, ref);
-        free(ctx);
+        jni_bridge_free_cb(ctx);
     }
     return ok ? JNI_TRUE : JNI_FALSE;
 #else
