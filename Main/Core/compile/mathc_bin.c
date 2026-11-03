@@ -274,7 +274,7 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
                 break;
 
             case AST_SLOT_LOAD:
-                if (n.sub >= PARSER_MAX_LOCALS) return false;
+                if ((n.sub & AST_SLOT_IDX_MASK) >= PARSER_MAX_LOCALS) return false;
                 if (n.left != MEM_NO_IDX && n.left != SYM_TYPE_ANY &&
                     (n.left & 0x4000u) == 0 && n.left >= hdr->type_count) return false;
                 if (n.right != MEM_NO_IDX && n.right < SYM_UNIT_LOCK_NONE && n.right >= eff_units) return false;
@@ -284,7 +284,7 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
                 if (n.sub >= hdr->type_count) return false;
                 if (n.ref >= 256u) return false;
                 if (!AST_REQ_OK(n.left)) return false;
-                if (n.right != MEM_NO_IDX && n.right >= PARSER_MAX_LOCALS) return false;
+                if (n.right != MEM_NO_IDX && (n.right & AST_SLOT_IDX_MASK) >= PARSER_MAX_LOCALS) return false;
                 break;
 
             case AST_UNARY:
@@ -425,6 +425,7 @@ bool ext_validate_mathc_buf(const uint8_t *data, size_t len) {
 bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
                         const uint8_t *data, size_t len) {
     if (!mem || !tab) return false;
+    mem->sym_tab = tab;
     mem_clear_err(mem);
     if (!data || len < sizeof(MathcHeader)) {
         mem_err(mem, "Invalid or truncated .mathc image");
@@ -546,6 +547,8 @@ bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
         tab->const_vals[i] = val_make_f64_at_pool(mem, rtid, ruid, pidx);
     }
 
+    tab->var_count = 0;
+    sym_sync_consts_to_vars(tab, mem);
     sym_rebuild_index(tab);
     mem_snapshot_perm(mem);
     return true;

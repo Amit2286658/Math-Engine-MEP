@@ -84,13 +84,11 @@ endif()
 #   - Core/Code/*.c          : Core engine pipeline (arena, sym_table, lexer, parser, evaluator, math_engine)
 #   - Core/compile/*.c       : Extension compiler (`compiler.c`), `<[dep]` linker (`linker.c`),
 #                              `.mathc` binary serializer (`mathc_bin.c`) & user loader (`user_loader.c`)
-#   - Core/session/*.c       : Parallel in-memory sessions (`session.c`) & order-tagged snapshots (`snapshot.c`)
 #   - Core/lib/delegate/*.c  : All `@` intrinsic C delegates (@add, @sin, @vnew, @mzero, @calc_*, etc.)
 #   - Core/lib/hardcode/*.c  : All hardcoded grammar & ergonomic rules (reserved kw, implicit *, UFCS, etc.)
 file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/Core/Code/*.c"
     "${CMAKE_SOURCE_DIR}/Core/compile/*.c"
-    "${CMAKE_SOURCE_DIR}/Core/session/*.c"
     "${CMAKE_SOURCE_DIR}/Core/jni/*.c"
     "${CMAKE_SOURCE_DIR}/Core/lib/delegate/*.c"
     "${CMAKE_SOURCE_DIR}/Core/lib/hardcode/*.c"
@@ -113,7 +111,6 @@ set_target_properties(mathengine PROPERTIES
 target_include_directories(mathengine PUBLIC
     "${CMAKE_SOURCE_DIR}/Core/Headers"
     "${CMAKE_SOURCE_DIR}/Core/compile"
-    "${CMAKE_SOURCE_DIR}/Core/session"
     "${CMAKE_SOURCE_DIR}/Core/jni"
     "${CMAKE_SOURCE_DIR}/Core/lib/delegate"
     "${CMAKE_SOURCE_DIR}/Core/lib/hardcode"

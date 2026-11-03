@@ -6,6 +6,8 @@
  *     for one-statement-per-line writing, while keeping `;` compulsory when placing
  *     multiple statements on a single line
  *   - Lexical `{ ... }` scope blocks (value-returning and void/isolated blocks)
+ *   - Module-scoped vs. local-scoped variables, privacy (`pub` / `priv`), and
+ *     mutability (`:=` / `mut` mutable vs. `=` / `const` immutable)
  *   - Multi-branch `if ... or ... else` statements (one `if`, many `or` else-if
  *     branches, optional single `else`, plus legacy `if(c, t, e)`)
  *   - Pattern-matched `switch (expr) { ... }` blocks (exact values, `a..b` / `a...b`
@@ -35,6 +37,12 @@
 #include "../lib/hardcode/hardcode.h"
 #include <string.h>
 
+static bool is_var_modifier_kw(const char *s, uint16_t len) {
+    return (len == 3 && (memcmp(s, "pub", 3) == 0 || memcmp(s, "mut", 3) == 0)) ||
+           (len == 4 && memcmp(s, "priv", 4) == 0) ||
+           (len == 5 && memcmp(s, "const", 5) == 0);
+}
+
 static int find_local_idx(const Parser *P, const char *name, uint16_t len) {
     for (int i = (int)P->vis_count - 1; i >= 0; --i) {
         StrSlice s = P->locals[i].name;
@@ -46,7 +54,7 @@ static int find_local_idx(const Parser *P, const char *name, uint16_t len) {
 }
 
 int parser_add_local(Parser *P, const char *name, uint16_t len, uint16_t type_id) {
-    if (sym_is_reserved_kw(P->lex.tab, P->lex.mem, name, len)) {
+    if (sym_is_reserved_kw(P->lex.tab, P->lex.mem, name, len) || is_var_modifier_kw(name, len)) {
         mem_err(P->lex.mem, "Cannot use reserved keyword '%.*s' as a variable name",
                 (int)len, name);
         return 0;
@@ -66,6 +74,7 @@ int parser_add_local(Parser *P, const char *name, uint16_t len, uint16_t type_id
     P->locals[vidx].slot         = slot;
     P->locals[vidx].scope_depth  = P->scope_depth;
     P->locals[vidx].is_loop_iter = 0;
+    P->locals[vidx].is_const     = 0;
     P->slot_types[slot]          = type_id;
     if (!P->in_ext_body && slot < 64u) {
         P->lex.mem->local_slot_names[slot] = P->locals[vidx].name;
@@ -94,7 +103,7 @@ static int find_label_id(const Parser *P, const char *name, uint16_t len) {
 }
 
 static int parser_get_or_add_label(Parser *P, const char *name, uint16_t len) {
-    if (sym_is_reserved_kw(P->lex.tab, P->lex.mem, name, len)) {
+    if (sym_is_reserved_kw(P->lex.tab, P->lex.mem, name, len) || is_var_modifier_kw(name, len)) {
         mem_err(P->lex.mem, "Cannot use reserved keyword '%.*s' as a scope tag",
                 (int)len, name);
         return 0;
@@ -131,11 +140,23 @@ void parser_init(Parser *P, MemArena *mem, SymTable *tab,
     memset(P, 0, sizeof(*P));
     lex_init(&P->lex, mem, tab, src, len, start_pos, stop_at_newline);
     P->in_ext_body = in_ext_body;
+    P->cur_mod     = tab ? tab->cur_mod : 0;
 }
 
 /* ============================================================================
  * 1. TOKEN, OPERATOR & META-INTRINSIC INSPECTION HELPERS
  * ============================================================================ */
+
+static bool sym_has_visible_func_ov(const SymTable *tab, uint16_t sym_id) {
+    if (sym_id >= tab->sym_count) return false;
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
+        const OpOverload *ov = &tab->overloads[i];
+        if (ov->fixity == FIX_FUNC && sym_ov_is_visible(tab, ov)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static uint8_t token_func_meta(const Parser *P, Token t) {
     SymTable *tab = P->lex.tab;
@@ -238,7 +259,7 @@ static bool lex_peek_is_branch_kw(const Parser *P) {
 static int find_active_meta_sym(const SymTable *tab, uint8_t target_meta) {
     for (uint16_t i = 0; i < tab->overload_count; ++i) {
         const OpOverload *ov = &tab->overloads[i];
-        if (ov->meta_tag == target_meta && sym_mod_enabled(tab, ov->mod_id)) {
+        if (ov->meta_tag == target_meta && sym_ov_is_visible(tab, ov)) {
             return (int)ov->sym_id;
         }
     }
@@ -311,7 +332,7 @@ static bool sym_has_non_lazy_func_ov(const SymTable *tab, uint16_t sym_id) {
     if (sym_id >= tab->sym_count) return false;
     for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
         const OpOverload *ov = &tab->overloads[i];
-        if (ov->fixity == FIX_FUNC && sym_mod_enabled(tab, ov->mod_id) &&
+        if (ov->fixity == FIX_FUNC && sym_ov_is_visible(tab, ov) &&
             (ov->meta_tag & SYM_META_LAZY_MASK) == 0) {
             return true;
         }
@@ -323,7 +344,7 @@ static int find_active_sub_sym(const MemArena *mem, const SymTable *tab) {
     for (uint16_t i = 0; i < tab->overload_count; ++i) {
         const OpOverload *ov = &tab->overloads[i];
         if (ov->fixity == FIX_INFIX_LEFT && ov->param_count == 2 &&
-            sym_mod_enabled(tab, ov->mod_id) && ov->body_ast != MEM_NO_IDX) {
+            sym_ov_is_visible(tab, ov) && ov->body_ast != MEM_NO_IDX) {
             const AstNode *root = mem_get_ast(mem, ov->body_ast);
             if (root->kind == AST_INTRINSIC && root->sub == INTR_SUB) {
                 return (int)ov->sym_id;
@@ -416,10 +437,21 @@ static uint16_t build_store_or_compound(Parser *P, uint16_t op_sym_id,
         const AstNode *ln = mem_get_ast(mem, lhs_ast);
         const AstNode *rn = mem_get_ast(mem, rhs_ast);
         if (ln->kind == AST_SLOT_LOAD && ln->left == 0) {
+            uint8_t sidx = (uint8_t)(ln->sub & AST_SLOT_IDX_MASK);
             if (rn->kind == AST_CONSTRUCT) {
-                P->slot_types[ln->sub] = rn->ref;
+                P->slot_types[sidx] = rn->ref;
             } else if (rn->kind == AST_LAMBDA && mem->fn_type_id != 0) {
-                P->slot_types[ln->sub] = mem->fn_type_id;
+                P->slot_types[sidx] = mem->fn_type_id;
+            }
+        } else if (ln->kind == AST_CONST_SYM) {
+            int own_idx = sym_find_own_var(tab, ln->ref, P->cur_mod);
+            if (own_idx >= 0) {
+                ModVarDef *mv = &sym_vars_mut(tab)[own_idx];
+                if (rn->kind == AST_CONSTRUCT) {
+                    mv->lock_type = (uint16_t)((mv->lock_type & 0xFFu) | ((uint16_t)rn->ref << 8u));
+                } else if (rn->kind == AST_LAMBDA && mem->fn_type_id != 0) {
+                    mv->lock_type = (uint16_t)((mv->lock_type & 0xFFu) | ((uint32_t)mem->fn_type_id << 8u));
+                }
             }
         }
         return mem_alloc_ast(mem, AST_BINARY, (uint8_t)FIX_INFIX_RIGHT, op_sym_id, lhs_ast, rhs_ast);
@@ -566,6 +598,26 @@ static uint16_t parse_field_step(Parser *P, uint16_t left) {
             mem_err(mem, "Undefined method or function '%.*s'", (int)flen, fname);
             return MEM_NO_IDX;
         }
+        uint16_t priv_mod = MEM_NO_IDX;
+        int mv_idx = sym_find_var(tab, (uint16_t)sym_id, P->cur_mod, &priv_mod);
+        if (mv_idx >= 0) {
+            const ModVarDef *mv = &sym_vars(tab)[mv_idx];
+            uint16_t mv_tid = val_get_type(mem, mv->val);
+            if (mv_tid == MEM_TYPE_VOID) {
+                mv_tid = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
+                                                 : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
+            }
+            if ((mem->fn_type_id != 0 && mv_tid == mem->fn_type_id) ||
+                !sym_has_visible_func_ov(tab, (uint16_t)sym_id)) {
+                uint16_t fn_load = mem_alloc_ast(mem, AST_CONST_SYM, 0, (uint16_t)sym_id, MEM_NO_IDX, P->cur_mod);
+                return mem_alloc_ast(mem, AST_FN_CALL, argc, 0, fn_load, head);
+            }
+        } else if (priv_mod != MEM_NO_IDX && !sym_has_visible_func_ov(tab, (uint16_t)sym_id)) {
+            StrSlice pmod_s = sym_mod_name(tab, priv_mod);
+            mem_err(mem, "Function or variable '%.*s' is private to module '[%.*s]'",
+                    (int)flen, fname, (int)pmod_s.len, mem_str_ptr(mem, pmod_s));
+            return MEM_NO_IDX;
+        }
         return mem_alloc_ast(mem, AST_CALL, argc, (uint16_t)sym_id, head, MEM_NO_IDX);
     }
 
@@ -576,8 +628,18 @@ static uint16_t parse_field_step(Parser *P, uint16_t left) {
     uint16_t prev_off    = 0;
 
     if (lnode->kind == AST_SLOT_LOAD) {
-        base_slot = lnode->sub;
+        base_slot = (uint8_t)(lnode->sub & AST_SLOT_IDX_MASK);
         cur_type  = P->slot_types[base_slot];
+    } else if (lnode->kind == AST_CONST_SYM) {
+        int mv_idx = sym_find_var(tab, lnode->ref, P->cur_mod, NULL);
+        if (mv_idx >= 0) {
+            const ModVarDef *mv = &sym_vars(tab)[mv_idx];
+            cur_type = val_get_type(mem, mv->val);
+            if (cur_type == MEM_TYPE_VOID) {
+                cur_type = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
+                                                   : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
+            }
+        }
     } else if (lnode->kind == AST_CONSTRUCT) {
         cur_type  = lnode->ref;
     } else if (lnode->kind == AST_FIELD_LOAD) {
@@ -598,7 +660,8 @@ static uint16_t parse_field_step(Parser *P, uint16_t left) {
     if (!resolved) {
         for (uint16_t tid = 1; tid < tab->type_count; ++tid) {
             if (!tab->types[tid].is_consuming && tab->types[tid].field_count > 0 &&
-                sym_mod_enabled(tab, tab->types[tid].mod_id)) {
+                sym_mod_enabled(tab, tab->types[tid].mod_id) &&
+                ((tab->types[tid].reserved & SYM_TYPE_PRIVATE) == 0 || tab->types[tid].mod_id == P->cur_mod)) {
                 if (sym_resolve_field(tab, mem, tid, fname, flen, &ftype, &foff)) {
                     resolved = true;
                     break;
@@ -966,7 +1029,7 @@ static uint16_t parse_branch_body(Parser *P) {
 
 static void record_lambda_src(Parser *P, uint16_t body_ast, uint16_t start_off) {
     MemArena *mem = P->lex.mem;
-    if (mem->fn_src_count >= 32) return;
+    if (mem->fn_src_count >= 64) return;
     uint16_t end_off = (P->lex.cur.kind == TOK_EOF) ? P->lex.pos : P->lex.cur.off;
     while (end_off > start_off) {
         char c = P->lex.src[end_off - 1];
@@ -1199,8 +1262,23 @@ static uint16_t parse_inline_fn_def(Parser *P, const char *fn_name, uint16_t fn_
     }
     uint16_t lhs_ast = resolve_var_for_assign(P, fn_name, fn_len, (uint16_t)ce_sid, 0, 0);
     if (mem->has_error || lhs_ast == MEM_NO_IDX) return MEM_NO_IDX;
-    if (mem->fn_type_id != 0 && mem_get_ast(mem, lhs_ast)->kind == AST_SLOT_LOAD) {
-        P->slot_types[mem_get_ast(mem, lhs_ast)->sub] = mem->fn_type_id;
+    if (mem->fn_type_id != 0) {
+        const AstNode *ln = mem_get_ast(mem, lhs_ast);
+        if (ln->kind == AST_SLOT_LOAD) {
+            P->slot_types[ln->sub & AST_SLOT_IDX_MASK] = mem->fn_type_id;
+        } else if (ln->kind == AST_CONST_SYM) {
+            /* Pre-register module function variable so recursive calls inside body resolve cleanly */
+            int own_idx = sym_find_own_var(tab, ln->ref, P->cur_mod);
+            if (own_idx < 0) {
+                own_idx = sym_set_or_add_var(tab, mem, ln->ref, P->cur_mod, val_void(),
+                                             0, 0,
+                                             (uint8_t)(ln->sub | SYM_VAR_MUTABLE), true);
+            }
+            if (own_idx >= 0) {
+                ModVarDef *mv = &sym_vars_mut(tab)[own_idx];
+                mv->lock_type = (uint16_t)((mv->lock_type & 0xFFu) | ((uint32_t)mem->fn_type_id << 8u));
+            }
+        }
     }
 
     uint16_t paren_start = P->lex.cur.off;
@@ -1250,7 +1328,7 @@ static uint16_t parse_inline_fn_def(Parser *P, const char *fn_name, uint16_t fn_
     P->last_was_block = false;
     if (mem->has_error || body_ast == MEM_NO_IDX) return MEM_NO_IDX;
 
-    if (mem->fn_src_count < 32) {
+    if (mem->fn_src_count < 64) {
         uint16_t end_off = (P->lex.cur.kind == TOK_EOF) ? P->lex.pos : P->lex.cur.off;
         while (end_off > body_start) {
             char c = P->lex.src[end_off - 1];
@@ -1423,10 +1501,8 @@ static bool is_pattern_bind_ident(const Parser *P, const char *name, uint16_t le
     if (find_local_idx(P, name, len) >= 0) return false;
     int sid = sym_find(tab, mem, name, len);
     if (sid >= 0) {
-        for (uint8_t i = 0; i < tab->const_count; ++i) {
-            if (tab->consts[i].sym_id == (uint16_t)sid && sym_mod_enabled(tab, tab->consts[i].mod_id)) {
-                return false;
-            }
+        if (sym_find_var(tab, (uint16_t)sid, P->cur_mod, NULL) >= 0) {
+            return false;
         }
     }
     return true;
@@ -1911,39 +1987,182 @@ static uint16_t parse_return_construct(Parser *P) {
 static uint16_t resolve_var_for_assign(Parser *P, const char *name, uint16_t len,
                                        uint16_t op_sym_id,
                                        uint8_t lock_type, uint8_t lock_unit) {
-    MemArena       *mem = P->lex.mem;
+    MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
-    if (sym_is_reserved_kw(tab, mem, name, len)) {
+    if (sym_is_reserved_kw(tab, mem, name, len) || is_var_modifier_kw(name, len)) {
         mem_err(mem, "Cannot use reserved keyword '%.*s' as a variable name",
                 (int)len, name);
         return MEM_NO_IDX;
     }
-    int vidx = find_local_idx(P, name, len);
+
+    uint8_t mod_flags = P->pending_var_flags;
+    bool    had_mods  = P->has_pending_mods;
+    P->pending_var_flags = 0;
+    P->has_pending_mods  = false;
+
     bool is_colon_eq = false;
     bool is_plain    = hardcode_is_plain_store_sym(mem, tab, op_sym_id, &is_colon_eq);
 
+    /* Case A: Module-level variable or constant (`P->is_mod_scope && P->scope_depth == 0`) */
+    if (P->is_mod_scope && P->scope_depth == 0) {
+        StrSlice vslice = mem_intern_str(mem, name, len);
+        uint16_t sym_id = sym_intern(tab, mem, vslice);
+        if (mem->has_error) return MEM_NO_IDX;
+
+        uint8_t ast_flags = (uint8_t)(mod_flags & (SYM_VAR_PRIVATE | SYM_VAR_EXPLICIT_CONST));
+        if (is_plain) {
+            if ((mod_flags & SYM_VAR_EXPLICIT_CONST) != 0) {
+                ast_flags |= SYM_VAR_EXPLICIT_CONST;
+            } else if (is_colon_eq || (mod_flags & SYM_VAR_MUTABLE) != 0) {
+                ast_flags |= SYM_VAR_MUTABLE;
+            } else {
+                /* Plain `=` at module top level:
+                 * - If `name` is already a visible mutable variable and no `pub`/`priv`/`: type`
+                 *   was given, mutate that variable (`SYM_VAR_REASSIGN_ONLY`).
+                 * - Otherwise, define an immutable module constant (or fail if reassigning a constant). */
+                uint16_t priv_mod = MEM_NO_IDX;
+                int vis_idx = sym_find_var(tab, sym_id, P->cur_mod, &priv_mod);
+                if (vis_idx >= 0 && !had_mods && lock_type == 0 && lock_unit == 0) {
+                    ast_flags |= SYM_VAR_REASSIGN_ONLY;
+                } else if (priv_mod != MEM_NO_IDX && !had_mods && lock_type == 0 && lock_unit == 0) {
+                    ast_flags |= SYM_VAR_REASSIGN_ONLY;
+                } else {
+                    ast_flags |= SYM_VAR_EXPLICIT_CONST;
+                }
+            }
+        } else {
+            ast_flags |= (uint8_t)(SYM_VAR_REASSIGN_ONLY | SYM_VAR_COMPOUND_OP);
+        }
+
+        if ((ast_flags & SYM_VAR_REASSIGN_ONLY) == 0) {
+            int own_idx = sym_find_own_var(tab, sym_id, P->cur_mod);
+            if (own_idx >= 0) {
+                ModVarDef *mv = &sym_vars_mut(tab)[own_idx];
+                if ((mv->flags & SYM_VAR_MUTABLE) == 0) {
+                    mem_err(mem, "Cannot reassign or mutate immutable constant '%.*s'",
+                            (int)len, name);
+                    return MEM_NO_IDX;
+                }
+            } else {
+                (void)sym_set_or_add_var(tab, mem, sym_id, P->cur_mod, val_void(),
+                                         lock_type, lock_unit, ast_flags, true);
+                if (mem->has_error) return MEM_NO_IDX;
+            }
+        } else {
+            uint16_t priv_mod = MEM_NO_IDX;
+            int vis_idx = sym_find_var(tab, sym_id, P->cur_mod, &priv_mod);
+            if (vis_idx >= 0 && (sym_vars(tab)[vis_idx].flags & SYM_VAR_MUTABLE) == 0) {
+                mem_err(mem, "Cannot reassign or mutate immutable constant '%.*s'",
+                        (int)len, name);
+                return MEM_NO_IDX;
+            }
+            if (vis_idx < 0 && priv_mod != MEM_NO_IDX) {
+                StrSlice pmod_s = sym_mod_name(tab, priv_mod);
+                mem_err(mem, "Variable or constant '%.*s' is private to module '[%.*s]'",
+                        (int)len, name, (int)pmod_s.len, mem_str_ptr(mem, pmod_s));
+                return MEM_NO_IDX;
+            }
+            if (vis_idx < 0 && (ast_flags & SYM_VAR_COMPOUND_OP) != 0) {
+                mem_err(mem, "Cannot apply compound assignment to undeclared variable '%.*s'",
+                        (int)len, name);
+                return MEM_NO_IDX;
+            }
+        }
+
+        uint16_t packed_lock = (uint16_t)(((uint16_t)lock_type & 0xFFu) |
+                                          (((uint16_t)lock_unit & 0xFFu) << 8u));
+        return mem_alloc_ast(mem, AST_CONST_SYM, ast_flags, sym_id, packed_lock, P->cur_mod);
+    }
+
+    /* Case B: Local block/function scope (`P->scope_depth > 0`) or stateless one-shot `eng_eval` */
+    if ((mod_flags & SYM_VAR_PRIVATE) != 0 && P->scope_depth > 0) {
+        mem_err(mem, "Modifier 'priv' is only valid on module-level declarations");
+        return MEM_NO_IDX;
+    }
+
+    int vidx = find_local_idx(P, name, len);
+
     if (is_plain) {
+        /* If plain `=` (not `:=`) and not a local variable, check if it targets a module variable/constant */
+        if (!is_colon_eq && !had_mods && vidx < 0) {
+            int sid = sym_find(tab, mem, name, len);
+            if (sid >= 0) {
+                uint16_t priv_mod = MEM_NO_IDX;
+                int mv_idx = sym_find_var(tab, (uint16_t)sid, P->cur_mod, &priv_mod);
+                if (mv_idx >= 0 || priv_mod != MEM_NO_IDX) {
+                    uint16_t packed_lock = (uint16_t)(((uint16_t)lock_type & 0xFFu) |
+                                                      (((uint16_t)lock_unit & 0xFFu) << 8u));
+                    return mem_alloc_ast(mem, AST_CONST_SYM, SYM_VAR_REASSIGN_ONLY,
+                                         (uint16_t)sid, packed_lock, P->cur_mod);
+                }
+            }
+        }
+
+        /* At scope_depth == 0 in stateless eval, prevent `:=` from overwriting an immutable constant of cur_mod */
+        if (P->scope_depth == 0) {
+            int sid = sym_find(tab, mem, name, len);
+            if (sid >= 0) {
+                int own_idx = sym_find_own_var(tab, (uint16_t)sid, P->cur_mod);
+                if (own_idx >= 0 && (sym_vars(tab)[own_idx].flags & SYM_VAR_MUTABLE) == 0) {
+                    mem_err(mem, "Cannot reassign or mutate immutable constant '%.*s'",
+                            (int)len, name);
+                    return MEM_NO_IDX;
+                }
+            }
+        }
+
         uint8_t slot = 0;
         uint16_t init_tid = lock_type ? lock_type : mem->fast_real_type;
         if (vidx < 0 || (is_colon_eq && P->scope_depth > P->locals[vidx].scope_depth)) {
             slot = (uint8_t)parser_add_local(P, name, len, init_tid);
             if (mem->has_error) return MEM_NO_IDX;
+            vidx = find_local_idx(P, name, len);
         } else {
+            if (P->locals[vidx].is_const) {
+                mem_err(mem, "Cannot reassign or mutate immutable constant '%.*s'",
+                        (int)len, name);
+                return MEM_NO_IDX;
+            }
             P->locals[vidx].is_loop_iter = 0;
             slot = P->locals[vidx].slot;
             if (lock_type != 0) {
                 P->slot_types[slot] = lock_type;
             }
         }
-        return mem_alloc_ast(mem, AST_SLOT_LOAD, slot, 0, lock_type, lock_unit);
+        uint8_t sub_byte = slot;
+        if ((mod_flags & SYM_VAR_EXPLICIT_CONST) != 0 && vidx >= 0) {
+            P->locals[vidx].is_const = 1;
+            sub_byte |= AST_SLOT_CONST_DECL_BIT;
+        }
+        return mem_alloc_ast(mem, AST_SLOT_LOAD, sub_byte, 0, lock_type, lock_unit);
     }
 
-    if (vidx < 0) {
-        mem_err(mem, "Cannot apply compound assignment to undeclared variable '%.*s'",
-                (int)len, name);
-        return MEM_NO_IDX;
+    if (vidx >= 0) {
+        if (P->locals[vidx].is_const) {
+            mem_err(mem, "Cannot reassign or mutate immutable constant '%.*s'",
+                    (int)len, name);
+            return MEM_NO_IDX;
+        }
+        return mem_alloc_ast(mem, AST_SLOT_LOAD, P->locals[vidx].slot, 0, lock_type, lock_unit);
     }
-    return mem_alloc_ast(mem, AST_SLOT_LOAD, P->locals[vidx].slot, 0, lock_type, lock_unit);
+
+    /* Compound assignment (`+=`, `-=`, etc.) when not in `P->locals`: check module variables */
+    int sid = sym_find(tab, mem, name, len);
+    if (sid >= 0) {
+        uint16_t priv_mod = MEM_NO_IDX;
+        int mv_idx = sym_find_var(tab, (uint16_t)sid, P->cur_mod, &priv_mod);
+        if (mv_idx >= 0 || priv_mod != MEM_NO_IDX) {
+            uint16_t packed_lock = (uint16_t)(((uint16_t)lock_type & 0xFFu) |
+                                              (((uint16_t)lock_unit & 0xFFu) << 8u));
+            return mem_alloc_ast(mem, AST_CONST_SYM,
+                                 (uint8_t)(SYM_VAR_REASSIGN_ONLY | SYM_VAR_COMPOUND_OP),
+                                 (uint16_t)sid, packed_lock, P->cur_mod);
+        }
+    }
+
+    mem_err(mem, "Cannot apply compound assignment to undeclared variable '%.*s'",
+            (int)len, name);
+    return MEM_NO_IDX;
 }
 
 /* ============================================================================
@@ -2003,7 +2222,7 @@ static uint16_t parse_nud(Parser *P) {
                 if (lhs_node && lhs_node->kind == AST_SLOT_LOAD &&
                     !hardcode_ast_is_bare_unit_rhs(mem, in_node->right) &&
                     (P->lex.cur.kind == TOK_LBRACE || cur_op_meta(P) == INTR_WHILE)) {
-                    uint8_t  var_slot = lhs_node->sub;
+                    uint8_t  var_slot = (uint8_t)(lhs_node->sub & AST_SLOT_IDX_MASK);
                     uint16_t idx_tag  = lhs_node->left;
                     uint16_t for_ref  = ((idx_tag & 0x4000u) != 0)
                                         ? (uint16_t)(0x4000u | ((idx_tag & 0x3Fu) << 8u))
@@ -2118,9 +2337,20 @@ static uint16_t parse_nud(Parser *P) {
         } else {
             int prec = sym_get_active_prec(tab, t.sym_id, FIX_PREFIX);
             bool is_word_local = lex_is_ident_start((unsigned char)P->lex.src[t.off]) &&
-                                 (find_local_idx(P, P->lex.src + t.off, t.len) >= 0 || prec < 0);
+                                 (find_local_idx(P, P->lex.src + t.off, t.len) >= 0 ||
+                                  sym_find_var(tab, t.sym_id, P->cur_mod, NULL) >= 0 ||
+                                  prec < 0);
             if (!is_word_local) {
                 if (prec < 0) {
+                    uint16_t priv_mod = MEM_NO_IDX;
+                    if (sym_has_priv_ov(tab, t.sym_id, FIX_PREFIX, &priv_mod)) {
+                        StrSlice s = tab->syms[t.sym_id];
+                        StrSlice pmod_s = sym_mod_name(tab, priv_mod);
+                        mem_err(mem, "Operator '%.*s' is private to module '[%.*s]'",
+                                (int)s.len, mem_str_ptr(mem, s),
+                                (int)pmod_s.len, mem_str_ptr(mem, pmod_s));
+                        return MEM_NO_IDX;
+                    }
                     StrSlice s = tab->syms[t.sym_id];
                     mem_err(mem, "Operator '%.*s' has no active prefix definition",
                             (int)s.len, mem_str_ptr(mem, s));
@@ -2134,13 +2364,47 @@ static uint16_t parse_nud(Parser *P) {
         }
     }
 
-    /* 6. Identifier, Lambda `x => ...`, Control Construct, Tagged Scope, Typed Variable
-          Declaration, Parameterized Container `vec<T>(...)`, or Multi-Variable Declaration */
+    /* 6. Identifier, Variable Modifier (`pub`, `priv`, `const`, `mut`), Lambda `x => ...`,
+          Control Construct, Tagged Scope, Typed Variable Declaration, or Function Call */
     if (t.kind == TOK_IDENT) {
         const char *id_str = P->lex.src + t.off;
         uint16_t id_len    = t.len;
-        int sym_id         = sym_find(tab, mem, id_str, id_len);
-        uint8_t fn_meta    = (sym_id >= 0) ? sym_active_meta_tag(tab, (uint16_t)sym_id, FIX_FUNC) : 0;
+
+        /* 5.9 Consume optional declaration modifiers `pub`, `priv`, `const`, `mut` */
+        while (is_var_modifier_kw(id_str, id_len)) {
+            uint16_t peek_p = skip_raw_ws(P->lex.src, P->lex.pos, P->lex.len);
+            if (peek_p >= P->lex.len || !lex_is_ident_start((unsigned char)P->lex.src[peek_p])) {
+                mem_err(mem, "Cannot use reserved keyword '%.*s' as a variable name",
+                        (int)id_len, id_str);
+                return MEM_NO_IDX;
+            }
+            P->has_pending_mods = true;
+            if (id_len == 4 && memcmp(id_str, "priv", 4) == 0) {
+                P->pending_var_flags |= SYM_VAR_PRIVATE;
+            } else if (id_len == 3 && memcmp(id_str, "pub", 3) == 0) {
+                P->pending_var_flags &= (uint8_t)~SYM_VAR_PRIVATE;
+            } else if (id_len == 5 && memcmp(id_str, "const", 5) == 0) {
+                P->pending_var_flags |= SYM_VAR_EXPLICIT_CONST;
+                P->pending_var_flags &= (uint8_t)~SYM_VAR_MUTABLE;
+            } else if (id_len == 3 && memcmp(id_str, "mut", 3) == 0) {
+                P->pending_var_flags |= SYM_VAR_MUTABLE;
+                P->pending_var_flags &= (uint8_t)~SYM_VAR_EXPLICIT_CONST;
+            }
+            lex_next(&P->lex);
+            t = P->lex.cur;
+            if (t.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[t.off])) {
+                t.kind = TOK_IDENT;
+            }
+            if (t.kind != TOK_IDENT) {
+                mem_err(mem, "Expected variable or function identifier after declaration modifier");
+                return MEM_NO_IDX;
+            }
+            id_str = P->lex.src + t.off;
+            id_len = t.len;
+        }
+
+        int sym_id      = sym_find(tab, mem, id_str, id_len);
+        uint8_t fn_meta = (sym_id >= 0) ? sym_active_meta_tag(tab, (uint16_t)sym_id, FIX_FUNC) : 0;
 
         lex_next(&P->lex);
 
@@ -2324,8 +2588,12 @@ static uint16_t parse_nud(Parser *P) {
             int prec = sym_get_active_prec(tab, op_sym_id, FIX_INFIX_RIGHT);
             lex_next(&P->lex);
 
+            uint8_t saved_mod_flags = P->pending_var_flags;
+            bool    saved_had_mods  = P->has_pending_mods;
             uint16_t slot_asts[8];
             for (uint8_t i = 0; i < var_cnt; ++i) {
+                P->pending_var_flags = saved_mod_flags;
+                P->has_pending_mods  = saved_had_mods;
                 slot_asts[i] = resolve_var_for_assign(P, var_names[i], var_lens[i],
                                                       op_sym_id, lock_type, lock_unit);
                 if (mem->has_error) return MEM_NO_IDX;
@@ -2363,18 +2631,37 @@ static uint16_t parse_nud(Parser *P) {
             return parse_inline_fn_def(P, id_str, id_len);
         }
 
-        /* 6e. Single Local Variable or Parameter Slot (with direct `$fn` call support `f(x)`) */
+        /* 6e. Single Local Variable, Parameter Slot, or Module Variable Assignment */
         int vidx = find_local_idx(P, id_str, id_len);
         bool is_assign = (P->in_symbolic_expr == 0 && P->lex.cur.kind == TOK_OP &&
                           sym_active_meta_tag(tab, P->lex.cur.sym_id, FIX_INFIX_RIGHT) == INTR_STORE);
         if (is_assign) {
             uint16_t lhs_ast = resolve_var_for_assign(P, id_str, id_len, P->lex.cur.sym_id, 0, 0);
-            if (lhs_ast != MEM_NO_IDX && mem->fn_type_id != 0 &&
-                mem_get_ast(mem, lhs_ast)->kind == AST_SLOT_LOAD &&
-                hardcode_rhs_starts_lambda(P)) {
-                P->slot_types[mem_get_ast(mem, lhs_ast)->sub] = mem->fn_type_id;
+            if (lhs_ast != MEM_NO_IDX && mem->fn_type_id != 0 && hardcode_rhs_starts_lambda(P)) {
+                const AstNode *ln = mem_get_ast(mem, lhs_ast);
+                if (ln->kind == AST_SLOT_LOAD) {
+                    P->slot_types[ln->sub & AST_SLOT_IDX_MASK] = mem->fn_type_id;
+                } else if (ln->kind == AST_CONST_SYM) {
+                    int own_idx = sym_find_own_var(tab, ln->ref, P->cur_mod);
+                    if (own_idx < 0) {
+                        own_idx = sym_set_or_add_var(tab, mem, ln->ref, P->cur_mod, val_void(),
+                                                     0, 0,
+                                                     (uint8_t)(ln->sub | SYM_VAR_MUTABLE), true);
+                    }
+                    if (own_idx >= 0) {
+                        ModVarDef *mv = &sym_vars_mut(tab)[own_idx];
+                        mv->lock_type = (uint16_t)((mv->lock_type & 0xFFu) | ((uint32_t)mem->fn_type_id << 8u));
+                    }
+                }
             }
             return lhs_ast;
+        }
+        if (P->has_pending_mods) {
+            P->pending_var_flags = 0;
+            P->has_pending_mods  = false;
+            mem_err(mem, "Expected ':=' or '=' after declaration modifier on '%.*s'",
+                    (int)id_len, id_str);
+            return MEM_NO_IDX;
         }
         if (vidx >= 0) {
             uint8_t  slot      = P->locals[vidx].slot;
@@ -2391,19 +2678,37 @@ static uint16_t parse_nud(Parser *P) {
             return slot_load;
         }
 
-        /* 6e-iter. Undefined variable on the left side of an iterator operator (`i in 1...100`) */
-        if (P->lex.cur.kind == TOK_OP && hardcode_is_in_op_sym(mem, tab, P->lex.cur.sym_id)) {
-            bool is_active_const = false;
-            if (sym_id >= 0) {
-                for (uint8_t i = 0; i < tab->const_count; ++i) {
-                    if (tab->consts[i].sym_id == (uint16_t)sym_id &&
-                        sym_mod_enabled(tab, tab->consts[i].mod_id)) {
-                        is_active_const = true;
-                        break;
-                    }
+        /* 6e-mod. Module-level `$fn` variable call `f(x)` when `f` is in `tab->vars` */
+        if (sym_id >= 0 && !P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN) {
+            uint16_t priv_mod = MEM_NO_IDX;
+            int mv_idx = sym_find_var(tab, (uint16_t)sym_id, P->cur_mod, &priv_mod);
+            if (mv_idx >= 0) {
+                const ModVarDef *mv = &sym_vars(tab)[mv_idx];
+                uint16_t mv_tid = val_get_type(mem, mv->val);
+                if (mv_tid == MEM_TYPE_VOID) {
+                    mv_tid = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
+                                                     : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
+                }
+                bool is_fn_mvar = (mem->fn_type_id != 0 && mv_tid == mem->fn_type_id);
+                if (!is_fn_mvar && !sym_has_visible_func_ov(tab, (uint16_t)sym_id) &&
+                    sym_find_type(tab, mem, id_str, id_len) == MEM_TYPE_VOID) {
+                    is_fn_mvar = true;
+                }
+                if (is_fn_mvar) {
+                    uint16_t mod_load = mem_alloc_ast(mem, AST_CONST_SYM, 0,
+                                                      (uint16_t)sym_id, MEM_NO_IDX, P->cur_mod);
+                    return parse_fn_call_step(P, mod_load);
                 }
             }
-            if (!is_active_const) {
+        }
+
+        /* 6e-iter. Undefined variable on the left side of an iterator operator (`i in 1...100`) */
+        if (P->lex.cur.kind == TOK_OP && hardcode_is_in_op_sym(mem, tab, P->lex.cur.sym_id)) {
+            bool is_active_var = false;
+            if (sym_id >= 0 && sym_find_var(tab, (uint16_t)sym_id, P->cur_mod, NULL) >= 0) {
+                is_active_var = true;
+            }
+            if (!is_active_var) {
                 int slot = parser_add_local(P, id_str, id_len, mem->fast_real_type);
                 if (mem->has_error) return MEM_NO_IDX;
                 P->locals[P->vis_count - 1].is_loop_iter = 1;
@@ -2449,6 +2754,14 @@ static uint16_t parse_nud(Parser *P) {
                         int lidx = find_local_idx(P, P->lex.src + P->lex.cur.off, P->lex.cur.len);
                         if (lidx >= 0 && P->slot_types[P->locals[lidx].slot] == mem->fn_type_id) {
                             first_is_fn_local = true;
+                        } else {
+                            int fsid = sym_find(tab, mem, P->lex.src + P->lex.cur.off, P->lex.cur.len);
+                            if (fsid >= 0) {
+                                int fmv = sym_find_var(tab, (uint16_t)fsid, P->cur_mod, NULL);
+                                if (fmv >= 0 && val_get_type(mem, sym_vars(tab)[fmv].val) == mem->fn_type_id) {
+                                    first_is_fn_local = true;
+                                }
+                            }
                         }
                     }
                     use_lazy_call = (first_is_ident && !first_is_fn_local);
@@ -2634,7 +2947,23 @@ static uint16_t parse_nud(Parser *P) {
                 return mem_alloc_ast(mem, AST_CONSTRUCT, argc, st_tid, head, MEM_NO_IDX);
             }
 
-            if (sym_id < 0) {
+            if (sym_id < 0 || !sym_has_visible_func_ov(tab, (uint16_t)sym_id)) {
+                if (sym_id >= 0) {
+                    uint16_t priv_mod = MEM_NO_IDX;
+                    if (sym_has_priv_ov(tab, (uint16_t)sym_id, FIX_FUNC, &priv_mod)) {
+                        StrSlice pmod_s = sym_mod_name(tab, priv_mod);
+                        mem_err(mem, "Function '%.*s' is private to module '[%.*s]'",
+                                (int)id_len, id_str, (int)pmod_s.len, mem_str_ptr(mem, pmod_s));
+                        return MEM_NO_IDX;
+                    }
+                    int mv_idx = sym_find_var(tab, (uint16_t)sym_id, P->cur_mod, &priv_mod);
+                    if (mv_idx < 0 && priv_mod != MEM_NO_IDX) {
+                        StrSlice pmod_s = sym_mod_name(tab, priv_mod);
+                        mem_err(mem, "Function '%.*s' is private to module '[%.*s]'",
+                                (int)id_len, id_str, (int)pmod_s.len, mem_str_ptr(mem, pmod_s));
+                        return MEM_NO_IDX;
+                    }
+                }
                 /* Check if `id_str` is defined later in the same script as a mutually recursive function */
                 uint16_t scan_p = P->lex.cur.off;
                 bool found_later_fn = false;
@@ -2650,23 +2979,40 @@ static uint16_t parse_nud(Parser *P) {
                     }
                     scan_p++;
                 }
-                if (found_later_fn && mem->fn_type_id != 0 &&
-                    P->vis_count < PARSER_MAX_LOCALS && P->local_count < PARSER_MAX_LOCALS) {
-                    uint8_t fwd_slot = P->local_count++;
-                    /* Insert at bottom of P->locals with scope_depth = 0 so outer scope sees it */
-                    memmove(&P->locals[1], &P->locals[0], (size_t)P->vis_count * sizeof(LocalVar));
-                    P->vis_count++;
-                    P->locals[0].name         = mem_intern_str(mem, id_str, id_len);
-                    P->locals[0].type_id      = mem->fn_type_id;
-                    P->locals[0].slot         = fwd_slot;
-                    P->locals[0].scope_depth  = 0;
-                    P->locals[0].is_loop_iter = 0;
-                    P->slot_types[fwd_slot]   = mem->fn_type_id;
-                    if (!P->in_ext_body && fwd_slot < 64u) {
-                        mem->local_slot_names[fwd_slot] = P->locals[0].name;
+                if (found_later_fn && mem->fn_type_id != 0) {
+                    if (P->in_ext_body) {
+                        StrSlice fslice = mem_intern_str(mem, id_str, id_len);
+                        uint16_t fsid   = sym_intern(tab, mem, fslice);
+                        return mem_alloc_ast(mem, AST_CALL, argc, fsid, head, MEM_NO_IDX);
                     }
-                    uint16_t fn_load = mem_alloc_ast(mem, AST_SLOT_LOAD, fwd_slot, 0, 0, 0);
-                    return mem_alloc_ast(mem, AST_FN_CALL, argc, 0, fn_load, head);
+                    if (P->is_mod_scope) {
+                        StrSlice fslice = mem_intern_str(mem, id_str, id_len);
+                        uint16_t fsid   = sym_intern(tab, mem, fslice);
+                        int f_idx = sym_set_or_add_var(tab, mem, fsid, P->cur_mod, val_void(),
+                                                       0, 0, SYM_VAR_MUTABLE, true);
+                        if (f_idx >= 0) {
+                            sym_vars_mut(tab)[f_idx].lock_type = (uint16_t)((uint32_t)mem->fn_type_id << 8u);
+                        }
+                        uint16_t fn_load = mem_alloc_ast(mem, AST_CONST_SYM, 0, fsid, MEM_NO_IDX, P->cur_mod);
+                        return mem_alloc_ast(mem, AST_FN_CALL, argc, 0, fn_load, head);
+                    } else if (P->vis_count < PARSER_MAX_LOCALS && P->local_count < PARSER_MAX_LOCALS) {
+                        uint8_t fwd_slot = P->local_count++;
+                        /* Insert at bottom of P->locals with scope_depth = 0 so outer scope sees it */
+                        memmove(&P->locals[1], &P->locals[0], (size_t)P->vis_count * sizeof(LocalVar));
+                        P->vis_count++;
+                        P->locals[0].name         = mem_intern_str(mem, id_str, id_len);
+                        P->locals[0].type_id      = mem->fn_type_id;
+                        P->locals[0].slot         = fwd_slot;
+                        P->locals[0].scope_depth  = 0;
+                        P->locals[0].is_loop_iter = 0;
+                        P->locals[0].is_const     = 0;
+                        P->slot_types[fwd_slot]   = mem->fn_type_id;
+                        if (!P->in_ext_body && fwd_slot < 64u) {
+                            mem->local_slot_names[fwd_slot] = P->locals[0].name;
+                        }
+                        uint16_t fn_load = mem_alloc_ast(mem, AST_SLOT_LOAD, fwd_slot, 0, 0, 0);
+                        return mem_alloc_ast(mem, AST_FN_CALL, argc, 0, fn_load, head);
+                    }
                 }
                 mem_err(mem, "Undefined function or struct '%.*s'", (int)id_len, id_str);
                 return MEM_NO_IDX;
@@ -2680,12 +3026,25 @@ static uint16_t parse_nud(Parser *P) {
             return mem_alloc_ast(mem, AST_CALL, argc, (uint16_t)sym_id, head, container_type_spec);
         }
 
-        /* 6g. Named Global Constant (`π`, `e`, `g0`, `c0`, etc.) */
-        if (sym_id >= 0) {
+        /* 6g. Module Variable or Named Constant (`π`, `e`, `g0`, `c0`, user module vars) */
+        if (sym_id >= 0 && P->in_symbolic_expr == 0) {
+            uint16_t priv_mod = MEM_NO_IDX;
+            int mv_idx = sym_find_var(tab, (uint16_t)sym_id, P->cur_mod, &priv_mod);
+            if (mv_idx >= 0) {
+                return mem_alloc_ast(mem, AST_CONST_SYM, 0, (uint16_t)sym_id, MEM_NO_IDX, P->cur_mod);
+            }
+            if (priv_mod != MEM_NO_IDX) {
+                StrSlice pmod_s = sym_mod_name(tab, priv_mod);
+                mem_err(mem, "Variable or constant '%.*s' is private to module '[%.*s]'",
+                        (int)id_len, id_str, (int)pmod_s.len, mem_str_ptr(mem, pmod_s));
+                return MEM_NO_IDX;
+            }
+        } else if (sym_id >= 0 && P->in_symbolic_expr > 0) {
             for (uint8_t i = 0; i < tab->const_count; ++i) {
                 if (tab->consts[i].sym_id == (uint16_t)sym_id &&
-                    sym_mod_enabled(tab, tab->consts[i].mod_id)) {
-                    return mem_alloc_ast(mem, AST_CONST_SYM, 0, (uint16_t)sym_id, MEM_NO_IDX, MEM_NO_IDX);
+                    sym_mod_enabled(tab, tab->consts[i].mod_id) &&
+                    ((tab->consts[i].reserved & SYM_VAR_PRIVATE) == 0 || tab->consts[i].mod_id == P->cur_mod)) {
+                    return mem_alloc_ast(mem, AST_CONST_SYM, 0, (uint16_t)sym_id, MEM_NO_IDX, P->cur_mod);
                 }
             }
         }
@@ -2834,7 +3193,9 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
                     if (!lex_peek_is_lparen(&P->lex)) {
                         int usid = sym_find(tab, mem, ustr, ulen);
                         if (usid >= 0 && hardcode_sym_is_postfix_unit(tab, (uint16_t)usid)) {
-                            if (find_local_idx(P, ustr, ulen) < 0) {
+                            bool is_bound_var = (find_local_idx(P, ustr, ulen) >= 0) ||
+                                                (sym_find_var(tab, (uint16_t)usid, P->cur_mod, NULL) >= 0);
+                            if (!is_bound_var) {
                                 lex_next(&P->lex);
                                 uint16_t pidx = mem_alloc_pool(mem, 1);
                                 mem_write_pool(mem, pidx, 1.0);
@@ -2849,10 +3210,15 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
                 }
                 if (right == MEM_NO_IDX) {
                     right = parser_parse_expr(P, next_min);
-                    if (is_in_op && rhs_unparen && dual_unit_sid >= 0 && right != MEM_NO_IDX &&
-                        mem_get_ast(mem, right)->kind == AST_SLOT_LOAD) {
-                        mem_get_ast_mut(mem, right)->ref |=
-                            (uint16_t)(AST_SLOT_DUAL_UNIT_BIT | ((uint16_t)dual_unit_sid & AST_SLOT_SYM_MASK));
+                    if (is_in_op && rhs_unparen && dual_unit_sid >= 0 && right != MEM_NO_IDX) {
+                        AstKind rk = (AstKind)mem_get_ast(mem, right)->kind;
+                        if (rk == AST_SLOT_LOAD) {
+                            mem_get_ast_mut(mem, right)->ref |=
+                                (uint16_t)(AST_SLOT_DUAL_UNIT_BIT | ((uint16_t)dual_unit_sid & AST_SLOT_SYM_MASK));
+                        } else if (rk == AST_CONST_SYM) {
+                            mem_get_ast_mut(mem, right)->left =
+                                (uint16_t)(AST_SLOT_DUAL_UNIT_BIT | ((uint16_t)dual_unit_sid & AST_SLOT_SYM_MASK));
+                        }
                     }
                 }
                 if (mtag == INTR_STORE) {
@@ -2880,7 +3246,7 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
                         !hardcode_ast_is_bare_unit_rhs(mem, in_node->right) &&
                         (cur_op_meta(P) == INTR_WHILE ||
                          (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LBRACE && P->in_cond_expr == 0))) {
-                        uint8_t  var_slot = lhs_node->sub;
+                        uint8_t  var_slot = (uint8_t)(lhs_node->sub & AST_SLOT_IDX_MASK);
                         uint16_t idx_tag  = lhs_node->left;
                         uint16_t for_ref  = ((idx_tag & 0x4000u) != 0)
                                             ? (uint16_t)(0x4000u | ((idx_tag & 0x3Fu) << 8u))

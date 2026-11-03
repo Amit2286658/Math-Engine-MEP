@@ -15,8 +15,6 @@
 
 #include "../Headers/math_engine.h"
 #include "../compile/user_loader.h"
-#include "../session/session.h"
-#include "../session/snapshot.h"
 
 #if defined(__has_include) && __has_include(<jni.h>)
 #include <jni.h>
@@ -79,39 +77,23 @@ Java_com_mathengine_MathEngineBridge_nativeEval(JNIEnv *env, jclass clazz,
 JNIEXPORT jstring JNICALL
 Java_com_mathengine_MathEngineBridge_nativeLastError(JNIEnv *env, jclass clazz, jlong handle);
 
-/* 3. Parallel In-Memory Sessions & Order-Tagged Snapshots */
-JNIEXPORT jint JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionOpen(JNIEnv *env, jclass clazz, jlong handle);
+/* 3. Top-to-Bottom Module Execution, Reset, Variable Introspection & Source Export */
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeModuleEval(JNIEnv *env, jclass clazz,
+                                                      jlong handle, jstring modName,
+                                                      jstring expr);
 
 JNIEXPORT jboolean JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionClose(JNIEnv *env, jclass clazz,
-                                                        jlong handle, jint sessionId);
-
-JNIEXPORT jboolean JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionReset(JNIEnv *env, jclass clazz,
-                                                        jlong handle, jint sessionId);
+Java_com_mathengine_MathEngineBridge_nativeModuleReset(JNIEnv *env, jclass clazz,
+                                                       jlong handle, jstring modName);
 
 JNIEXPORT jstring JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionEval(JNIEnv *env, jclass clazz,
-                                                       jlong handle, jint sessionId,
-                                                       jstring expr);
-
-JNIEXPORT jint JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionSnapshotCount(JNIEnv *env, jclass clazz,
-                                                                jlong handle, jint sessionId);
+Java_com_mathengine_MathEngineBridge_nativeModuleFormatVars(JNIEnv *env, jclass clazz,
+                                                            jlong handle, jstring modName);
 
 JNIEXPORT jstring JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionSnapshotAt(JNIEnv *env, jclass clazz,
-                                                             jlong handle, jint sessionId,
-                                                             jint index);
-
-JNIEXPORT jstring JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionExportSnapshots(JNIEnv *env, jclass clazz,
-                                                                  jlong handle, jint sessionId);
-
-JNIEXPORT jint JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionRestore(JNIEnv *env, jclass clazz,
-                                                          jlong handle, jstring newlineJoinedSnapshots);
+Java_com_mathengine_MathEngineBridge_nativeModuleExportSource(JNIEnv *env, jclass clazz,
+                                                              jlong handle, jstring modName);
 
 /* 4. User Extension Compilation, `.mathc` Binary Cache & O(1) Module Toggling */
 JNIEXPORT jbyteArray JNICALL

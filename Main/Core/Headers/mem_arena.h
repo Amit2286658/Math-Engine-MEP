@@ -29,7 +29,7 @@ extern "C" {
  * ============================================================================ */
 
 #define MEM_SRC_BUF_CAP     49152   /* UTF-8 source buffer for interned strings   */
-#define MEM_MAX_AST_NODES   24576   /* 8-byte AST nodes (128 KB)                  */
+#define MEM_MAX_AST_NODES   24576   /* 8-byte AST nodes (192 KB)                  */
 #define MEM_MAX_F64_POOL     8192   /* Flat double pool for literals/structs/vecs */
 #define MEM_MAX_CALL_STACK   2048   /* Evaluation & local variable stack slots    */
 #define MEM_MAX_LABELS         16   /* Max tagged scopes (`Tag : { ... }`)        */
@@ -43,6 +43,8 @@ extern "C" {
 #define MEM_HEAP_IDX_BIT   0x8000u  /* Tag bit in `data_idx` for HeapBlock handle */
 #define MEM_HEAP_ID_MASK   0x7FFFu  /* Mask to extract `0..255` HeapBlock index   */
 
+#define MEM_HDR_IMMUTABLE_BIT 0x8000u /* Bit 15 in container header for `const`   */
+
 #define MEM_NO_IDX        0xFFFFu  /* Null / failed 16-bit index sentinel        */
 #define MEM_TYPE_VOID          0u  /* Invalid / void entity type ID              */
 #define MEM_UNIT_NONE          0u  /* Dimensionless / no unit tag                */
@@ -50,7 +52,7 @@ extern "C" {
 #define MEM_MAT_HDR_SLOTS      8u  /* [rank, total_len, data_idx, flags, d0..d3] */
 #define MEM_FN_HDR_SLOTS       4u  /* [body_ast, param_cnt, slots, frame_base]   */
 #define MEM_MAP_HDR_SLOTS      4u  /* [val_type_unit, len, cap, data_pool_idx]   */
-#define MEM_FN_MAX_PARAMS     16u  /* Max parameters for lambdas & session fns   */
+#define MEM_FN_MAX_PARAMS     16u  /* Max parameters for lambdas & module fns    */
 #define MEM_MAX_TEMP_ROOTS    64u  /* C stack temporary Value* roots for GC      */
 
 typedef enum {
@@ -98,6 +100,8 @@ typedef struct {
     uint8_t  marked;     /* Mark bit during `mem_compact_scratch` / scope GC     */
 } HeapBlock;
 
+struct SymTable;
+
 /* ============================================================================
  * 3. MEMORY ARENA CONTEXT
  * ============================================================================ */
@@ -124,10 +128,11 @@ typedef struct {
     uint16_t    heap_active_count;
     uint32_t    heap_total_slots;
 
-    /* Call & Local Variable Stack + Optional Concrete Type/Unit Slot Locks */
+    /* Call & Local Variable Stack + Optional Concrete Type/Unit/Const Slot Locks */
     Value       stack[MEM_MAX_CALL_STACK];
     uint8_t     slot_locked_type[MEM_MAX_CALL_STACK];
     uint8_t     slot_locked_unit[MEM_MAX_CALL_STACK];
+    uint8_t     slot_is_const[MEM_MAX_CALL_STACK];
     uint16_t    sp;
 
     /* Special Bootstrap Type IDs */
@@ -145,13 +150,19 @@ typedef struct {
     Value       jump_val;          /* Payload for `break expr` / `return expr`   */
     uint16_t    label_ast[MEM_MAX_LABELS];
 
-    /* Lambda source slices for session variable persistence (reset per eval) */
-    uint16_t    fn_body_ast[32];
-    StrSlice    fn_src_slice[32];
+    /* Lambda source slices for module variable export */
+    uint16_t    fn_body_ast[64];
+    StrSlice    fn_src_slice[64];
     uint8_t     fn_src_count;
+    uint8_t     perm_fn_src_count;
 
-    /* Local variable slot names for symbolic math & session introspection */
+    /* Local variable slot names for symbolic math & introspection */
     StrSlice    local_slot_names[64];
+
+    /* Owning SymTable back-pointer for module-variable GC root tracing & active module context */
+    struct SymTable *sym_tab;
+    uint16_t         cur_mod;
+    Value            last_mod_val;
 
     /* Scratch Pool Mark-Sweep / Sliding Compaction State & C Temporary Roots */
     Value      *temp_roots[MEM_MAX_TEMP_ROOTS];
@@ -227,6 +238,10 @@ StrSlice mem_map_entry_key(const MemArena *mem, uint16_t data_idx, uint16_t entr
 Value    mem_map_entry_val(const MemArena *mem, uint16_t data_idx, uint16_t entry_i);
 void     mem_map_set_entry(MemArena *mem, uint16_t data_idx, uint16_t entry_i,
                            StrSlice key, Value val);
+
+/* Container Immutability Helpers (`const` / immutable module bindings) */
+void     mem_val_mark_immutable(MemArena *mem, Value v);
+bool     mem_val_is_immutable(const MemArena *mem, Value v);
 
 /* Arena Scratch-Pool & Heap-Block Mark-Sweep / Sliding Defragmentation Compaction */
 uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_root_count);

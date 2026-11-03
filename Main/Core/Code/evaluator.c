@@ -135,10 +135,11 @@ Value eval_dispatch_overload(MemArena *mem, SymTable *tab,
     }
 
     const OpOverload *matched = NULL;
-    int     best_score        = -1;
-    uint8_t matched_bound_T   = MEM_UNIT_NONE;
-    bool    matched_has_T     = false;
-    bool    type_only_matched = false;
+    int      best_score        = -1;
+    uint8_t  matched_bound_T   = MEM_UNIT_NONE;
+    bool     matched_has_T     = false;
+    bool     type_only_matched = false;
+    uint16_t priv_mod          = MEM_NO_IDX;
 
     uint16_t first_ov = (sym_id < tab->sym_count) ? tab->sym_first_ov[sym_id] : MEM_NO_IDX;
     for (uint16_t i = first_ov; i != MEM_NO_IDX; i = tab->ov_next[i]) {
@@ -146,6 +147,10 @@ Value eval_dispatch_overload(MemArena *mem, SymTable *tab,
         if (ov->fixity != (uint8_t)fixity) continue;
         if (ov->param_count != argc) continue;
         if (!sym_mod_enabled(tab, ov->mod_id)) continue;
+        if ((ov->reserved & SYM_OV_PRIVATE) != 0 && ov->mod_id != mem->cur_mod) {
+            priv_mod = ov->mod_id;
+            continue;
+        }
 
         bool type_ok = true;
         int  score   = 0;
@@ -207,6 +212,13 @@ Value eval_dispatch_overload(MemArena *mem, SymTable *tab,
 
     if (!matched) {
         StrSlice s = tab->syms[sym_id];
+        if (!type_only_matched && priv_mod != MEM_NO_IDX && priv_mod < tab->mod_count) {
+            StrSlice ms = sym_mod_name(tab, priv_mod);
+            mem_err(mem, "Function or operator '%.*s' is private to module '[%.*s]'",
+                    (int)s.len, mem_str_ptr(mem, s),
+                    (int)ms.len, mem_str_ptr(mem, ms));
+            return val_void();
+        }
         char t1[32] = "", t2[32] = "", u1[32] = "", u2[32] = "";
         if (argc >= 1) {
             sym_type_name(tab, mem, arg_types[0], t1, sizeof(t1));
@@ -284,6 +296,11 @@ Value eval_dispatch_overload(MemArena *mem, SymTable *tab,
     }
     scan_all_labels_in_tree(mem, matched->body_ast);
 
+    uint16_t saved_mod     = mem->cur_mod;
+    uint16_t saved_tab_mod = tab->cur_mod;
+    mem->cur_mod = matched->mod_id;
+    tab->cur_mod = matched->mod_id;
+
     Value result = eval_ast(mem, tab, matched->body_ast, frame_base, matched->ret_type);
     if (mem->jump_active == JUMP_RETURN) {
         result = mem->jump_val;
@@ -292,6 +309,9 @@ Value eval_dispatch_overload(MemArena *mem, SymTable *tab,
         mem->jump_active = JUMP_NONE;
         mem_err(mem, "Unhandled jump, break, or continue outside active loop/scope");
     }
+
+    mem->cur_mod = saved_mod;
+    tab->cur_mod = saved_tab_mod;
 
     memcpy(mem->label_ast, saved_labels, sizeof(saved_labels));
     mem_pop_frame(mem, frame_base);
@@ -327,6 +347,10 @@ static Value eval_index_op(MemArena *mem, SymTable *tab,
                            bool is_write, Value rhs) {
     Value base = eval_ast(mem, tab, n->left, frame_base, cur_ret_type);
     if (mem->has_error || mem->jump_active != JUMP_NONE) return val_void();
+    if (is_write && mem_val_is_immutable(mem, base)) {
+        mem_err(mem, "Cannot mutate immutable constant container");
+        return val_void();
+    }
 
     uint8_t argc = n->sub;
     Value   iv_args[4] = { 0 };
@@ -386,7 +410,7 @@ static Value eval_index_op(MemArena *mem, SymTable *tab,
         uint16_t hdr_idx  = val_get_pool_idx(base);
         uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
         uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
-        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0xFFu);
+        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0x7Fu);
         uint32_t len      = (uint32_t)mem_read_pool(mem, hdr_idx + 1);
         uint16_t data_idx = (uint16_t)mem_read_pool(mem, hdr_idx + 3);
         uint16_t stride   = (elem_tid > 0 && elem_tid < tab->type_count)
@@ -401,7 +425,7 @@ static Value eval_index_op(MemArena *mem, SymTable *tab,
         if (!is_write) {
             uint16_t out_hdr = mem_vec_alloc_hdr(mem, elem_tid, slice_cnt);
             if (mem->has_error) return val_void();
-            mem_write_pool(mem, out_hdr + 0, (double)raw_hdr0);
+            mem_write_pool(mem, out_hdr + 0, (double)(raw_hdr0 & (uint16_t)~MEM_HDR_IMMUTABLE_BIT));
             if (slice_cnt > 0) {
                 if (!mem_vec_reserve(mem, out_hdr, stride, slice_cnt)) return val_void();
                 uint16_t out_data = (uint16_t)mem_read_pool(mem, out_hdr + 3);
@@ -419,7 +443,7 @@ static Value eval_index_op(MemArena *mem, SymTable *tab,
                 uint16_t rhdr = val_get_pool_idx(rhs);
                 uint16_t rraw = (uint16_t)mem_read_pool(mem, rhdr + 0);
                 uint16_t rtid = (uint16_t)(rraw & 0xFFu);
-                uint8_t  ruid = (uint8_t)((rraw >> 8) & 0xFFu);
+                uint8_t  ruid = (uint8_t)((rraw >> 8) & 0x7Fu);
                 uint32_t rlen = (uint32_t)mem_read_pool(mem, rhdr + 1);
                 uint16_t rdat = (uint16_t)mem_read_pool(mem, rhdr + 3);
                 if (rlen != slice_cnt) {
@@ -659,7 +683,7 @@ static Value eval_index_op(MemArena *mem, SymTable *tab,
         uint16_t hdr_idx  = val_get_pool_idx(base);
         uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
         uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
-        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0xFFu);
+        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0x7Fu);
         uint32_t len      = (uint32_t)mem_read_pool(mem, hdr_idx + 1);
         uint16_t data_idx = (uint16_t)mem_read_pool(mem, hdr_idx + 3);
         uint16_t stride   = (elem_tid > 0 && elem_tid < tab->type_count)
@@ -904,18 +928,35 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
         }
 
         case AST_CONST_SYM: {
-            uint16_t sym_id = n->ref;
-            for (uint8_t i = 0; i < tab->const_count; ++i) {
-                if (tab->consts[i].sym_id == sym_id && sym_mod_enabled(tab, tab->consts[i].mod_id)) {
-                    return tab->const_vals[tab->consts[i].val_idx];
+            uint16_t sym_id     = n->ref;
+            uint16_t caller_mod = (n->right != MEM_NO_IDX && n->right < tab->mod_count)
+                                  ? n->right : mem->cur_mod;
+            uint16_t priv_mod   = MEM_NO_IDX;
+            int mv_idx = sym_find_var(tab, sym_id, caller_mod, &priv_mod);
+            if (mv_idx >= 0) {
+                return sym_vars(tab)[mv_idx].val;
+            }
+            if (priv_mod == MEM_NO_IDX) {
+                for (uint8_t i = 0; i < tab->const_count; ++i) {
+                    if (tab->consts[i].sym_id == sym_id && sym_mod_enabled(tab, tab->consts[i].mod_id)) {
+                        return tab->const_vals[tab->consts[i].val_idx];
+                    }
                 }
             }
             StrSlice s = tab->syms[sym_id];
-            mem_err(mem, "Constant '%.*s' is disabled or undefined", (int)s.len, mem_str_ptr(mem, s));
+            if (priv_mod != MEM_NO_IDX && priv_mod < tab->mod_count) {
+                StrSlice ms = sym_mod_name(tab, priv_mod);
+                mem_err(mem, "Variable or constant '%.*s' is private to module '[%.*s]'",
+                        (int)s.len, mem_str_ptr(mem, s),
+                        (int)ms.len, mem_str_ptr(mem, ms));
+            } else {
+                mem_err(mem, "Constant '%.*s' is disabled or undefined",
+                        (int)s.len, mem_str_ptr(mem, s));
+            }
             return val_void();
         }
 
-        case AST_SLOT_LOAD:
+        case AST_SLOT_LOAD: {
             if ((n->ref & 0x4000u) != 0) {
                 uint16_t var_sym = (uint16_t)(n->ref & 0x3FFFu);
                 if (var_sym < tab->sym_count) {
@@ -927,7 +968,9 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                 }
                 return val_void();
             }
-            return mem_get_slot(mem, frame_base, n->sub);
+            uint8_t slot_idx = (uint8_t)(n->sub & AST_SLOT_IDX_MASK);
+            return mem_get_slot(mem, frame_base, slot_idx);
+        }
 
         case AST_FIELD_LOAD: {
             Value base = eval_ast(mem, tab, n->left, frame_base, cur_ret_type);
@@ -962,9 +1005,15 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                 if (mem->has_error || mem->jump_active != JUMP_NONE) return val_void();
                 const AstNode *lhs = mem_get_ast(mem, n->left);
                 if (lhs->kind == AST_SLOT_LOAD) {
-                    uint16_t abs_slot = (uint16_t)(frame_base + lhs->sub);
+                    uint8_t  slot_idx      = (uint8_t)(lhs->sub & AST_SLOT_IDX_MASK);
+                    bool     is_const_decl = (lhs->sub & AST_SLOT_CONST_DECL_BIT) != 0;
+                    uint16_t abs_slot      = (uint16_t)(frame_base + slot_idx);
                     if (abs_slot >= MEM_MAX_CALL_STACK) {
                         mem_err(mem, "Stack slot index %u out of bounds", (unsigned)abs_slot);
+                        return val_void();
+                    }
+                    if (mem->slot_is_const[abs_slot] != 0 && !is_const_decl) {
+                        mem_err(mem, "Cannot reassign or mutate immutable constant");
                         return val_void();
                     }
                     if (lhs->left != 0 && lhs->left != MEM_NO_IDX) {
@@ -1001,14 +1050,66 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                         }
                     }
 
-                    mem_set_slot(mem, frame_base, lhs->sub, rhs);
+                    mem_set_slot(mem, frame_base, slot_idx, rhs);
+                    if (is_const_decl) {
+                        mem->slot_is_const[abs_slot] = 1u;
+                        mem_val_mark_immutable(mem, rhs);
+                    }
                     return rhs;
-                } else if (lhs->kind == AST_INDEX) {
-                    return eval_index_op(mem, tab, lhs, frame_base, cur_ret_type, true, rhs);
-                } else if (lhs->kind == AST_FIELD_LOAD) {
-                    Value target       = (lhs->right != MEM_NO_IDX)
-                                         ? mem_get_slot(mem, frame_base, (uint8_t)lhs->right)
-                                         : eval_ast(mem, tab, lhs->left, frame_base, cur_ret_type);
+                } else if (lhs->kind == AST_CONST_SYM) {
+                    uint16_t sym_id    = lhs->ref;
+                    uint8_t  flags     = lhs->sub;
+                    uint16_t lock_type = (lhs->left != MEM_NO_IDX) ? (uint16_t)(lhs->left & 0xFFu) : 0;
+                    uint8_t  lock_unit = (lhs->left != MEM_NO_IDX) ? (uint8_t)((lhs->left >> 8u) & 0xFFu) : 0;
+                    uint16_t mod_id    = (lhs->right != MEM_NO_IDX && lhs->right < tab->mod_count)
+                                         ? lhs->right : mem->cur_mod;
+                    bool     is_decl   = (flags & SYM_VAR_REASSIGN_ONLY) == 0;
+                    if (!sym_set_or_add_var(tab, mem, sym_id, mod_id, rhs, lock_type, lock_unit, flags, is_decl)) {
+                        return val_void();
+                    }
+                    int mv_idx = sym_find_own_var(tab, sym_id, mod_id);
+                    return (mv_idx >= 0) ? sym_vars(tab)[mv_idx].val : rhs;
+                } else if (lhs->kind == AST_INDEX || lhs->kind == AST_FIELD_LOAD) {
+                    const AstNode *base_n = lhs;
+                    while (base_n->kind == AST_INDEX || base_n->kind == AST_FIELD_LOAD) {
+                        if (base_n->kind == AST_FIELD_LOAD && base_n->right != MEM_NO_IDX) {
+                            uint16_t abs_s = (uint16_t)(frame_base + (base_n->right & AST_SLOT_IDX_MASK));
+                            if (abs_s < MEM_MAX_CALL_STACK && mem->slot_is_const[abs_s] != 0) {
+                                mem_err(mem, "Cannot mutate field of immutable constant");
+                                return val_void();
+                            }
+                            base_n = NULL;
+                            break;
+                        }
+                        if (base_n->left == MEM_NO_IDX) { base_n = NULL; break; }
+                        base_n = mem_get_ast(mem, base_n->left);
+                    }
+                    if (base_n) {
+                        if (base_n->kind == AST_SLOT_LOAD) {
+                            uint16_t abs_s = (uint16_t)(frame_base + (base_n->sub & AST_SLOT_IDX_MASK));
+                            if (abs_s < MEM_MAX_CALL_STACK && mem->slot_is_const[abs_s] != 0) {
+                                mem_err(mem, "Cannot mutate immutable constant");
+                                return val_void();
+                            }
+                        } else if (base_n->kind == AST_CONST_SYM) {
+                            uint16_t cmod = (base_n->right != MEM_NO_IDX && base_n->right < tab->mod_count)
+                                            ? base_n->right : mem->cur_mod;
+                            int mv_idx = sym_find_var(tab, base_n->ref, cmod, NULL);
+                            if (mv_idx >= 0 && (sym_vars(tab)[mv_idx].flags & SYM_VAR_MUTABLE) == 0) {
+                                StrSlice vs = tab->syms[base_n->ref];
+                                mem_err(mem, "Cannot mutate immutable constant '%.*s'",
+                                        (int)vs.len, mem_str_ptr(mem, vs));
+                                return val_void();
+                            }
+                        }
+                    }
+
+                    if (lhs->kind == AST_INDEX) {
+                        return eval_index_op(mem, tab, lhs, frame_base, cur_ret_type, true, rhs);
+                    }
+                    Value target = (lhs->right != MEM_NO_IDX)
+                                   ? mem_get_slot(mem, frame_base, (uint8_t)(lhs->right & AST_SLOT_IDX_MASK))
+                                   : eval_ast(mem, tab, lhs->left, frame_base, cur_ret_type);
                     if (mem->has_error || mem->jump_active != JUMP_NONE) return val_void();
                     uint16_t base_pidx = val_get_pool_idx(target);
                     uint16_t foff      = lhs->ref;
@@ -1025,7 +1126,7 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                     }
                     return rhs;
                 }
-                mem_err(mem, "Left side of assignment operator must be a local variable or struct field");
+                mem_err(mem, "Left side of assignment operator must be a variable or struct field");
                 return val_void();
             }
 
@@ -1263,8 +1364,10 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
             uint16_t hdr_idx = mem_alloc_pool(mem, MEM_FN_HDR_SLOTS);
             if (mem->has_error) return val_void();
             uint32_t packed_slots = (uint32_t)n->left | ((uint32_t)n->right << 16);
+            uint32_t mod_tag = (mem->cur_mod != MEM_NO_IDX) ? ((uint32_t)(mem->cur_mod + 1u) << 8u) : 0u;
+            uint32_t packed_p1 = ((uint32_t)n->sub & 0xFFu) | mod_tag;
             mem_write_pool(mem, hdr_idx + 0, (double)n->ref);
-            mem_write_pool(mem, hdr_idx + 1, (double)n->sub);
+            mem_write_pool(mem, hdr_idx + 1, (double)packed_p1);
             mem_write_pool(mem, hdr_idx + 2, (double)packed_slots);
             mem_write_pool(mem, hdr_idx + 3, (double)frame_base);
             return val_make_comp(mem, mem->fn_type_id, hdr_idx, MEM_FN_HDR_SLOTS);

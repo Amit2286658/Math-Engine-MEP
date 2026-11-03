@@ -1,8 +1,8 @@
 /*
- * compiler.h — In-Memory `.math` Compilation Unit Stager & Declaration Compiler
+ * compiler.h — In-Memory `.math` Compilation Unit Stager & Top-to-Bottom Module Evaluator
  *
  * Purpose:
- *   Handles Phase 1 (Compilation) of extension building in `Core/compile/`:
+ *   Handles Phase 1 (Compilation & Top-to-Bottom Execution) of `.math` modules:
  *     1. `ext_build_init`: Initializes a multi-unit `ExtBuildCtx` build context
  *        (with unbounded dynamic unit & dependency capacity).
  *     2. `ext_build_create` / `ext_build_destroy`: Heap-allocates/frees an
@@ -11,9 +11,10 @@
  *        it into `[module]` blocks, extracts `<[dep]` dependency headers into
  *        `ExtBuildCtx`, and rejects duplicate named modules (already loaded in
  *        `SymTable` or duplicated across staged compilation units).
- *     4. `ext_compile_slice`: Compiles the declarations (`$type`, syntax
- *        delimiters, constants, operators, and functions) of a single module
- *        slice into `MemArena` + `SymTable`.
+ *     4. `ext_eval_slice` / `ext_compile_slice`: Executes a single module slice
+ *        top-to-bottom (compiling `$type`, syntax delimiters, operators, and
+ *        functions alongside module-scoped variables, constants, and executable
+ *        statements/expressions) into `MemArena` + `SymTable`.
  */
 
 #ifndef COMPILER_H
@@ -79,7 +80,7 @@ static inline char (*ext_unit_deps_mut(ExtCompiledUnit *u))[32] {
 }
 
 /* ============================================================================
- * 2. COMPILATION API
+ * 2. COMPILATION & TOP-TO-BOTTOM MODULE EVALUATION API
  * ============================================================================ */
 
 /* Initialize or reset a multi-module compilation & linking context */
@@ -99,8 +100,26 @@ bool ext_compile_unit(MemArena *mem, const SymTable *tab,
                       ExtBuildCtx *ctx, const char *raw_math_text);
 
 /*
- * Compile all declarations (`$type`, syntax bindings, constants, operators, and
- * functions) within a single module slice into `mem` + `tab`.
+ * Execute all declarations (`$type`, syntax bindings, constants, operators, and
+ * functions) and top-to-bottom statements/expressions within a single module
+ * slice into `mem` + `tab`.
+ *   - `default_mod_name`: Initial module name if no `[module]` header is present
+ *     (defaults to `"default"` if NULL or empty).
+ *   - `allow_redef`: When true (interactive module evaluation), redefining an
+ *     existing overload in the same module updates it in place; when false
+ *     (static extension compilation), duplicate overloads in the same module
+ *     are rejected.
+ *   - `out_val`: Optional pointer receiving the value of the last evaluated
+ *     statement/expression in the slice (or `val_void()` if only declarations).
+ */
+bool ext_eval_slice(MemArena *mem, SymTable *tab,
+                    const char *default_mod_name, bool allow_redef,
+                    const char *slice_src, uint16_t slice_len,
+                    Value *out_val);
+
+/*
+ * Compile and execute a single module slice into `mem` + `tab` in strict
+ * extension compilation mode (`default_mod_name = "default"`, `allow_redef = false`).
  * Invoked in resolved topological order by the linker (`linker.c`).
  */
 bool ext_compile_slice(MemArena *mem, SymTable *tab,

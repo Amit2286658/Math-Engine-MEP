@@ -1,27 +1,23 @@
 /*
- * math_engine.h — Top-Level Engine Wrapper (Auto-Boots Precompiled Standard Library)
+ * math_engine.h — Top-Level Engine Wrapper & Module Execution API
  *
  * Architecture Overview:
- *   User Program (`Test/main.c`)
+ *   User Program (`Test/main.c` / Android JNI Host)
  *        │
  *        ├──► [Core/Headers + Core/Code]  (Core Engine Pipeline)
- *        │       ├──► [math_engine.h/.c]  Top-Level Engine Wrapper & Stateless Eval
+ *        │       ├──► [math_engine.h/.c]  Top-Level Engine Wrapper, Module Eval & Introspection
  *        │       ├──► [mem_arena.h/.c]    Isolated Memory Arena & 8B NaN-Boxed Values
- *        │       ├──► [sym_table.h/.c]    Dynamic Types, Units, Structs, Modules, Overloads
+ *        │       ├──► [sym_table.h/.c]    Dynamic Types, Units, Structs, Modules, Overloads, Vars
  *        │       ├──► [lexer.h/.c]        Pattern-Driven Consuming Types & Syntax Tokens
  *        │       ├──► [parser.h/.c]       Top-Down Operator Precedence Pratt Parser
  *        │       └──► [evaluator.h/.c]    Type- & Unit-Dispatched AST Evaluator
  *        │
  *        ├──► [Core/compile]              (Compilation, Linking, `.mathc` Binary & User Loader)
- *        │       ├──► [compiler.h/.c]     Module Unit Stager & Declaration Compiler
+ *        │       ├──► [compiler.h/.c]     Module Unit Stager & Top-to-Bottom Module Evaluator
  *        │       ├──► [linker.h/.c]       Topological `<[dep]` Dependency Linker
  *        │       ├──► [mathc_bin.h/.c]    `.mathc` Binary Serializer, Validator & Loader
  *        │       ├──► [user_loader.h/.c]  Host-Facing User Extension Compile/Link/Load API
  *        │       └──► [ext_loader.h]      Umbrella Header for `compiler`, `linker`, `mathc_bin`
- *        │
- *        ├──► [Core/session]              (Parallel In-Memory Sessions & Snapshots)
- *        │       ├──► [session.h/.c]      Parallel Session Lifecycle & `eng_session_eval`
- *        │       └──► [snapshot.h/.c]     Order-Tagged Raw-Text Snapshots & `eng_session_restore`
  *        │
  *        └──► [Core/lib]                  (Delegates & Hardcoded Grammar Rules)
  *                ├──► [delegate/delegate.h/.c]  C `@<intrinsic>` Implementations
@@ -47,25 +43,22 @@
 #include "parser.h"
 #include "ext_loader.h"
 #include "evaluator.h"
-#include "session.h"
-#include "snapshot.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /*
- * Unified Engine Context combining Arena, Symbol Registry, Parallel Sessions,
- * and Per-Engine Extension Build/Image Buffers (zero shared global/static state).
+ * Unified Engine Context combining Arena, Symbol/Module Registry, and
+ * Per-Engine Extension Build/Image Buffer (zero shared global/static state).
  * Note: Because `Engine` is large, allocate it on the heap via `eng_create()` /
  * `eng_destroy()` (or in static storage) rather than on a small thread stack.
  */
-struct Engine {
+typedef struct Engine {
     MemArena    mem;
     SymTable    sym;
-    EngSession  sessions[ENG_MAX_SESSIONS];
     uint8_t     mathc_buf[MATHC_MAX_IMAGE_BYTES];
-};
+} Engine;
 
 /* ============================================================================
  * 1. CORE ENGINE LIFECYCLE, MODULE TOGGLING & STATELESS EVALUATION
@@ -121,13 +114,63 @@ MATH_ENGINE_API bool        eng_is_module_active(const Engine *eng, const char *
 MATH_ENGINE_API bool        eng_eval(Engine *eng, const char *expr, Value *out_val);
 
 /* ============================================================================
- * 2. VALUE FORMATTING & TYPE / UNIT / ERROR INTROSPECTION
+ * 2. TOP-TO-BOTTOM MODULE EXECUTION, RESET & VARIABLE INTROSPECTION
+ * ============================================================================ */
+
+/*
+ * Execute `.math` source code (declarations, module variables, constants, and
+ * top-to-bottom statements/expressions) inside module `mod_name` (defaults to
+ * `"default"` if NULL or empty). Creates `[mod_name]` automatically if not yet
+ * present, updates module variables in-place, and writes the final expression
+ * result to `*out_val` (if non-NULL).
+ */
+MATH_ENGINE_API bool        eng_mod_eval(Engine *eng, const char *mod_name,
+                                         const char *src, Value *out_val);
+
+/*
+ * Reset all module variables, constants, and overloads owned by `mod_name`
+ * (without affecting other loaded modules) and reclaim unreferenced scratch memory.
+ */
+MATH_ENGINE_API bool        eng_mod_reset(Engine *eng, const char *mod_name);
+
+/*
+ * Inspect and manipulate module-scoped variables and constants owned by `mod_name`:
+ */
+MATH_ENGINE_API uint16_t    eng_mod_var_count(const Engine *eng, const char *mod_name);
+MATH_ENGINE_API bool        eng_mod_var_info(const Engine *eng, const char *mod_name,
+                                             uint16_t idx, char *name_buf, size_t name_cap,
+                                             Value *out_val, uint16_t *out_lock_type,
+                                             uint8_t *out_lock_unit, uint8_t *out_flags);
+MATH_ENGINE_API bool        eng_mod_get_var(const Engine *eng, const char *mod_name,
+                                            const char *var_name, Value *out_val,
+                                            uint8_t *out_flags);
+MATH_ENGINE_API bool        eng_mod_set_var(Engine *eng, const char *mod_name,
+                                            const char *var_name, Value val,
+                                            uint8_t flags);
+
+/*
+ * Format all variables/constants in `mod_name` as newline-separated records:
+ *   `<name>|<type>|<unit>|<mutability>|<visibility>|<formatted_value>`
+ */
+MATH_ENGINE_API size_t      eng_mod_format_vars(const Engine *eng, const char *mod_name,
+                                                char *out_buf, size_t buf_cap);
+
+/*
+ * Export all variables and constants of `mod_name` as valid, self-contained,
+ * top-to-bottom executable `.math` module source text (`[mod_name]\n...`)
+ * that can be saved or re-evaluated via `eng_mod_eval` / `user_compile_ext`.
+ */
+MATH_ENGINE_API size_t      eng_mod_export_source(Engine *eng, const char *mod_name,
+                                                  char *out_buf, size_t buf_cap);
+
+/* ============================================================================
+ * 3. VALUE FORMATTING & TYPE / UNIT / ERROR INTROSPECTION
  * ============================================================================ */
 
 /* Format any Value (primitive, string, vector, matrix, or nested struct) to a C string */
 MATH_ENGINE_API void        eng_format_value(const Engine *eng, Value val, char *buf, size_t buf_cap);
 
-/* Format a multidimensional matrix at `hdr_idx` (shared with `Core/session/snapshot.c`) */
+/* Format a multidimensional matrix at `hdr_idx` */
 MATH_ENGINE_API void        eng_format_mat_at(const Engine *eng, uint16_t hdr_idx, bool high_prec,
                                               char *buf, size_t cap);
 

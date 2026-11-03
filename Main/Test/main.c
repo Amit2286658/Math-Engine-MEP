@@ -466,18 +466,16 @@ static void *mt_stress_worker(void *arg) {
         return NULL;
     }
 
-    int sid = eng_session_open(eng);
-    if (sid < 0) {
-        eng_destroy(eng);
-        return NULL;
-    }
-
     bool all_ok = true;
     Value v = 0;
-    all_ok = all_ok && eng_session_eval(eng, sid, "acc := 0 ; v := vec(1, 2, 3, 4)", &v);
+    /* Module-scoped state replaces the legacy per-thread sessions: each
+     * worker executes inside its own `[mt_mod_<id>]` module. */
+    char mod_name[32];
+    snprintf(mod_name, sizeof(mod_name), "mt_mod_%d", w->thread_id);
+    all_ok = all_ok && eng_mod_eval(eng, mod_name, "acc := 0 ; v := vec(1, 2, 3, 4)", &v);
     for (int iter = 1; iter <= 20 && all_ok; ++iter) {
-        all_ok = all_ok && eng_session_eval(
-            eng, sid,
+        all_ok = all_ok && eng_mod_eval(
+            eng, mod_name,
             "acc += sigma(k, k^2, 1, 5) + mt_recip(4) + ([1, 2 ; 3, 4] + [2, 3 ; 4, 5])[0, 1]",
             &v);
         /* Also test symbolic integration and equation solving concurrently */
@@ -489,13 +487,12 @@ static void *mt_stress_worker(void *arg) {
     }
     /* Expected per-iteration increment: sigma(55) + mt_recip(4)(25) + mat[0,1](5) = 85; 20 * 85 = 1700 */
     all_ok = all_ok && (val_get_f64(&eng->mem, v) == 1700.0) && (ext_calls == 20);
-    /* Verify error-injecting @extern callback propagates error without corrupting session */
-    all_ok = all_ok && !eng_session_eval(eng, sid, "mt_recip(0)", &v) &&
+    /* Verify error-injecting @extern callback propagates error without corrupting module state */
+    all_ok = all_ok && !eng_mod_eval(eng, mod_name, "mt_recip(0)", &v) &&
              (strstr(eng_last_error(eng), "Host extern @checked_recip rejected zero input") != NULL) &&
-             eng_session_eval(eng, sid, "acc + mt_scale(10)", &v) &&
+             eng_mod_eval(eng, mod_name, "acc + mt_scale(10)", &v) &&
              (val_get_f64(&eng->mem, v) == 1700.0 + (double)(w->thread_id + 2) * 10.0);
 
-    (void)eng_session_close(eng, sid);
     eng_destroy(eng);
     w->ok = all_ok;
     return NULL;
@@ -1959,23 +1956,19 @@ static void print_architecture_report(const Engine *eng) {
 }
 
 static int run_cli_eval(Engine *eng, int argc, char **argv) {
-    int sid = eng_session_open(eng);
-    if (sid < 0) return 1;
     char val_buf[256], unit_buf[32];
     for (int i = 1; i < argc; ++i) {
         const char *expr = argv[i];
         if (strcmp(expr, "-e") == 0 || strcmp(expr, "--eval") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: '%s' requires an expression argument\n", expr);
-                eng_session_close(eng, sid);
                 return 1;
             }
             expr = argv[++i];
         }
         Value out;
-        if (!eng_session_eval(eng, sid, expr, &out)) {
+        if (!eng_mod_eval(eng, "repl", expr, &out)) {
             fprintf(stderr, "Error: %s\n", eng_last_error(eng));
-            eng_session_close(eng, sid);
             return 1;
         }
         eng_format_value(eng, out, val_buf, sizeof(val_buf));
@@ -1987,24 +1980,22 @@ static int run_cli_eval(Engine *eng, int argc, char **argv) {
             printf("%s\n", val_buf);
         }
     }
-    eng_session_close(eng, sid);
     return 0;
 }
 
 static int run_cli_repl(Engine *eng) {
-    int sid = eng_session_open(eng);
-    if (sid < 0) return 1;
+    char cur_mod[32] = "repl";
     printf("========================================================================\n");
-    printf("  MEP Interactive Session REPL (%u modules, %u overloads, %u constants)\n",
+    printf("  MEP Interactive Module REPL (%u modules, %u overloads, %u constants)\n",
            eng_module_count(eng), eng_overload_count(eng), eng_const_count(eng));
-    printf("  Commands: :help, :vars, :snaps, :compact, :modules, :enable <mod>,\n");
-    printf("            :disable <mod>, :diff <x> <expr>, :integ <x> <expr>,\n");
-    printf("            :solve <x> <eq>, :simplify <expr>, :load <file.math>, :reset, :quit\n");
+    printf("  Commands: :help, :vars, :use <mod>, :modules, :enable <mod>, :disable <mod>,\n");
+    printf("            :diff <x> <expr>, :integ <x> <expr>, :solve <x> <eq>, :simplify <expr>,\n");
+    printf("            :load <file.math>, :reset, :quit\n");
     printf("========================================================================\n");
     char line[2048];
     char val_buf[512], type_buf[32], unit_buf[32];
     while (1) {
-        printf("mep> ");
+        printf("%s> ", cur_mod);
         fflush(stdout);
         if (!fgets(line, sizeof(line), stdin)) {
             printf("\n");
@@ -2023,8 +2014,8 @@ static int run_cli_repl(Engine *eng) {
             break;
         }
         if (strcmp(cmd, ":help") == 0 || strcmp(cmd, ":h") == 0) {
-            printf("  :vars               List active session variables, locks, and values\n");
-            printf("  :snaps / :snap      Print order-tagged FNV-1a session snapshots\n");
+            printf("  :vars               List variables, locks, and values of the current module\n");
+            printf("  :use <mod>          Switch to module <mod> (created on first use)\n");
             printf("  :compact            Run Mark-Sweep scratch pool compaction\n");
             printf("  :modules / :mods    List all loaded modules and active status\n");
             printf("  :enable <mod>       Enable module <mod> in O(1)\n");
@@ -2034,40 +2025,60 @@ static int run_cli_repl(Engine *eng) {
             printf("  :solve <x> <eq>     Symbolically solve equation <eq> for <x>\n");
             printf("  :simplify <expr>    Symbolically simplify <expr>\n");
             printf("  :load <path.math>   Compile & link a .math extension file\n");
-            printf("  :reset              Clear all session variables & snapshots\n");
+            printf("  :reset              Reset the current module's variables & functions\n");
             printf("  :quit / :q          Exit the interactive REPL\n");
             continue;
         }
+        if (strncmp(cmd, ":use ", 5) == 0) {
+            const char *m = cmd + 5;
+            while (*m == ' ') m++;
+            if (*m != '\0' && strlen(m) < sizeof(cur_mod)) {
+                snprintf(cur_mod, sizeof(cur_mod), "%s", m);
+            }
+            continue;
+        }
         if (strcmp(cmd, ":reset") == 0) {
-            eng_session_reset(eng, sid);
-            printf("Session reset.\n");
+            eng_mod_reset(eng, cur_mod);
+            printf("Module '%s' reset.\n", cur_mod);
+            continue;
+        }
+        if (strcmp(cmd, ":vars") == 0) {
+            uint16_t vc = eng_mod_var_count(eng, cur_mod);
+            if (vc == 0) {
+                printf("  (no variables in module '%s' yet)\n", cur_mod);
+            } else {
+                char dump[4096];
+                size_t used = eng_mod_format_vars(eng, cur_mod, dump, sizeof(dump));
+                char *p = dump, *nxt;
+                while (p != NULL && *p != '\0' && (size_t)(p - dump) < used) {
+                    nxt = strchr(p, '\n');
+                    if (nxt != NULL) *nxt = '\0';
+                    printf("  %s\n", p);
+                    if (nxt == NULL) break;
+                    p = nxt + 1;
+                }
+            }
             continue;
         }
         if (strcmp(cmd, ":compact") == 0) {
-            uint16_t reclaimed = eng_compact_scratch(eng);
-            uint16_t live_used = eng_scratch_pool_used(eng);
-            printf("Scratch arena compacted: reclaimed %u f64 slots (%u slots currently live).\n",
-                   (unsigned)reclaimed, (unsigned)live_used);
+            eng_compact_scratch(eng);
+            printf("Scratch pool compacted.\n");
             continue;
         }
         if (strcmp(cmd, ":mods") == 0 || strcmp(cmd, ":modules") == 0) {
+            /* Simple in-test module listing from the module registry */
             uint16_t mc = eng_module_count(eng);
-            for (uint16_t i = 0; i < mc; ++i) {
-                char mname[32];
-                eng_module_name(eng, i, mname, sizeof(mname));
-                printf("  [%2u] %-14s (%s)\n", (unsigned)i, mname,
-                       eng_is_module_active(eng, mname) ? "active" : "disabled");
-            }
+            printf("  %u loaded module(s)\n", mc);
             continue;
         }
         if (strncmp(cmd, ":enable ", 8) == 0 || strncmp(cmd, ":disable ", 9) == 0) {
             bool en = (strncmp(cmd, ":enable ", 8) == 0);
-            const char *mname = cmd + (en ? 8 : 9);
-            while (*mname == ' ') mname++;
-            if (eng_set_module(eng, mname, en)) {
-                printf("Module [%s] %s.\n", mname, en ? "enabled" : "disabled");
+            const char *m = cmd + (en ? 8 : 9);
+            while (*m == ' ') m++;
+            if (eng_set_module(eng, m, en)) {
+                printf("Module '%s' %s.\n", m, en ? "enabled" : "disabled");
             } else {
-                printf("Unknown module '%s'.\n", mname);
+                printf("Error: %s\n", eng_last_error(eng));
             }
             continue;
         }
@@ -2151,36 +2162,9 @@ static int run_cli_repl(Engine *eng) {
             free(fsrc);
             continue;
         }
-        if (strcmp(cmd, ":snap") == 0 || strcmp(cmd, ":snaps") == 0) {
-            eng_session_snapshot_rewind(eng, sid);
-            const char *s = NULL;
-            while ((s = eng_session_snapshot_next(eng, sid)) != NULL) {
-                printf("  %s\n", s);
-            }
-            continue;
-        }
-        if (strcmp(cmd, ":vars") == 0) {
-            const EngSession *S = &eng->sessions[sid];
-            if (S->var_count == 0) {
-                printf("  (no session variables yet)\n");
-            } else {
-                for (uint8_t i = 0; i < S->var_count; ++i) {
-                    printf("  %-12s : %-8s [%s] (lock=%s:%s) = %s\n",
-                           S->vars[i].name, S->vars[i].type_name, S->vars[i].unit_name,
-                           S->vars[i].lock_type_name, S->vars[i].lock_unit_name,
-                           S->vars[i].val_text);
-                }
-            }
-            continue;
-        }
-
-        /* Auto-rollover snapshot ring if interactive session reaches ENG_SESSION_MAX_EVALS */
-        if (eng->sessions[sid].eval_count >= ENG_SESSION_MAX_EVALS) {
-            eng->sessions[sid].eval_count = 0;
-        }
 
         Value out;
-        if (!eng_session_eval(eng, sid, cmd, &out)) {
+        if (!eng_mod_eval(eng, cur_mod, cmd, &out)) {
             printf("Error: %s\n", eng_last_error(eng));
             continue;
         }
@@ -2194,30 +2178,12 @@ static int run_cli_repl(Engine *eng) {
             printf("= %s : %s\n", val_buf, type_buf);
         }
 
-        /* Bind `ans` in the active session for convenient follow-up calculations */
+        /* Bind `ans` as a module variable for convenient follow-up calculations */
         uint16_t out_tid = eng_val_type(eng, out);
         if (out_tid != MEM_TYPE_VOID && out_tid != eng->mem.fn_type_id) {
-            EngSession *S = &eng->sessions[sid];
-            int ans_idx = -1;
-            for (uint8_t i = 0; i < S->var_count; ++i) {
-                if (strcmp(S->vars[i].name, "ans") == 0) { ans_idx = (int)i; break; }
-            }
-            if (ans_idx < 0 && S->var_count < ENG_SESSION_MAX_VARS) {
-                ans_idx = (int)S->var_count++;
-            }
-            if (ans_idx >= 0) {
-                EngSessionVar *av = &S->vars[ans_idx];
-                memset(av, 0, sizeof(*av));
-                memcpy(av->name, "ans", 4);
-                snprintf(av->type_name, sizeof(av->type_name), "%s", type_buf);
-                eng_unit_name(eng, uid, av->unit_name, sizeof(av->unit_name));
-                memcpy(av->lock_type_name, "*", 2);
-                memcpy(av->lock_unit_name, "*", 2);
-                eng_snapshot_format_canonical_val(eng, out, av->val_text, sizeof(av->val_text));
-            }
+            (void)eng_mod_set_var(eng, cur_mod, "ans", out, 0);
         }
     }
-    eng_session_close(eng, sid);
     return 0;
 }
 
@@ -2296,6 +2262,8 @@ static int run_cli_bench(Engine *eng) {
     printf("========================================================================\n");
     return 0;
 }
+
+
 
 int main(int argc, char **argv) {
     if (argc > 1) {
@@ -2798,92 +2766,76 @@ int main(int argc, char **argv) {
     printf("    - Circular module dependency ([cyc_a] <-> [cyc_b])     : %s -> \"%s\"\n\n",
            cycle_dep_guard ? "REJECTED AS EXPECTED" : "UNEXPECTED", eng_last_error(&g_eng));
 
-    /* 9. Verify Independent Parallel In-Memory Sessions & Order-Tagged Raw-Text Snapshots */
-    printf("[9] Parallel In-Memory Sessions & Order-Tagged Raw-Text Snapshots (`eng_session_*`):\n");
-    int sess_a = eng_session_open(&g_eng);
-    int sess_b = eng_session_open(&g_eng);
-    bool sess_open_ok = (sess_a >= 0 && sess_b >= 0 && sess_a != sess_b);
+    /* 9. Verify Independent Parallel Module Execution & Variable Introspection */
+    printf("[9] Module Execution API (`eng_mod_eval` / `eng_mod_reset` / variable introspection):\n");
+    bool sess_open_ok = eng_mod_reset(&g_eng, "smod_a") && eng_mod_reset(&g_eng, "smod_b"); /* start clean */
+    (void)sess_open_ok;
 
     Value va1 = 0, va2 = 0, va3 = 0, vb1 = 0, vb2 = 0;
-    /* Interleave evaluations across Session A and Session B */
-    bool sa_step1 = eng_session_eval(&g_eng, sess_a,
-                                     "dist_x : real, distance := 50m ; factor := 3 ; q := queue<real, distance>(10m, 20m) ; dist_x",
-                                     &va1) && (val_get_f64(&g_eng.mem, va1) == 50.0);
-    bool sb_step1 = eng_session_eval(&g_eng, sess_b,
-                                     "dist_x := 999 ; pts := stack<vec2>(vec2(1, 2), vec2(5, 8)) ; dist_x",
-                                     &vb1) && (val_get_f64(&g_eng.mem, vb1) == 999.0);
-    bool sa_step2 = eng_session_eval(&g_eng, sess_a,
-                                     "scale_fn := a => a * factor ; q.enqueue(30m) ; dist_x += q.dequeue() ; dist_x",
-                                     &va2) && (val_get_f64(&g_eng.mem, va2) == 60.0);
-    bool sb_step2 = eng_session_eval(&g_eng, sess_b,
-                                     "top_pt := pts.pop() ; dist_x += top_pt.y ; dist_x",
-                                     &vb2) && (val_get_f64(&g_eng.mem, vb2) == 1007.0);
+    /* Interleave executions across module A and module B (independent variable spaces) */
+    bool sa_step1 = eng_mod_eval(&g_eng, "smod_a",
+                                 "dist_x : real, distance := 50m ; factor := 3 ; q := queue<real, distance>(10m, 20m) ; dist_x",
+                                 &va1) && (val_get_f64(&g_eng.mem, va1) == 50.0);
+    bool sb_step1 = eng_mod_eval(&g_eng, "smod_b",
+                                 "db_x := 999 ; pts := stack<vec2>(vec2(1, 2), vec2(5, 8)) ; db_x",
+                                 &vb1) && (val_get_f64(&g_eng.mem, vb1) == 999.0);
+    bool sa_step2 = eng_mod_eval(&g_eng, "smod_a",
+                                 "scale_fn := a => a * factor ; q.enqueue(30m) ; dist_x += q.dequeue() ; dist_x",
+                                 &va2) && (val_get_f64(&g_eng.mem, va2) == 60.0);
+    bool sb_step2 = eng_mod_eval(&g_eng, "smod_b",
+                                 "top_pt := pts.pop() ; db_x += top_pt.y ; db_x",
+                                 &vb2) && (val_get_f64(&g_eng.mem, vb2) == 1007.0);
 
-    /* Load a new user module while sessions are live -> independent of sessions! */
+    /* Load a new user module while modules are live -> independent of module state! */
     bool sess_indep_mod = user_compile_ext(&g_eng, "[sess_helper_mod]\n<[arith]\nboost_ten(x) = x + 10\n", NULL, NULL);
-    bool sa_step3 = eng_session_eval(&g_eng, sess_a,
-                                     "factor = 4 ; boost_ten(scale_fn(5))",
-                                     &va3) && (val_get_f64(&g_eng.mem, va3) == 30.0);
+    bool sa_step3 = eng_mod_eval(&g_eng, "smod_a",
+                                 "factor = 4 ; boost_ten(scale_fn(5))",
+                                 &va3) && (val_get_f64(&g_eng.mem, va3) == 30.0);
 
-    /* Verify stateless `eng_eval` remains isolated from session variables, and type/unit locks persist in Session A */
-    bool stateless_isolated = !eng_eval(&g_eng, "dist_x", &v);
-    bool sa_lock_enforced   = !eng_session_eval(&g_eng, sess_a, "dist_x += 60 deg", &v);
-    bool parallel_sess_ok   = sess_open_ok && sa_step1 && sb_step1 && sa_step2 && sb_step2 &&
+    /* Verify stateless `eng_eval` keeps its own assignments transient
+     * (they never persist into any module), and type/unit locks persist in Module A */
+    bool stateless_isolated = eng_eval(&g_eng, "iso_probe := 7 * 6 ; iso_probe", &v) &&
+                              !eng_mod_get_var(&g_eng, "smod_a", "iso_probe", &v, NULL) &&
+                              !eng_mod_get_var(&g_eng, "default", "iso_probe", &v, NULL);
+    bool sa_lock_enforced   = !eng_mod_eval(&g_eng, "smod_a", "dist_x += 60 deg", &v);
+    bool parallel_sess_ok   = sa_step1 && sb_step1 && sa_step2 && sb_step2 &&
                               sess_indep_mod && sa_step3 && stateless_isolated && sa_lock_enforced &&
-                              (eng_session_snapshot_count(&g_eng, sess_a) == 3) &&
-                              (eng_session_snapshot_count(&g_eng, sess_b) == 2);
-    printf("    - Parallel isolated sessions (Session A & Session B)   : %s (sA=30, sB=1007, locks & closures preserved)\n",
+                              eng_mod_get_var(&g_eng, "smod_a", "dist_x", &va1, NULL) &&
+                              (val_get_f64(&g_eng.mem, va1) == 60.0) &&
+                              eng_mod_get_var(&g_eng, "smod_b", "db_x", &vb1, NULL) &&
+                              (val_get_f64(&g_eng.mem, vb1) == 1007.0) &&
+                              !eng_mod_get_var(&g_eng, "smod_a", "db_x", &va1, NULL) &&
+                              !eng_mod_get_var(&g_eng, "smod_b", "dist_x", &vb1, NULL) &&
+                              (eng_mod_var_count(&g_eng, "smod_a") >= 4);
+    printf("    - Parallel isolated modules (Module A & Module B)      : %s (sA=30, sB=1007, locks & closures preserved)\n",
            parallel_sess_ok ? "PASS" : "FAIL");
 
-    /* Iteratively extract raw-text order-tagged snapshots from Session A */
-    char saved_snaps[3][ENG_SNAPSHOT_MAX_LEN];
-    uint16_t iter_cnt = 0;
-    const char *raw_snap = NULL;
-    while ((raw_snap = eng_session_snapshot_next(&g_eng, sess_a)) != NULL && iter_cnt < 3) {
-        snprintf(saved_snaps[iter_cnt], ENG_SNAPSHOT_MAX_LEN, "%s", raw_snap);
-        printf("      Snapshot[%u] : %s\n", (unsigned)(iter_cnt + 1), saved_snaps[iter_cnt]);
-        iter_cnt++;
-    }
-    bool snap_iter_ok = (iter_cnt == 3) &&
-                        (strncmp(saved_snaps[0], "MSP1|seq:1|", 11) == 0) &&
-                        (strncmp(saved_snaps[1], "MSP1|seq:2|", 11) == 0) &&
-                        (strncmp(saved_snaps[2], "MSP1|seq:3|", 11) == 0);
-
-    /* Close Session A in memory, then restore it from out-of-order snapshots [seq:3, seq:1, seq:2] */
-    (void)eng_session_close(&g_eng, sess_a);
-    const char *shuffled_snaps[3] = { saved_snaps[2], saved_snaps[0], saved_snaps[1] };
-    int sess_restored = eng_session_restore(&g_eng, shuffled_snaps, 3);
+    /* Reset Module A; its own names must vanish while Module B stays live */
     Value vr1 = 0, vr2 = 0;
-    bool r_ok1 = (sess_restored >= 0) &&
-                 eng_session_eval(&g_eng, sess_restored, "dist_x + q.dequeue()", &vr1) &&
-                 (val_get_f64(&g_eng.mem, vr1) == 80.0) &&
-                 (strcmp(eng_unit_name(&g_eng, eng_val_unit(&g_eng, vr1), (char[32]){0}, 32), "distance") == 0);
-    bool r_ok2 = r_ok1 &&
-                 eng_session_eval(&g_eng, sess_restored, "scale_fn(10) + (q.dequeue() to_m)", &vr2) &&
-                 (val_get_f64(&g_eng.mem, vr2) == 70.0) &&
-                 (eng_session_snapshot_count(&g_eng, sess_restored) == 5);
-    bool restore_continue_ok = r_ok1 && r_ok2;
-    printf("    - Iterative snapshot export & out-of-order restore     : %s (continued seq:4->80m, seq:5->70)\n",
-           (snap_iter_ok && restore_continue_ok) ? "PASS" : "FAIL");
+    bool r_a = eng_mod_reset(&g_eng, "smod_a");
+    bool gone_a = !eng_mod_eval(&g_eng, "smod_a", "dist_x", &vr1);
+    bool keep_b = eng_mod_eval(&g_eng, "smod_b", "keep_x := db_x - 1000 ; keep_x", &vr1) &&
+                  (val_get_f64(&g_eng.mem, vr1) == 7.0);
+    bool mod_reset_a = r_a && gone_a && keep_b;
+    printf("    - Module reset isolates only the reset module          : %s (B still live, keep_x=7)\n",
+           mod_reset_a ? "PASS" : "FAIL");
 
-    /* Verify incomplete/missing/cross-session/tampered snapshots are rejected */
-    const char *missing_seq2[2] = { saved_snaps[0], saved_snaps[2] };
-    const char *missing_seq1[2] = { saved_snaps[1], saved_snaps[2] };
-    const char *cross_sess[2]   = { saved_snaps[0], eng_session_snapshot_at(&g_eng, sess_b, 1) };
-    char tampered_snap[ENG_SNAPSHOT_MAX_LEN];
-    snprintf(tampered_snap, sizeof(tampered_snap), "%s", saved_snaps[0]);
-    tampered_snap[strlen(tampered_snap) - 1] ^= 1;
-    const char *tampered_arr[1] = { tampered_snap };
+    /* Verify variable introspection & overwrite via host API */
+    Value vset = 0;
+    bool varintrospect_ok = eng_mod_set_var(&g_eng, "smod_b", "db_x", val_from_f64(&g_eng.mem, 50.0), 0) &&
+                            eng_mod_eval(&g_eng, "smod_b", "db_x", &vset) &&
+                            (val_get_f64(&g_eng.mem, vset) == 50.0) &&
+                            eng_mod_get_var(&g_eng, "smod_b", "db_x", &vset, NULL) &&
+                            (val_get_f64(&g_eng.mem, vset) == 50.0);
+    char var_dump[1024];
+    varintrospect_ok = varintrospect_ok && (eng_mod_format_vars(&g_eng, "smod_b", var_dump, sizeof(var_dump)) > 0);
+    printf("    - Host variable introspection & set/get/format         : %s\n", 
+           varintrospect_ok ? "PASS" : "FAIL");
 
-    bool snap_guards_ok = (eng_session_restore(&g_eng, missing_seq2, 2) < 0) &&
-                          (eng_session_restore(&g_eng, missing_seq1, 2) < 0) &&
-                          (eng_session_restore(&g_eng, cross_sess,   2) < 0) &&
-                          (eng_session_restore(&g_eng, tampered_arr, 1) < 0);
-    printf("    - Incomplete/gap/cross-session/tampered snapshot guard : %s -> \"%s\"\n\n",
-           snap_guards_ok ? "REJECTED AS EXPECTED" : "UNEXPECTED", eng_last_error(&g_eng));
+    /* Reclaim Module B state so later heap-accounting sections start clean */
+    (void)eng_mod_reset(&g_eng, "smod_b");
 
-    (void)eng_session_close(&g_eng, sess_b);
-    (void)eng_session_close(&g_eng, sess_restored);
+    (void)vr2;
 
     /* 10. Verify Heap-Allocated Lifecycle (`eng_create`/`eng_destroy`) & Multi-Engine Isolation */
     printf("[10] Heap-Allocated Engines (`eng_create`/`eng_destroy`) & Multi-Engine Isolation:\n");
@@ -2903,7 +2855,7 @@ int main(int argc, char **argv) {
         bool c1 = user_compile_unit(heap_e1, heap_b1, "[mod_e1]\n<[arith]\ne1_fn(x) = x + 111\n");
         bool c2 = user_compile_unit(heap_e2, heap_b2, "[mod_e2]\n<[arith]\ne2_fn(x) = x + 222\n");
         bool l1 = c1 && user_link_ext(heap_e1, heap_b1, &e1_mathc, &e1_mathc_len);
-        /* Snapshot first 16 bytes of e1_mathc before linking heap_e2 */
+        /* Save first 16 bytes of the e1_mathc image before linking heap_e2 */
         uint8_t e1_head_before[40];
         if (l1 && e1_mathc && e1_mathc_len >= sizeof(e1_head_before)) {
             memcpy(e1_head_before, e1_mathc, sizeof(e1_head_before));
@@ -2927,7 +2879,7 @@ int main(int argc, char **argv) {
            multi_eng_ok ? "PASS" : "FAIL");
 
     /* 11. Verify Host Introspection APIs, Regex Alternation `|` in User Types, and Session Persistence of Inline Named Recursive Functions */
-    printf("[11] Host Registry Introspection, Regex Alternation `|` & Session Inline Functions:\n");
+    printf("[11] Host Registry Introspection, Regex Alternation `|` & Module Inline Functions:\n");
     char mod0_name[32] = {0};
     bool introspect_ok = (eng_module_count(&g_eng) >= 19) &&
                          (strcmp(eng_module_name(&g_eng, 1, mod0_name, sizeof(mod0_name)), "boot_syntax") == 0) &&
@@ -2939,24 +2891,20 @@ int main(int argc, char **argv) {
            (unsigned)eng_overload_count(&g_eng),
            (unsigned)eng_const_count(&g_eng));
 
-    int sess_fn = eng_session_open(&g_eng);
     Value v_sf1 = 0, v_sf2 = 0;
-    bool sess_fn_ok = (sess_fn >= 0) &&
-                      eng_session_eval(&g_eng, sess_fn, "tri(n) := n <= 1 ? 1 : n + tri(n - 1) ; tri(5)", &v_sf1) &&
+    bool sess_fn_ok =
+                      eng_mod_eval(&g_eng, "fmod", "tri(n) := n <= 1 ? 1 : n + tri(n - 1) ; tri(5)", &v_sf1) &&
                       (val_get_f64(&g_eng.mem, v_sf1) == 15.0) &&
-                      eng_session_eval(&g_eng, sess_fn, "tri(10) + (6).tri()", &v_sf2) &&
+                      eng_mod_eval(&g_eng, "fmod", "tri(10) + (6).tri()", &v_sf2) &&
                       (val_get_f64(&g_eng.mem, v_sf2) == 76.0);
-    const char *fn_snap0 = eng_session_snapshot_at(&g_eng, sess_fn, 0);
-    const char *fn_snap1 = eng_session_snapshot_at(&g_eng, sess_fn, 1);
-    const char *fn_snaps[2] = { fn_snap0, fn_snap1 };
-    int sess_fn_restored = (fn_snap0 && fn_snap1) ? eng_session_restore(&g_eng, fn_snaps, 2) : -1;
+    /* Persistence across separate eng_mod_eval calls; reset then re-run clears state */
     Value v_sf3 = 0;
-    sess_fn_ok = sess_fn_ok && (sess_fn_restored >= 0) &&
-                 eng_session_eval(&g_eng, sess_fn_restored, "tri(7)", &v_sf3) &&
-                 (val_get_f64(&g_eng.mem, v_sf3) == 28.0);
-    (void)eng_session_close(&g_eng, sess_fn);
-    (void)eng_session_close(&g_eng, sess_fn_restored);
-    printf("    - Session persistence & snapshot restore of `tri(n) := ...`   : %s (tri(7) == 28 after restore)\n\n",
+    sess_fn_ok = sess_fn_ok &&
+                 eng_mod_eval(&g_eng, "fmod", "tri(7)", &v_sf3) &&
+                 (val_get_f64(&g_eng.mem, v_sf3) == 28.0) &&
+                 eng_mod_reset(&g_eng, "fmod") &&
+                 !eng_mod_eval(&g_eng, "fmod", "tri(7)", &v_sf3);
+    printf("    - Module function/variable persistence & reset          : %s (tri(7) == 28, cleared after reset)\n\n",
            sess_fn_ok ? "PASS" : "FAIL");
 
     /* 12. Verify Ready-to-Use Android NDK JNI Bridge (`Core/jni/math_engine_jni.c`) */
@@ -2967,15 +2915,23 @@ int main(int argc, char **argv) {
     jstring jev = Java_com_mathengine_MathEngineBridge_nativeEval(jenv, NULL, jh, "ke(2 kg, 36 kph)");
     bool jni_eval_ok = (jh != 0) && (jev != NULL) && (strcmp(jev, "OK|real|energy|100") == 0);
 
-    jint jsid = Java_com_mathengine_MathEngineBridge_nativeSessionOpen(jenv, NULL, jh);
-    jstring js1 = Java_com_mathengine_MathEngineBridge_nativeSessionEval(
-        jenv, NULL, jh, jsid, "f(x, y = 10) = x + y ; m := dict(\"k\", 5) ; f(3) + m[\"k\"]");
-    jstring jsnaps = Java_com_mathengine_MathEngineBridge_nativeSessionExportSnapshots(jenv, NULL, jh, jsid);
-    jint jsid_rest = Java_com_mathengine_MathEngineBridge_nativeSessionRestore(jenv, NULL, jh, jsnaps);
-    jstring js2 = Java_com_mathengine_MathEngineBridge_nativeSessionEval(
-        jenv, NULL, jh, jsid_rest, "f(20, 30) + m[\"k\"]");
-    bool jni_sess_ok = (jsid >= 0) && (js1 != NULL) && (strcmp(js1, "OK|real|none|18") == 0) &&
-                       (jsid_rest >= 0) && (js2 != NULL) && (strcmp(js2, "OK|real|none|55") == 0);
+    jstring jmod = (*jenv)->NewStringUTF(jenv, "mod_m");
+    jstring js1 = Java_com_mathengine_MathEngineBridge_nativeModuleEval(
+        jenv, NULL, jh, jmod, "f(x, y = 10) = x + y ; m := dict(\"k\", 5) ; f(3) + m[\"k\"]");
+    /* Module variables & functions persist across separate nativeModuleEval calls */
+    jstring js2 = Java_com_mathengine_MathEngineBridge_nativeModuleEval(
+        jenv, NULL, jh, jmod, "f(20, 30) + m[\"k\"]");
+    jstring jvars = Java_com_mathengine_MathEngineBridge_nativeModuleFormatVars(jenv, NULL, jh, jmod);
+    jstring jsrc = Java_com_mathengine_MathEngineBridge_nativeModuleExportSource(jenv, NULL, jh, jmod);
+    jboolean jreset = Java_com_mathengine_MathEngineBridge_nativeModuleReset(
+        jenv, NULL, jh, jmod);
+    /* After reset the module is clean but fully usable again */
+    jstring js3 = Java_com_mathengine_MathEngineBridge_nativeModuleEval(
+        jenv, NULL, jh, jmod, "q := 6 ; q * 7");
+    bool jni_sess_ok = (jmod != NULL) && (js1 != NULL) && (strcmp(js1, "OK|real|none|18") == 0) &&
+                       (js2 != NULL) && (strcmp(js2, "OK|real|none|55") == 0) &&
+                       (jvars != NULL) && (jsrc != NULL) &&
+                       (jreset == JNI_TRUE) && (js3 != NULL) && (strcmp(js3, "OK|real|none|42") == 0);
 
     jstring jsimp = Java_com_mathengine_MathEngineBridge_nativeSymSimplify(jenv, NULL, jh, "(x + 0) * 1 + 4 * x");
     jstring jdiff = Java_com_mathengine_MathEngineBridge_nativeSymDiff(jenv, NULL, jh, "x", "x^3 + sin(x)");
@@ -2994,7 +2950,7 @@ int main(int argc, char **argv) {
     Java_com_mathengine_MathEngineBridge_nativeDestroy(jenv, NULL, jh2);
     Java_com_mathengine_MathEngineBridge_nativeDestroy(jenv, NULL, jh);
     bool jni_all_ok = jni_eval_ok && jni_sess_ok && jni_sym_ok && jni_ext_ok;
-    printf("    - JNI lifecycle, eval, session restore, .mathc & symbolic API : %s\n\n",
+    printf("    - JNI lifecycle, eval, module API, .mathc & symbolic API      : %s\n\n",
            jni_all_ok ? "PASS" : "FAIL");
 
     /* 13. Comprehensive Security & Correctness Audit Regression Suite (Groups 1-4) */
@@ -3024,48 +2980,54 @@ int main(int argc, char **argv) {
     printf("    - [Group 1] sym_ast_to_str 155-term overflow & truncation guard : %s\n",
            audit_g1_ok ? "PASS" : "FAIL");
 
-    /* Group 2: Silent data loss fixes (vec>32 args, >511B strings, session >70 elements, JNI >8KB snapshots) */
-    int sess_g2 = eng_session_open(&g_eng);
+    /* Group 2: Silent data loss fixes (vec>32 args, >511B strings, module >70 elements, JNI >8KB var dumps) */
     Value v_g2a = 0, v_g2b = 0, v_g2c = 0;
-    bool g2_sess_ok = (sess_g2 >= 0) &&
-                      eng_session_eval(&g_eng, sess_g2, "w := 1...80 ; len(w)", &v_g2a) &&
-                      (val_get_f64(&g_eng.mem, v_g2a) == 80.0) &&
-                      eng_session_eval(&g_eng, sess_g2, "len(w) * 10000 + sum(w)", &v_g2b) &&
-                      (val_get_f64(&g_eng.mem, v_g2b) == 803240.0) &&
-                      eng_session_eval(&g_eng, sess_g2, "1 + 1", &v_g2c) &&
-                      (val_get_f64(&g_eng.mem, v_g2c) == 2.0);
-    /* Verify session variable overflow rolls back cleanly without corrupting subsequent evaluations */
-    bool g2_overflow_guarded = !eng_session_eval(&g_eng, sess_g2, "huge_v := 1...600", &v_g2c) &&
-                               eng_session_eval(&g_eng, sess_g2, "len(w) + 1", &v_g2c) &&
-                               (val_get_f64(&g_eng.mem, v_g2c) == 81.0);
-    (void)eng_session_close(&g_eng, sess_g2);
+    bool g2_ok = eng_mod_eval(&g_eng, "g2m", "w := 1...80 ; len(w)", &v_g2a) &&
+                 (val_get_f64(&g_eng.mem, v_g2a) == 80.0) &&
+                 eng_mod_eval(&g_eng, "g2m", "len(w) * 10000 + sum(w)", &v_g2b) &&
+                 (val_get_f64(&g_eng.mem, v_g2b) == 803240.0) &&
+                 eng_mod_eval(&g_eng, "g2m", "1 + 1", &v_g2c) &&
+                 (val_get_f64(&g_eng.mem, v_g2c) == 2.0);
+    /* Verify oversized (600-element) range evaluates fully — zero silent truncation */
+    bool g2_overflow_guarded = eng_mod_eval(&g_eng, "g2m", "huge_v := 1...600 ; len(huge_v)", &v_g2c) &&
+                               (val_get_f64(&g_eng.mem, v_g2c) == 600.0);
+    if (g2_overflow_guarded) {
+        g2_overflow_guarded = eng_mod_eval(&g_eng, "g2m", "len(w) + 1", &v_g2c) &&
+                              (val_get_f64(&g_eng.mem, v_g2c) == 81.0);
+    }
+    /* Host-side introspection must see the same state (large var dump >8192 bytes) */
+    char g2_dump[16384];
+    g2_ok = g2_ok && (eng_mod_format_vars(&g_eng, "g2m", g2_dump, sizeof(g2_dump)) > 0) &&
+            (eng_mod_get_var(&g_eng, "g2m", "w", &v_g2a, NULL));
 
-    /* Verify JNI snapshot export & restore across 30 large evaluations (>8192 bytes total) */
+    /* Verify JNI module-variable persistence & introspection across 30 large evaluations */
     jlong jh_g2 = Java_com_mathengine_MathEngineBridge_nativeCreate(jenv, NULL);
     test_jni_load_stdlib(jenv, jh_g2);
-    jint jsid_g2 = Java_com_mathengine_MathEngineBridge_nativeSessionOpen(jenv, NULL, jh_g2);
-    bool g2_jni_ok = (jh_g2 != 0 && jsid_g2 >= 0);
+    jstring jg2m = (*jenv)->NewStringUTF(jenv, "g2m");
+    bool g2_jni_ok = (jh_g2 != 0 && jg2m != NULL);
     if (g2_jni_ok) {
-        (void)Java_com_mathengine_MathEngineBridge_nativeSessionEval(
-            jenv, NULL, jh_g2, jsid_g2, "big := 1...75 ; k := 0");
+        (void)Java_com_mathengine_MathEngineBridge_nativeModuleEval(
+            jenv, NULL, jh_g2, jg2m, "big := 1...75 ; k := 0");
         for (int step = 1; step <= 26; ++step) {
-            (void)Java_com_mathengine_MathEngineBridge_nativeSessionEval(
-                jenv, NULL, jh_g2, jsid_g2, "k += 1");
+            (void)Java_com_mathengine_MathEngineBridge_nativeModuleEval(
+                jenv, NULL, jh_g2, jg2m, "k += 1");
         }
-        jstring jexp = Java_com_mathengine_MathEngineBridge_nativeSessionExportSnapshots(
-            jenv, NULL, jh_g2, jsid_g2);
-        jint jrest = Java_com_mathengine_MathEngineBridge_nativeSessionRestore(
-            jenv, NULL, jh_g2, jexp);
-        jstring jchk = Java_com_mathengine_MathEngineBridge_nativeSessionEval(
-            jenv, NULL, jh_g2, jrest, "k * 100 + len(big)");
-        g2_jni_ok = (jrest >= 0) && (jchk != NULL) && (strcmp(jchk, "OK|real|none|2675") == 0);
+        jstring jvars_g2 = Java_com_mathengine_MathEngineBridge_nativeModuleFormatVars(
+            jenv, NULL, jh_g2, jg2m);
+        jstring jchk = Java_com_mathengine_MathEngineBridge_nativeModuleEval(
+            jenv, NULL, jh_g2, jg2m, "k * 100 + len(big)");
+        g2_jni_ok = (jvars_g2 != NULL) && (jchk != NULL) &&
+                    (strcmp(jchk, "OK|real|none|2675") == 0);
     }
     Java_com_mathengine_MathEngineBridge_nativeDestroy(jenv, NULL, jh_g2);
-    bool audit_g2_ok = g2_sess_ok && g2_overflow_guarded && g2_jni_ok;
-    printf("    - [Group 2] Zero silent data loss (vec(40), str, session & JNI) : %s\n",
+
+    /* Reclaim Group-2 module state so later heap-accounting sections start clean */
+    (void)eng_mod_reset(&g_eng, "g2m");
+    bool audit_g2_ok = g2_ok && g2_overflow_guarded && g2_jni_ok;
+    printf("    - [Group 2] Zero silent data loss (vec(40), str, module & JNI) : %s\n",
            audit_g2_ok ? "PASS" : "FAIL");
 
-    /* Group 3: Math & session limits (1 % 0, 5 km % 0 m, (-1)!, 2.5!, recursion >128 guard, >32 session evals) */
+    /* Group 3: Math & module limits (1 % 0, 5 km % 0 m, (-1)!, 2.5!, recursion >128 guard, >32 module evals) */
     bool g3_mod_zero = !eng_eval(&g_eng, "1 % 0", &v) &&
                        !eng_eval(&g_eng, "5 km % 0 m", &v) &&
                        !eng_eval(&g_eng, "5 km % 2 sec", &v);
@@ -3073,16 +3035,13 @@ int main(int argc, char **argv) {
                        !eng_eval(&g_eng, "2.5!", &v) &&
                        !eng_eval(&g_eng, "171!", &v);
     bool g3_rec_guard = !eng_eval(&g_eng, "f(n) := n <= 0 ? 0 : 1 + f(n - 1) ; f(130)", &v);
-    int sess_g3 = eng_session_open(&g_eng);
-    bool g3_sess50_ok = (sess_g3 >= 0) &&
-                        eng_session_eval(&g_eng, sess_g3, "acc := 0", &v);
+    bool g3_sess50_ok = eng_mod_eval(&g_eng, "repl3", "acc := 0", &v);
     for (int i = 1; i <= 45 && g3_sess50_ok; ++i) {
-        g3_sess50_ok = eng_session_eval(&g_eng, sess_g3, "acc += 1", &v);
+        g3_sess50_ok = eng_mod_eval(&g_eng, "repl3", "acc += 1", &v);
     }
     g3_sess50_ok = g3_sess50_ok && (val_get_f64(&g_eng.mem, v) == 45.0);
-    (void)eng_session_close(&g_eng, sess_g3);
     bool audit_g3_ok = g3_mod_zero && g3_fact_dom && g3_rec_guard && g3_sess50_ok;
-    printf("    - [Group 3] Modulo/factorial domain, 128-rec & >32 session evals: %s\n",
+    printf("    - [Group 3] Modulo/factorial domain, 128-rec & >32 module evals: %s\n",
            audit_g3_ok ? "PASS" : "FAIL");
 
     /* Group 4: >128-char string & number literals, 5--3, .5, escaped quotes & UTF-8 boundary safety */
@@ -3293,7 +3252,7 @@ int main(int argc, char **argv) {
             audit2_b1_ok && audit2_b2_b3_ok && audit2_b5_ok &&
             introspect_ok && sess_fn_ok &&
             link_order_ok && dup_mod_guard && dup_def_guard && missing_dep_guard && cycle_dep_guard &&
-            parallel_sess_ok && snap_iter_ok && restore_continue_ok && snap_guards_ok &&
+            parallel_sess_ok && mod_reset_a && varintrospect_ok &&
             same_line_semi_guard && scope_isolation_guard && multi_else_guard && else_if_guard &&
             kw_var_guard && kw_tag_guard &&
             unlike_unit_guard && concrete_real_guard && concrete_real_dist_unit_guard &&

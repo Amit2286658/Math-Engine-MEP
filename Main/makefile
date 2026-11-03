@@ -66,15 +66,13 @@ STDLIB_SOURCES := \
 CORE_SRCS := \
 	$(wildcard Core/Code/*.c) \
 	$(wildcard Core/compile/*.c) \
-	$(wildcard Core/session/*.c) \
-             $(wildcard Core/jni/*.c) \
+	$(wildcard Core/jni/*.c) \
 	Core/lib/delegate/delegate.c \
 	Core/lib/hardcode/hardcode.c
 
 INCLUDES := \
 	-ICore/Headers \
 	-ICore/compile \
-	-ICore/session \
 	-ICore/jni \
 	-ICore/lib/delegate \
 	-ICore/lib/hardcode

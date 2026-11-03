@@ -186,139 +186,76 @@ Java_com_mathengine_MathEngineBridge_nativeLastError(JNIEnv *env, jclass clazz, 
     return (*env)->NewStringUTF(env, eng_last_error(eng));
 }
 
-JNIEXPORT jint JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionOpen(JNIEnv *env, jclass clazz, jlong handle) {
-    (void)env; (void)clazz;
-    Engine *eng = (Engine *)(intptr_t)handle;
-    if (!eng) return -1;
-    return (jint)eng_session_open(eng);
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionClose(JNIEnv *env, jclass clazz,
-                                                        jlong handle, jint sessionId) {
-    (void)env; (void)clazz;
-    Engine *eng = (Engine *)(intptr_t)handle;
-    if (!eng) return JNI_FALSE;
-    return eng_session_close(eng, (int)sessionId) ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionReset(JNIEnv *env, jclass clazz,
-                                                        jlong handle, jint sessionId) {
-    (void)env; (void)clazz;
-    Engine *eng = (Engine *)(intptr_t)handle;
-    if (!eng) return JNI_FALSE;
-    return eng_session_reset(eng, (int)sessionId) ? JNI_TRUE : JNI_FALSE;
-}
-
 JNIEXPORT jstring JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionEval(JNIEnv *env, jclass clazz,
-                                                       jlong handle, jint sessionId,
-                                                       jstring expr) {
+Java_com_mathengine_MathEngineBridge_nativeModuleEval(JNIEnv *env, jclass clazz,
+                                                      jlong handle, jstring modName,
+                                                      jstring expr) {
     (void)clazz;
     Engine *eng = (Engine *)(intptr_t)handle;
     if (!eng || !expr) return (*env)->NewStringUTF(env, "ERR|Invalid engine handle or null expression");
+    const char *c_mod  = modName ? (*env)->GetStringUTFChars(env, modName, NULL) : NULL;
     const char *c_expr = (*env)->GetStringUTFChars(env, expr, NULL);
-    if (!c_expr) return (*env)->NewStringUTF(env, "ERR|Failed to read UTF-8 expression");
+    if (!c_expr) {
+        if (c_mod && modName) (*env)->ReleaseStringUTFChars(env, modName, c_mod);
+        return (*env)->NewStringUTF(env, "ERR|Failed to read UTF-8 expression");
+    }
     Value out = val_void();
-    bool ok = eng_session_eval(eng, (int)sessionId, c_expr, &out);
+    bool ok = eng_mod_eval(eng, c_mod ? c_mod : "default", c_expr, &out);
     (*env)->ReleaseStringUTFChars(env, expr, c_expr);
+    if (c_mod && modName) (*env)->ReleaseStringUTFChars(env, modName, c_mod);
     return jni_format_eval_reply(env, eng, ok, out);
 }
 
-JNIEXPORT jint JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionSnapshotCount(JNIEnv *env, jclass clazz,
-                                                                jlong handle, jint sessionId) {
-    (void)env; (void)clazz;
-    Engine *eng = (Engine *)(intptr_t)handle;
-    if (!eng) return 0;
-    return (jint)eng_session_snapshot_count(eng, (int)sessionId);
-}
-
-JNIEXPORT jstring JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionSnapshotAt(JNIEnv *env, jclass clazz,
-                                                             jlong handle, jint sessionId,
-                                                             jint index) {
+JNIEXPORT jboolean JNICALL
+Java_com_mathengine_MathEngineBridge_nativeModuleReset(JNIEnv *env, jclass clazz,
+                                                       jlong handle, jstring modName) {
     (void)clazz;
     Engine *eng = (Engine *)(intptr_t)handle;
-    if (!eng || index < 0) return NULL;
-    const char *snap = eng_session_snapshot_at(eng, (int)sessionId, (uint16_t)index);
-    return snap ? (*env)->NewStringUTF(env, snap) : NULL;
+    if (!eng) return JNI_FALSE;
+    const char *c_mod = modName ? (*env)->GetStringUTFChars(env, modName, NULL) : NULL;
+    bool ok = eng_mod_reset(eng, c_mod ? c_mod : "default");
+    if (c_mod && modName) (*env)->ReleaseStringUTFChars(env, modName, c_mod);
+    return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionExportSnapshots(JNIEnv *env, jclass clazz,
-                                                                  jlong handle, jint sessionId) {
+Java_com_mathengine_MathEngineBridge_nativeModuleFormatVars(JNIEnv *env, jclass clazz,
+                                                            jlong handle, jstring modName) {
     (void)clazz;
     Engine *eng = (Engine *)(intptr_t)handle;
     if (!eng) return NULL;
-    if (!eng_session_snapshot_rewind(eng, (int)sessionId)) return NULL;
-
-    size_t total_len = 0;
-    const char *raw = NULL;
-    while ((raw = eng_session_snapshot_next(eng, (int)sessionId)) != NULL) {
-        total_len += strlen(raw) + 1u;
+    const char *c_mod = modName ? (*env)->GetStringUTFChars(env, modName, NULL) : NULL;
+    size_t cap = 32768u;
+    char *buf = (char *)malloc(cap);
+    if (!buf) {
+        if (c_mod && modName) (*env)->ReleaseStringUTFChars(env, modName, c_mod);
+        return NULL;
     }
-    char *joined = (char *)malloc(total_len + 1u);
-    if (!joined) return NULL;
-    joined[0] = '\0';
-
-    size_t used = 0;
-    (void)eng_session_snapshot_rewind(eng, (int)sessionId);
-    while ((raw = eng_session_snapshot_next(eng, (int)sessionId)) != NULL) {
-        size_t rlen = strlen(raw);
-        if (used > 0) joined[used++] = '\n';
-        memcpy(joined + used, raw, rlen);
-        used += rlen;
-        joined[used] = '\0';
-    }
-    jstring jres = jni_new_safe_utf(env, joined);
-    free(joined);
+    (void)eng_mod_format_vars(eng, c_mod ? c_mod : "default", buf, cap);
+    if (c_mod && modName) (*env)->ReleaseStringUTFChars(env, modName, c_mod);
+    jstring jres = jni_new_safe_utf(env, buf);
+    free(buf);
     return jres;
 }
 
-JNIEXPORT jint JNICALL
-Java_com_mathengine_MathEngineBridge_nativeSessionRestore(JNIEnv *env, jclass clazz,
-                                                          jlong handle, jstring newlineJoinedSnapshots) {
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeModuleExportSource(JNIEnv *env, jclass clazz,
+                                                              jlong handle, jstring modName) {
     (void)clazz;
     Engine *eng = (Engine *)(intptr_t)handle;
-    if (!eng || !newlineJoinedSnapshots) return -1;
-    const char *raw = (*env)->GetStringUTFChars(env, newlineJoinedSnapshots, NULL);
-    if (!raw) return -1;
-    size_t raw_len = strlen(raw);
-    char *buf = (char *)malloc(raw_len + 1u);
+    if (!eng) return NULL;
+    const char *c_mod = modName ? (*env)->GetStringUTFChars(env, modName, NULL) : NULL;
+    size_t cap = 65536u;
+    char *buf = (char *)malloc(cap);
     if (!buf) {
-        (*env)->ReleaseStringUTFChars(env, newlineJoinedSnapshots, raw);
-        return -1;
+        if (c_mod && modName) (*env)->ReleaseStringUTFChars(env, modName, c_mod);
+        return NULL;
     }
-    memcpy(buf, raw, raw_len + 1u);
-    (*env)->ReleaseStringUTFChars(env, newlineJoinedSnapshots, raw);
-
-    const char *snaps[ENG_SESSION_MAX_EVALS];
-    size_t count = 0;
-    char *cur = buf;
-    while (*cur != '\0') {
-        while (*cur == '\n' || *cur == '\r') cur++;
-        if (*cur == '\0') break;
-        if (count >= ENG_SESSION_MAX_EVALS) {
-            free(buf);
-            return -1;
-        }
-        snaps[count++] = cur;
-        while (*cur != '\0' && *cur != '\n' && *cur != '\r') cur++;
-        if (*cur != '\0') {
-            *cur = '\0';
-            cur++;
-        }
-    }
-    if (count == 0) {
-        free(buf);
-        return -1;
-    }
-    int sid = eng_session_restore(eng, snaps, count);
+    (void)eng_mod_export_source(eng, c_mod ? c_mod : "default", buf, cap);
+    if (c_mod && modName) (*env)->ReleaseStringUTFChars(env, modName, c_mod);
+    jstring jres = jni_new_safe_utf(env, buf);
     free(buf);
-    return (jint)sid;
+    return jres;
 }
 
 JNIEXPORT jbyteArray JNICALL

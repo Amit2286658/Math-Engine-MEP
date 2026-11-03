@@ -225,6 +225,24 @@ static int match_pat_seq(const MemArena *mem, const SymTable *tab,
     }
 }
 
+static bool next_line_starts_branch_kw(const Lexer *lex, uint16_t nl_pos) {
+    uint16_t p = nl_pos;
+    while (p < lex->len) {
+        char c = lex->src[p];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') p++;
+        else if (c == '#') {
+            while (p < lex->len && lex->src[p] != '\n') p++;
+        } else break;
+    }
+    if (p >= lex->len || !lex_is_ident_start((unsigned char)lex->src[p])) return false;
+    uint16_t start = p;
+    while (p < lex->len && lex_is_ident_cont((unsigned char)lex->src[p])) p++;
+    int sid = sym_find(lex->tab, lex->mem, lex->src + start, (uint16_t)(p - start));
+    if (sid < 0) return false;
+    uint8_t m = sym_active_meta_tag(lex->tab, (uint16_t)sid, FIX_FUNC);
+    return (m == INTR_OR_BRANCH || m == INTR_ELSE_BRANCH);
+}
+
 static bool skip_ws_and_comments(Lexer *lex, bool *out_had_nl) {
     bool saw_nl = false;
     while (lex->pos < lex->len) {
@@ -233,7 +251,8 @@ static bool skip_ws_and_comments(Lexer *lex, bool *out_had_nl) {
             lex->pos++;
         } else if (c == '\n') {
             saw_nl = true;
-            if (lex->stop_at_newline && lex->paren_depth == 0) {
+            if (lex->stop_at_newline && lex->paren_depth == 0 &&
+                !next_line_starts_branch_kw(lex, (uint16_t)(lex->pos + 1))) {
                 if (out_had_nl) *out_had_nl = saw_nl;
                 return true;
             }
@@ -297,6 +316,7 @@ void lex_next(Lexer *lex) {
     for (uint16_t tid = 1; tid < tab->type_count; ++tid) {
         const TypeDef *td = &tab->types[tid];
         if (!td->is_consuming || td->field_count == 0 || !sym_mod_enabled(tab, td->mod_id)) continue;
+        if ((td->reserved & SYM_TYPE_PRIVATE) != 0 && td->mod_id != tab->cur_mod) continue;
 
         uint16_t p_start = td->start_idx;
         uint16_t p_end   = p_start + td->field_count;

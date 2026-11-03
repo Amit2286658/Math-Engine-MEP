@@ -161,11 +161,17 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     uint16_t saved_src_len        = mem->src_len;
     uint16_t saved_ast_count      = mem->ast_count;
     uint16_t saved_pool_top       = mem->pool_top;
+    uint16_t saved_perm_src_len   = mem->perm_src_len;
+    uint16_t saved_perm_ast_count = mem->perm_ast_count;
+    uint16_t saved_perm_pool_top  = mem->perm_pool_top;
+    uint8_t  saved_fn_src_count   = mem->fn_src_count;
+    uint8_t  saved_perm_fn_src    = mem->perm_fn_src_count;
     uint8_t  saved_fast_real      = mem->fast_real_type;
     uint8_t  saved_str_type       = mem->str_type_id;
     uint8_t  saved_vec_type       = mem->vec_type_id;
     uint8_t  saved_mat_type       = mem->mat_type_id;
     uint8_t  saved_fn_type        = mem->fn_type_id;
+    uint8_t  saved_map_type       = mem->map_type_id;
 
     uint16_t saved_mod_count      = tab->mod_count;
     uint8_t *saved_mod_active     = NULL;
@@ -187,6 +193,7 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     uint16_t saved_sym_count      = tab->sym_count;
     uint16_t saved_overload_count = tab->overload_count;
     uint8_t  saved_const_count    = tab->const_count;
+    uint16_t saved_var_count      = tab->var_count;
 
     /* 4. Compile each module slice in resolved topological order */
     for (uint16_t k = 0; k < order_cnt; ++k) {
@@ -200,14 +207,20 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     #undef FREE_GRAPH
 
     if (mem->has_error) {
-        mem->src_len        = saved_src_len;
-        mem->ast_count      = saved_ast_count;
-        mem->pool_top       = saved_pool_top;
+        mem->src_len           = saved_src_len;
+        mem->ast_count         = saved_ast_count;
+        mem->pool_top          = saved_pool_top;
+        mem->perm_src_len      = saved_perm_src_len;
+        mem->perm_ast_count    = saved_perm_ast_count;
+        mem->perm_pool_top     = saved_perm_pool_top;
+        mem->fn_src_count      = saved_fn_src_count;
+        mem->perm_fn_src_count = saved_perm_fn_src;
         mem->fast_real_type = saved_fast_real;
         mem->str_type_id    = saved_str_type;
         mem->vec_type_id    = saved_vec_type;
         mem->mat_type_id    = saved_mat_type;
         mem->fn_type_id     = saved_fn_type;
+        mem->map_type_id    = saved_map_type;
 
         tab->mod_count      = saved_mod_count;
         if (saved_mod_active && saved_mod_count > 0) {
@@ -222,6 +235,7 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
         tab->sym_count      = saved_sym_count;
         tab->overload_count = saved_overload_count;
         tab->const_count    = saved_const_count;
+        tab->var_count      = saved_var_count;
         sym_rebuild_index(tab);
         return false;
     }

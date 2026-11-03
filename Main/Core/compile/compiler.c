@@ -1,12 +1,13 @@
 /*
- * compiler.c — In-Memory `.math` Compilation Unit Stager & Declaration Compiler
+ * compiler.c — In-Memory `.math` Compilation Unit Stager & Top-to-Bottom Module Evaluator
  *
- * Implements Phase 1 (Compilation) of extension building:
+ * Implements Phase 1 (Compilation & Execution) of `.math` modules:
  *   - `ext_build_init` / `ext_build_create` / `ext_build_destroy` / `ext_compile_unit`:
  *     Scans raw `.math` source strings, splits them into `[module]` compilation units,
  *     extracts `<[dep]` module dependencies, and rejects duplicate named modules.
- *   - `ext_compile_slice`: Compiles `$type`, syntax delimiter, constant, and
- *     function/operator overload declarations for a single module slice.
+ *   - `ext_eval_slice` / `ext_compile_slice`: Executes `$type`, syntax delimiter,
+ *     constant, and function/operator overload declarations alongside top-to-bottom
+ *     module variables and statements/expressions for a single module slice.
  */
 
 #include "compiler.h"
@@ -27,14 +28,22 @@ typedef struct {
     uint16_t    cur_mod;
 } ExtLoader;
 
-static void ext_skip_ws(ExtLoader *L) {
-    while (L->pos < L->len) {
-        char c = L->src[L->pos];
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') L->pos++;
-        else if (c == '#') {
-            while (L->pos < L->len && L->src[L->pos] != '\n') L->pos++;
-        } else break;
+static uint16_t ext_skip_ws_at(const char *src, uint16_t p, uint16_t len) {
+    while (p < len) {
+        char c = src[p];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            p++;
+        } else if (c == '#') {
+            while (p < len && src[p] != '\n') p++;
+        } else {
+            break;
+        }
     }
+    return p;
+}
+
+static void ext_skip_ws(ExtLoader *L) {
+    L->pos = ext_skip_ws_at(L->src, L->pos, L->len);
 }
 
 static bool ext_match_char(ExtLoader *L, char expected) {
@@ -86,10 +95,10 @@ static StrSlice ext_read_quoted(ExtLoader *L) {
     return mem_intern_str(L->mem, buf, blen);
 }
 
-static bool ext_has_duplicate_overload(const SymTable *tab, uint16_t sym_id, uint16_t mod_id,
+static int ext_find_duplicate_overload(const SymTable *tab, uint16_t sym_id, uint16_t mod_id,
                                        uint8_t fixity, uint8_t pcount,
                                        const uint16_t *ptypes, const uint8_t *punits) {
-    if (sym_id >= tab->sym_count) return false;
+    if (sym_id >= tab->sym_count) return -1;
     for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
         const OpOverload *ov = &tab->overloads[i];
         if (ov->mod_id != mod_id || ov->fixity != fixity || ov->param_count != pcount) continue;
@@ -100,14 +109,18 @@ static bool ext_has_duplicate_overload(const SymTable *tab, uint16_t sym_id, uin
                 break;
             }
         }
-        if (same) return true;
+        if (same) return (int)i;
     }
-    return false;
+    return -1;
 }
 
-static void ext_parse_type_decl(ExtLoader *L) {
+static void ext_parse_type_decl(ExtLoader *L, uint8_t decl_flags) {
     MemArena *mem = L->mem;
     SymTable *tab = L->tab;
+    if ((decl_flags & (SYM_VAR_MUTABLE | SYM_VAR_EXPLICIT_CONST)) != 0) {
+        mem_err(mem, "Modifiers 'const' and 'mut' cannot be applied to '$type' declarations");
+        return;
+    }
     L->pos++; /* skip '$' */
     StrSlice tname = ext_read_ident(L);
     if (mem->has_error || tname.len == 0) return;
@@ -129,8 +142,9 @@ static void ext_parse_type_decl(ExtLoader *L) {
     uint16_t tid = tab->type_count++;
     TypeDef *td  = &tab->types[tid];
     memset(td, 0, sizeof(*td));
-    td->name   = tname;
-    td->mod_id = L->cur_mod;
+    td->name     = tname;
+    td->mod_id   = L->cur_mod;
+    td->reserved = (decl_flags & SYM_VAR_PRIVATE) ? SYM_TYPE_PRIVATE : 0;
 
     ext_skip_ws(L);
     if (ext_match_char(L, '~')) {
@@ -448,6 +462,7 @@ static void ext_compile_body(ExtLoader *L, OpOverload *ov, StrSlice *pnames) {
 
     Parser P;
     parser_init(&P, mem, tab, L->src, L->len, L->pos, true, true);
+    P.cur_mod     = L->cur_mod;
     P.param_count = ov->param_count;
 
     for (uint8_t i = 0; i < ov->param_count; ++i) {
@@ -455,7 +470,8 @@ static void ext_compile_body(ExtLoader *L, OpOverload *ov, StrSlice *pnames) {
     }
 
     lex_next(&P.lex);
-    uint16_t body_root = parser_parse_expr(&P, 0);
+    int min_prec = (P.lex.cur.kind == TOK_LBRACE) ? 0 : 2;
+    uint16_t body_root = parser_parse_expr(&P, min_prec);
     (void)parser_check_labels(&P);
     ov->body_ast    = body_root;
     ov->local_count = P.local_count;
@@ -501,7 +517,7 @@ static bool ext_body_starts_with_sym_intrinsic(ExtLoader *L) {
     return (L->pos + 5 <= L->len && memcmp(L->src + L->pos, "@sym_", 5) == 0);
 }
 
-static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id) {
+static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags, bool allow_redef) {
     MemArena *mem = L->mem;
     SymTable *tab = L->tab;
     ext_skip_ws(L);
@@ -534,77 +550,67 @@ static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id) {
         ov->mod_id   = L->cur_mod;
         ov->fixity   = FIX_SYNTAX;
         ov->meta_tag = (uint8_t)intr;
+        ov->reserved = (decl_flags & SYM_VAR_PRIVATE) ? SYM_OV_PRIVATE : 0;
         sym_link_overload(tab, ov_idx);
         return;
     }
 
-    /* 2. Constant definition (`"g0" : real = 9.80665`, `g0 : real = 9.80665`, or `g0 = 9.80665`) */
+    /* 2. Constant / variable definition (`"g0" : real = 9.80665`, `"gx" : real, distance = 5m`, or `g0 = 9.80665`) */
     if (ext_match_char(L, ':') || ext_match_char(L, '=')) {
         bool already_matched_eq = (L->src[L->pos - 1] == '=');
-        uint16_t rtid = mem->fast_real_type ? mem->fast_real_type : 1;
-        uint8_t  ruid = SYM_UNIT_OMITTED;
+        uint16_t rtid      = mem->fast_real_type ? mem->fast_real_type : 1;
+        uint8_t  ruid      = SYM_UNIT_OMITTED;
+        uint16_t lock_type = 0;
         if (!already_matched_eq) {
-            if (!ext_parse_return_spec(L, &rtid, &ruid)) return;
-            if (rtid == SYM_TYPE_ANY) {
-                rtid = mem->fast_real_type ? mem->fast_real_type : 1;
-            }
-            if (!ext_match_char(L, '=')) {
-                mem_err(mem, "Expected '=' in constant definition");
-                return;
-            }
-        }
-        for (uint8_t i = 0; i < tab->const_count; ++i) {
-            if (tab->consts[i].sym_id == sym_id && tab->consts[i].mod_id == L->cur_mod) {
-                StrSlice s = tab->syms[sym_id];
-                mem_err(mem, "Constant '%.*s' is already defined in module '[%.*s]'",
-                        (int)s.len, mem_str_ptr(mem, s),
-                        (int)sym_mod_name(tab, L->cur_mod).len,
-                        mem_str_ptr(mem, sym_mod_name(tab, L->cur_mod)));
-                return;
+            if (L->pos < L->len && L->src[L->pos] == '=') {
+                L->pos++;
+                decl_flags |= SYM_VAR_MUTABLE;
+            } else {
+                if (!ext_parse_return_spec(L, &rtid, &ruid)) return;
+                if (rtid != SYM_TYPE_ANY) lock_type = rtid;
+                else rtid = mem->fast_real_type ? mem->fast_real_type : 1;
+                ext_skip_ws(L);
+                if (L->pos + 1 < L->len && L->src[L->pos] == ':' && L->src[L->pos + 1] == '=') {
+                    L->pos = (uint16_t)(L->pos + 2);
+                    decl_flags |= SYM_VAR_MUTABLE;
+                } else if (!ext_match_char(L, '=')) {
+                    mem_err(mem, "Expected '=' or ':=' in constant/variable definition");
+                    return;
+                }
             }
         }
-        if (tab->const_count >= SYM_MAX_CONSTS) {
-            mem_err(mem, "Constant table overflow (max %d)", SYM_MAX_CONSTS);
-            return;
+        if ((decl_flags & SYM_VAR_MUTABLE) == 0) {
+            decl_flags |= SYM_VAR_EXPLICIT_CONST;
         }
         ext_skip_ws(L);
         Parser P;
         parser_init(&P, mem, tab, L->src, L->len, L->pos, false, true);
+        P.cur_mod      = L->cur_mod;
+        P.is_mod_scope = true;
         lex_next(&P.lex);
-        uint16_t c_ast = parser_parse_expr(&P, 0);
+        uint16_t c_ast = parser_parse_expr(&P, 2);
         L->pos = (P.lex.cur.kind == TOK_EOF) ? P.lex.pos : P.lex.cur.off;
         if (mem->has_error || c_ast == MEM_NO_IDX) return;
 
-        uint16_t c_pool_idx = MEM_NO_IDX;
-        uint8_t  final_unit = (ruid != SYM_UNIT_OMITTED && ruid != SYM_UNIT_GENERIC && ruid != SYM_UNIT_LOCK_NONE)
-                              ? ruid : MEM_UNIT_NONE;
-        if (mem_get_ast(mem, c_ast)->kind == AST_LIT) {
-            c_pool_idx = mem_get_ast(mem, c_ast)->ref;
-        } else {
-            Value ev = eval_ast(mem, tab, c_ast, 0, (uint8_t)rtid);
-            if (mem->has_error) return;
-            double d = val_get_f64(mem, ev);
-            if (final_unit == MEM_UNIT_NONE && ruid == SYM_UNIT_OMITTED) {
-                final_unit = val_get_unit(mem, ev);
-            }
-            c_pool_idx = mem_alloc_pool(mem, 1);
-            if (c_pool_idx == MEM_NO_IDX || mem->has_error) return;
-            mem_write_pool(mem, c_pool_idx, d);
+        uint16_t fbase = (P.local_count > 0) ? mem_push_frame(mem, P.local_count) : 0;
+        if (mem->has_error) return;
+        Value ev = eval_ast(mem, tab, c_ast, fbase, (uint8_t)rtid);
+        if (P.local_count > 0) mem_pop_frame(mem, fbase);
+        if (mem->has_error) return;
+
+        uint8_t lock_unit = (ruid != SYM_UNIT_OMITTED && ruid != SYM_UNIT_GENERIC) ? ruid : 0;
+        if (lock_unit != 0 && lock_unit < SYM_UNIT_LOCK_NONE && val_get_unit(mem, ev) == MEM_UNIT_NONE) {
+            ev = val_with_unit(mem, ev, lock_unit);
         }
-        if (c_pool_idx == MEM_NO_IDX) return;
-        Value cval = val_make_f64_at_pool(mem, rtid, final_unit, c_pool_idx);
-        uint8_t cid = tab->const_count++;
-        tab->consts[cid].sym_id   = sym_id;
-        tab->consts[cid].mod_id   = L->cur_mod;
-        tab->consts[cid].type_id  = (uint8_t)rtid;
-        tab->consts[cid].unit_id  = final_unit;
-        tab->consts[cid].val_idx  = cid;
-        tab->consts[cid].pool_idx = c_pool_idx;
-        tab->const_vals[cid]      = cval;
+        (void)sym_set_or_add_var(tab, mem, sym_id, L->cur_mod, ev, lock_type, lock_unit, decl_flags, true);
         return;
     }
 
     /* 3. Function or Prefix Operator Declaration (`"fn"(...)` or `fn(...)`) */
+    if ((decl_flags & (SYM_VAR_MUTABLE | SYM_VAR_EXPLICIT_CONST)) != 0) {
+        mem_err(mem, "Modifiers 'const' and 'mut' cannot be applied to function or operator declarations");
+        return;
+    }
     if (!ext_match_char(L, '(')) {
         mem_err(mem, "Expected '(', ':', '=', or '=>' after symbol in declaration");
         return;
@@ -710,7 +716,8 @@ static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id) {
         }
     }
 
-    if (ext_has_duplicate_overload(tab, sym_id, L->cur_mod, fixity, pcount, ptypes, punits)) {
+    int dup_idx = ext_find_duplicate_overload(tab, sym_id, L->cur_mod, fixity, pcount, ptypes, punits);
+    if (dup_idx >= 0 && !allow_redef) {
         StrSlice s = tab->syms[sym_id];
         mem_err(mem, "Duplicate declaration of '%.*s' in module '[%.*s]'",
                 (int)s.len, mem_str_ptr(mem, s),
@@ -719,11 +726,16 @@ static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id) {
         return;
     }
 
-    if (tab->overload_count >= SYM_MAX_OVERLOADS) {
-        mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
-        return;
+    uint16_t ov_idx = 0;
+    if (dup_idx >= 0) {
+        ov_idx = (uint16_t)dup_idx;
+    } else {
+        if (tab->overload_count >= SYM_MAX_OVERLOADS) {
+            mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
+            return;
+        }
+        ov_idx = tab->overload_count++;
     }
-    uint16_t ov_idx = tab->overload_count++;
     OpOverload *ov  = &tab->overloads[ov_idx];
     memset(ov, 0, sizeof(*ov));
     ov->sym_id      = sym_id;
@@ -733,11 +745,14 @@ static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id) {
     ov->param_count = pcount;
     ov->ret_type    = (uint8_t)rtid;
     ov->ret_unit    = ruid;
+    ov->reserved    = (decl_flags & SYM_VAR_PRIVATE) ? SYM_OV_PRIVATE : 0;
     for (uint8_t i = 0; i < pcount; ++i) {
         ov->param_types[i] = (uint8_t)ptypes[i];
         ov->param_units[i] = punits[i];
     }
-    sym_link_overload(tab, ov_idx);
+    if (dup_idx < 0) {
+        sym_link_overload(tab, ov_idx);
+    }
 
     ext_compile_body(L, ov, pnames);
     if (mem->has_error) return;
@@ -754,8 +769,369 @@ static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id) {
     }
 }
 
-bool ext_compile_slice(MemArena *mem, SymTable *tab,
-                       const char *slice_src, uint16_t slice_len) {
+/* ============================================================================
+ * TOP-LEVEL DECLARATION VS. EXECUTABLE STATEMENT LOOKAHEAD HELPERS
+ * ============================================================================ */
+
+static bool ext_is_mod_kw(const char *s, uint16_t len) {
+    return (len == 3 && (memcmp(s, "pub", 3) == 0 || memcmp(s, "mut", 3) == 0)) ||
+           (len == 4 && memcmp(s, "priv", 4) == 0) ||
+           (len == 5 && memcmp(s, "const", 5) == 0);
+}
+
+static bool ext_peek_is_mod_header(const char *src, uint16_t pos, uint16_t len,
+                                   uint16_t *out_id_start, uint16_t *out_id_len,
+                                   uint16_t *out_after_rbrack, bool *out_malformed) {
+    if (out_malformed) *out_malformed = false;
+    if (pos >= len || src[pos] != '[') return false;
+    uint16_t p = (uint16_t)(pos + 1);
+    while (p < len && (src[p] == ' ' || src[p] == '\t')) p++;
+    if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
+
+    uint16_t id_start = p;
+    while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
+    uint16_t id_len = (uint16_t)(p - id_start);
+    if (id_len == 0 || id_len >= 32u) return false;
+    if (id_len == 3 && memcmp(src + id_start, "for", 3) == 0) return false;
+
+    while (p < len && (src[p] == ' ' || src[p] == '\t')) p++;
+    if (p < len && src[p] == ']') {
+        uint16_t after = (uint16_t)(p + 1);
+        uint16_t q     = after;
+        while (q < len && (src[q] == ' ' || src[q] == '\t')) q++;
+        if (q >= len || src[q] == '\n' || src[q] == '\r' || src[q] == '#' ||
+            (q + 1 < len && src[q] == '<' && src[q + 1] == '[')) {
+            if (out_id_start)     *out_id_start     = id_start;
+            if (out_id_len)       *out_id_len       = id_len;
+            if (out_after_rbrack) *out_after_rbrack = after;
+            return true;
+        }
+        return false;
+    }
+    if (p >= len || src[p] == '\n' || src[p] == '\r' || src[p] == '#') {
+        if (out_malformed) *out_malformed = true;
+    }
+    return false;
+}
+
+static uint16_t ext_peek_modifiers(const ExtLoader *L, uint16_t start_pos,
+                                   uint8_t *out_flags, bool *out_has_mods,
+                                   bool report_conflicts) {
+    *out_flags    = 0;
+    *out_has_mods = false;
+    bool seen_pub = false, seen_priv = false, seen_const = false, seen_mut = false;
+    uint16_t p = start_pos;
+
+    while (p < L->len) {
+        uint16_t ws = ext_skip_ws_at(L->src, p, L->len);
+        if (ws >= L->len || !lex_is_ident_start((unsigned char)L->src[ws])) break;
+        uint16_t q = ws;
+        while (q < L->len && lex_is_ident_cont((unsigned char)L->src[q])) q++;
+        uint16_t wlen = (uint16_t)(q - ws);
+        const char *w = L->src + ws;
+        if (!ext_is_mod_kw(w, wlen)) break;
+
+        uint16_t r = ext_skip_ws_at(L->src, q, L->len);
+        if (r >= L->len || L->src[r] == ';') break;
+
+        if (wlen == 3 && memcmp(w, "pub", 3) == 0) {
+            if (seen_priv && report_conflicts) {
+                mem_err(L->mem, "Conflicting visibility modifiers 'pub' and 'priv'");
+                return r;
+            }
+            seen_pub = true;
+        } else if (wlen == 4 && memcmp(w, "priv", 4) == 0) {
+            if (seen_pub && report_conflicts) {
+                mem_err(L->mem, "Conflicting visibility modifiers 'pub' and 'priv'");
+                return r;
+            }
+            seen_priv = true;
+            *out_flags |= SYM_VAR_PRIVATE;
+        } else if (wlen == 5 && memcmp(w, "const", 5) == 0) {
+            if (seen_mut && report_conflicts) {
+                mem_err(L->mem, "Conflicting mutability modifiers 'const' and 'mut'");
+                return r;
+            }
+            seen_const = true;
+            *out_flags |= SYM_VAR_EXPLICIT_CONST;
+        } else if (wlen == 3 && memcmp(w, "mut", 3) == 0) {
+            if (seen_const && report_conflicts) {
+                mem_err(L->mem, "Conflicting mutability modifiers 'const' and 'mut'");
+                return r;
+            }
+            seen_mut = true;
+            *out_flags |= SYM_VAR_MUTABLE;
+        }
+        *out_has_mods = true;
+        p = r;
+    }
+    return p;
+}
+
+static bool ext_peek_is_quoted_decl(const ExtLoader *L, uint16_t pos) {
+    if (pos >= L->len || L->src[pos] != '"') return false;
+    uint16_t p = (uint16_t)(pos + 1);
+    while (p < L->len && L->src[p] != '"') {
+        if (L->src[p] == '\\' && p + 1 < L->len) p = (uint16_t)(p + 2);
+        else p++;
+    }
+    if (p >= L->len) return true; /* Unterminated quote: let ext_read_quoted report error */
+    p = ext_skip_ws_at(L->src, (uint16_t)(p + 1), L->len);
+    if (p >= L->len) return false;
+    if (L->src[p] == '(' || L->src[p] == ':') return true;
+    if (L->src[p] == '=' && !(p + 1 < L->len && L->src[p + 1] == '=')) return true;
+    return false;
+}
+
+static bool ext_scan_one_param_parens(const char *src, uint16_t pos, uint16_t len, uint16_t *out_after) {
+    uint16_t p = ext_skip_ws_at(src, pos, len);
+    if (p >= len || src[p] != '(') return false;
+    p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+    if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
+    while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
+    p = ext_skip_ws_at(src, p, len);
+    if (p < len && src[p] == ':') {
+        p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+        if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
+        while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
+        p = ext_skip_ws_at(src, p, len);
+        if (p < len && src[p] == ',') {
+            p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+            if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
+            while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
+            p = ext_skip_ws_at(src, p, len);
+        }
+    }
+    if (p >= len || src[p] != ')') return false;
+    if (out_after) *out_after = (uint16_t)(p + 1);
+    return true;
+}
+
+static bool ext_peek_is_op_decl(const ExtLoader *L, uint16_t pos) {
+    uint16_t after_p1 = 0;
+    if (!ext_scan_one_param_parens(L->src, pos, L->len, &after_p1)) return false;
+    uint16_t p = ext_skip_ws_at(L->src, after_p1, L->len);
+    if (p >= L->len) return false;
+
+    if (L->src[p] == '"') {
+        p++;
+        while (p < L->len && L->src[p] != '"') {
+            if (L->src[p] == '\\' && p + 1 < L->len) p = (uint16_t)(p + 2);
+            else p++;
+        }
+        if (p >= L->len) return true;
+        p++;
+    } else if (lex_is_ident_start((unsigned char)L->src[p])) {
+        while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+    } else {
+        return false;
+    }
+
+    p = ext_skip_ws_at(L->src, p, L->len);
+    if (p < L->len && L->src[p] == '(') {
+        if (!ext_scan_one_param_parens(L->src, p, L->len, &p)) return false;
+        p = ext_skip_ws_at(L->src, p, L->len);
+    }
+    return (p < L->len && L->src[p] == ':' && !(p + 1 < L->len && L->src[p + 1] == '='));
+}
+
+static bool ext_scan_decl_param_list(const char *src, uint16_t pos, uint16_t len, uint16_t *out_after_rparen) {
+    uint16_t p = ext_skip_ws_at(src, pos, len);
+    if (p >= len || src[p] != '(') return false;
+    p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+    if (p < len && src[p] == ')') {
+        if (out_after_rparen) *out_after_rparen = (uint16_t)(p + 1);
+        return true;
+    }
+    while (p < len) {
+        if (!lex_is_ident_start((unsigned char)src[p])) return false;
+        while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
+        p = ext_skip_ws_at(src, p, len);
+        if (p < len && src[p] == ':' && !(p + 1 < len && src[p + 1] == '=')) {
+            p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+            if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
+            while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
+            p = ext_skip_ws_at(src, p, len);
+        }
+        if (p < len && src[p] == '=' &&
+            !(p + 1 < len && (src[p + 1] == '=' || src[p + 1] == '>'))) {
+            p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+            int depth = 0;
+            while (p < len) {
+                char c = src[p];
+                if (c == '"') {
+                    p++;
+                    while (p < len && src[p] != '"') {
+                        if (src[p] == '\\' && p + 1 < len) p = (uint16_t)(p + 2);
+                        else p++;
+                    }
+                    if (p < len) p++;
+                    continue;
+                }
+                if (c == '(' || c == '[' || c == '{') { depth++; p++; continue; }
+                if (c == ')' || c == ']' || c == '}') {
+                    if (depth == 0) break;
+                    depth--; p++; continue;
+                }
+                if (depth == 0 && (c == ',' || c == ';' || c == '\n')) break;
+                p++;
+            }
+            p = ext_skip_ws_at(src, p, len);
+        }
+        if (p < len && src[p] == ',') {
+            p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+            continue;
+        }
+        break;
+    }
+    if (p >= len || src[p] != ')') return false;
+    if (out_after_rparen) *out_after_rparen = (uint16_t)(p + 1);
+    return true;
+}
+
+static bool ext_store_op_active(const SymTable *tab) {
+    for (uint16_t i = 0; i < tab->overload_count; ++i) {
+        if (tab->overloads[i].meta_tag == INTR_STORE &&
+            sym_mod_enabled(tab, tab->overloads[i].mod_id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ext_peek_is_fn_decl(const ExtLoader *L, uint16_t pos) {
+    if (pos >= L->len || !lex_is_ident_start((unsigned char)L->src[pos])) return false;
+    uint16_t id_start = pos;
+    uint16_t p        = pos;
+    while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+    uint16_t id_len = (uint16_t)(p - id_start);
+    if (ext_is_mod_kw(L->src + id_start, id_len)) {
+        return false;
+    }
+
+    while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+    if (p >= L->len) return false;
+
+    /* Fallback if `[boot_control]` (`=` / `:=`) is not active yet: treat `ident : ... = ...` or `ident = ...` as decl */
+    if (L->src[p] != '(') {
+        if (sym_is_reserved_kw(L->tab, L->mem, L->src + id_start, id_len)) {
+            return false;
+        }
+        if (!ext_store_op_active(L->tab) && (L->src[p] == ':' || L->src[p] == '=')) {
+            return true;
+        }
+        return false;
+    }
+
+    uint16_t after_rparen = 0;
+    if (!ext_scan_decl_param_list(L->src, p, L->len, &after_rparen)) return false;
+    uint16_t q = ext_skip_ws_at(L->src, after_rparen, L->len);
+    if (q >= L->len) return false;
+    if (q + 1 < L->len && L->src[q] == '-' && L->src[q + 1] == '>') return true;
+    if (L->src[q] == ':' && !(q + 1 < L->len && L->src[q + 1] == '=')) return true;
+    if (L->src[q] == '=' && !(q + 1 < L->len && (L->src[q + 1] == '=' || L->src[q + 1] == '>'))) return true;
+    return false;
+}
+
+static bool ext_is_top_level_decl_at(const ExtLoader *L, uint16_t pos) {
+    uint16_t p = ext_skip_ws_at(L->src, pos, L->len);
+    if (p >= L->len) return false;
+
+    bool malformed_hdr = false;
+    if (L->src[p] == '[' &&
+        (ext_peek_is_mod_header(L->src, p, L->len, NULL, NULL, NULL, &malformed_hdr) || malformed_hdr)) {
+        return true;
+    }
+    if (L->src[p] == '<' && p + 1 < L->len && L->src[p + 1] == '[') return true;
+    if (L->src[p] == '@') {
+        uint16_t q = (uint16_t)(p + 1);
+        while (q < L->len && lex_is_ident_cont((unsigned char)L->src[q])) q++;
+        uint16_t dlen = (uint16_t)(q - (p + 1));
+        if ((dlen == 3 && memcmp(L->src + p + 1, "dim", 3) == 0) ||
+            (dlen == 8 && memcmp(L->src + p + 1, "unit_dim", 8) == 0)) {
+            return true;
+        }
+    }
+
+    uint8_t dummy_flags = 0;
+    bool    dummy_mods  = false;
+    uint16_t am = ext_peek_modifiers(L, p, &dummy_flags, &dummy_mods, false);
+    if (am >= L->len) return false;
+
+    char c = L->src[am];
+    if (c == '$') return true;
+    if (c == '"' && ext_peek_is_quoted_decl(L, am)) return true;
+    if (c == '(' && ext_peek_is_op_decl(L, am))     return true;
+    if (lex_is_ident_start((unsigned char)c) && ext_peek_is_fn_decl(L, am)) return true;
+    return false;
+}
+
+static uint16_t ext_find_stmt_chunk_end(const ExtLoader *L) {
+    uint16_t p     = L->pos;
+    uint16_t len   = L->len;
+    int      depth = 0;
+
+    while (p < len) {
+        char c = L->src[p];
+        if (c == '"') {
+            p++;
+            while (p < len && L->src[p] != '"') {
+                if (L->src[p] == '\\' && p + 1 < len) p = (uint16_t)(p + 2);
+                else p++;
+            }
+            if (p < len) p++;
+            continue;
+        }
+        if (c == '#') {
+            while (p < len && L->src[p] != '\n') p++;
+            continue;
+        }
+        if (c == '(' || c == '{' || c == '[') {
+            depth++;
+            p++;
+            continue;
+        }
+        if (c == ')' || c == '}' || c == ']') {
+            if (depth > 0) depth--;
+            p++;
+            continue;
+        }
+        if (depth == 0 && (c == '\n' || c == ';')) {
+            uint16_t boundary = p;
+            p++;
+            while (p < len) {
+                while (p < len && (L->src[p] == ' ' || L->src[p] == '\t' || L->src[p] == '\r')) p++;
+                if (p < len && L->src[p] == '#') {
+                    while (p < len && L->src[p] != '\n') p++;
+                }
+                if (p < len && (L->src[p] == '\n' || L->src[p] == ';')) {
+                    p++;
+                    continue;
+                }
+                break;
+            }
+            if (p < len && ext_is_top_level_decl_at(L, p)) {
+                return boundary;
+            }
+            continue;
+        }
+        p++;
+    }
+    return len;
+}
+
+/* ============================================================================
+ * TOP-TO-BOTTOM MODULE SLICE EVALUATION & COMPILATION (`ext_eval_slice`)
+ * ============================================================================ */
+
+bool ext_eval_slice(MemArena *mem, SymTable *tab,
+                    const char *default_mod_name, bool allow_redef,
+                    const char *slice_src, uint16_t slice_len,
+                    Value *out_val) {
+    if (out_val) *out_val = val_void();
+    if (!mem || !tab) return false;
+    mem->sym_tab = tab;
+
     ExtLoader L;
     memset(&L, 0, sizeof(L));
     L.mem = mem;
@@ -764,29 +1140,53 @@ bool ext_compile_slice(MemArena *mem, SymTable *tab,
     L.len = slice_len;
     L.pos = 0;
 
-    /* Default any extension without an explicit `[module]` header to `[default]` */
-    StrSlice def_mod = mem_intern_str(mem, "default", 7);
+    const char *eff_mod = (default_mod_name && default_mod_name[0] != '\0')
+                          ? default_mod_name : "default";
+    StrSlice def_mod = mem_intern_str(mem, eff_mod, (uint16_t)strlen(eff_mod));
     if (mem->has_error) return false;
     L.cur_mod = sym_find_or_add_mod(tab, mem, def_mod);
+    if (mem->has_error) return false;
+
+    uint16_t prev_mem_mod = mem->cur_mod;
+    uint16_t prev_tab_mod = tab->cur_mod;
+    mem->cur_mod = L.cur_mod;
+    tab->cur_mod = L.cur_mod;
+
+    Value last_val      = val_void();
+    bool  had_any_token = false;
 
     while (L.pos < L.len && !mem->has_error) {
         ext_skip_ws(&L);
-        if (L.pos >= L.len) break;
-
-        char c = L.src[L.pos];
-
-        if (c == '[') {
+        while (L.pos < L.len && L.src[L.pos] == ';') {
             L.pos++;
-            StrSlice mname = ext_read_ident(&L);
-            if (!ext_match_char(&L, ']') || mname.len == 0) {
+            ext_skip_ws(&L);
+        }
+        if (L.pos >= L.len) break;
+        had_any_token = true;
+
+        /* 1. `[module]` Header */
+        if (L.src[L.pos] == '[') {
+            uint16_t id_start    = 0;
+            uint16_t id_len      = 0;
+            uint16_t after_rbrck = 0;
+            bool     malformed   = false;
+            if (ext_peek_is_mod_header(L.src, L.pos, L.len, &id_start, &id_len, &after_rbrck, &malformed)) {
+                StrSlice mname = mem_intern_str(mem, L.src + id_start, id_len);
+                if (mem->has_error) break;
+                L.cur_mod    = sym_find_or_add_mod(tab, mem, mname);
+                mem->cur_mod = L.cur_mod;
+                tab->cur_mod = L.cur_mod;
+                L.pos        = after_rbrck;
+                continue;
+            }
+            if (malformed) {
                 mem_err(mem, "Expected closing ']' in module header");
                 break;
             }
-            L.cur_mod = sym_find_or_add_mod(tab, mem, mname);
-            continue;
         }
 
-        if (c == '<' && L.pos + 1 < L.len && L.src[L.pos + 1] == '[') {
+        /* 2. `<[dep]` Dependency Header */
+        if (L.src[L.pos] == '<' && L.pos + 1 < L.len && L.src[L.pos + 1] == '[') {
             L.pos = (uint16_t)(L.pos + 2);
             StrSlice dep = ext_read_ident(&L);
             if (!ext_match_char(&L, ']') || dep.len == 0) {
@@ -799,159 +1199,286 @@ bool ext_compile_slice(MemArena *mem, SymTable *tab,
             continue;
         }
 
-        if (c == '$') {
-            ext_parse_type_decl(&L);
-            continue;
-        }
-
-        if (c == '@') {
-            L.pos++;
-            StrSlice dkw = ext_read_ident(&L);
-            if (!mem_slice_eq_cstr(mem, dkw, "dim") && !mem_slice_eq_cstr(mem, dkw, "unit_dim")) {
-                mem_err(mem, "Unknown top-level directive '@%.*s' (expected '@dim')",
-                        (int)dkw.len, mem_str_ptr(mem, dkw));
-                break;
-            }
-            if (!ext_match_char(&L, '(')) {
-                mem_err(mem, "Expected '(' after '@dim'");
-                break;
-            }
-            StrSlice uname = ext_read_ident(&L);
-            if (uname.len == 0) {
-                mem_err(mem, "Expected unit group name in '@dim(...)'");
-                break;
-            }
-            uint8_t uid = sym_find_or_add_unit(tab, mem, mem_str_ptr(mem, uname), uname.len);
-            if (mem->has_error || uid == MEM_UNIT_NONE) break;
-            UnitDimDef udim;
-            memset(&udim, 0, sizeof(udim));
-            udim.has_dim = 1;
-            int idx = 0;
-            while (L.pos < L.len && !mem->has_error && idx < 7) {
-                if (!ext_match_char(&L, ',')) break;
-                ext_skip_ws(&L);
-                char *endp = NULL;
-                long val = strtol(L.src + L.pos, &endp, 10);
-                if (endp == L.src + L.pos) {
-                    mem_err(mem, "Expected integer exponent in '@dim(...)'");
+        /* 3. `@dim(...)` / `@unit_dim(...)` Physical Dimensional Directive */
+        if (L.src[L.pos] == '@') {
+            uint16_t q = (uint16_t)(L.pos + 1);
+            while (q < L.len && lex_is_ident_cont((unsigned char)L.src[q])) q++;
+            uint16_t dlen = (uint16_t)(q - (L.pos + 1));
+            if ((dlen == 3 && memcmp(L.src + L.pos + 1, "dim", 3) == 0) ||
+                (dlen == 8 && memcmp(L.src + L.pos + 1, "unit_dim", 8) == 0)) {
+                L.pos = q;
+                if (!ext_match_char(&L, '(')) {
+                    mem_err(mem, "Expected '(' after '@dim'");
                     break;
                 }
+                StrSlice uname = ext_read_ident(&L);
+                if (uname.len == 0) {
+                    mem_err(mem, "Expected unit group name in '@dim(...)'");
+                    break;
+                }
+                uint8_t uid = sym_find_or_add_unit(tab, mem, mem_str_ptr(mem, uname), uname.len);
+                if (mem->has_error || uid == MEM_UNIT_NONE) break;
+                UnitDimDef udim;
+                memset(&udim, 0, sizeof(udim));
+                udim.has_dim = 1;
+                int idx = 0;
+                while (L.pos < L.len && !mem->has_error && idx < 7) {
+                    if (!ext_match_char(&L, ',')) break;
+                    ext_skip_ws(&L);
+                    char *endp = NULL;
+                    long val = strtol(L.src + L.pos, &endp, 10);
+                    if (endp == L.src + L.pos) {
+                        mem_err(mem, "Expected integer exponent in '@dim(...)'");
+                        break;
+                    }
+                    L.pos = (uint16_t)(endp - L.src);
+                    udim.exp[idx++] = (int8_t)val;
+                }
+                if (mem->has_error) break;
+                if (!ext_match_char(&L, ')')) {
+                    mem_err(mem, "Expected ')' at end of '@dim(...)'");
+                    break;
+                }
+                tab->unit_dims[uid] = udim;
+                mem_snapshot_perm(mem);
+                continue;
+            }
+        }
+
+        /* 4. Peek optional `pub`, `priv`, `const`, `mut` modifiers for declarations */
+        uint8_t  decl_flags = 0;
+        bool     has_mods   = false;
+        uint16_t after_mods = ext_peek_modifiers(&L, L.pos, &decl_flags, &has_mods, true);
+        if (mem->has_error) break;
+
+        if (after_mods < L.len) {
+            char mc = L.src[after_mods];
+
+            /* 4a. `$type` Declaration */
+            if (mc == '$') {
+                L.pos = after_mods;
+                ext_parse_type_decl(&L, decl_flags);
+                if (!mem->has_error) mem_snapshot_perm(mem);
+                continue;
+            }
+
+            /* 4b. Quoted Symbol Declaration (`"(" => @lparen`, `"g0" : real = ...`, `"sin"(x:real) = ...`) */
+            if (mc == '"' && ext_peek_is_quoted_decl(&L, after_mods)) {
+                L.pos = after_mods;
+                StrSlice sym = ext_read_quoted(&L);
+                if (mem->has_error) break;
+                uint16_t sym_id = sym_intern(tab, mem, sym);
+                if (mem->has_error) break;
+                ext_parse_sym_decl(&L, sym_id, decl_flags, allow_redef);
+                if (!mem->has_error) mem_snapshot_perm(mem);
+                continue;
+            }
+
+            /* 4c. Unquoted Function or Prefix Operator Declaration (`fn(...) = ...`) */
+            if (lex_is_ident_start((unsigned char)mc) && ext_peek_is_fn_decl(&L, after_mods)) {
+                L.pos = after_mods;
+                StrSlice sym = ext_read_ident(&L);
+                if (mem->has_error || sym.len == 0) break;
+                uint16_t sym_id = sym_intern(tab, mem, sym);
+                if (mem->has_error) break;
+                ext_parse_sym_decl(&L, sym_id, decl_flags, allow_redef);
+                if (!mem->has_error) mem_snapshot_perm(mem);
+                continue;
+            }
+
+            /* 4d. Postfix or Infix Operator Declaration (`(a:T) "+" (b:T) :<50 = ...`) */
+            if (mc == '(' && ext_peek_is_op_decl(&L, after_mods)) {
+                if ((decl_flags & (SYM_VAR_MUTABLE | SYM_VAR_EXPLICIT_CONST)) != 0) {
+                    mem_err(mem, "Modifiers 'const' and 'mut' cannot be applied to operator declarations");
+                    break;
+                }
+                L.pos = after_mods;
+                StrSlice pnames[SYM_MAX_OV_PARAMS];
+                uint16_t ptypes[SYM_MAX_OV_PARAMS];
+                uint8_t  punits[SYM_MAX_OV_PARAMS];
+                if (!ext_parse_one_param(&L, &pnames[0], &ptypes[0], &punits[0])) break;
+
+                ext_skip_ws(&L);
+                StrSlice sym = (L.pos < L.len && L.src[L.pos] == '"')
+                               ? ext_read_quoted(&L)
+                               : ext_read_ident(&L);
+                if (mem->has_error || sym.len == 0) break;
+                uint16_t sym_id = sym_intern(tab, mem, sym);
+                if (mem->has_error) break;
+                ext_skip_ws(&L);
+
+                uint8_t pcount = 1;
+                uint8_t fixity = FIX_POSTFIX;
+                uint8_t prec   = 0;
+
+                if (L.pos < L.len && L.src[L.pos] == '(') {
+                    if (!ext_parse_one_param(&L, &pnames[1], &ptypes[1], &punits[1])) break;
+                    pcount = 2;
+                }
+
+                if (!ext_match_char(&L, ':')) {
+                    mem_err(mem, "Expected ':prec', ':<prec', or ':>prec' in operator declaration");
+                    break;
+                }
+                if (pcount == 2) {
+                    if (ext_match_char(&L, '<')) fixity = FIX_INFIX_LEFT;
+                    else if (ext_match_char(&L, '>')) fixity = FIX_INFIX_RIGHT;
+                    else fixity = FIX_INFIX_LEFT;
+                } else {
+                    fixity = FIX_POSTFIX;
+                }
+
+                char *endp = NULL;
+                prec = (uint8_t)strtol(L.src + L.pos, &endp, 10);
                 L.pos = (uint16_t)(endp - L.src);
-                udim.exp[idx++] = (int8_t)val;
+
+                uint16_t rtid = 0;
+                uint8_t  ruid = SYM_UNIT_OMITTED;
+                if (!ext_parse_return_spec(&L, &rtid, &ruid)) break;
+                ext_match_char(&L, '=');
+
+                int dup_idx = ext_find_duplicate_overload(tab, sym_id, L.cur_mod, fixity, pcount, ptypes, punits);
+                if (dup_idx >= 0 && !allow_redef) {
+                    StrSlice s = tab->syms[sym_id];
+                    mem_err(mem, "Duplicate declaration of '%.*s' in module '[%.*s]'",
+                            (int)s.len, mem_str_ptr(mem, s),
+                            (int)sym_mod_name(tab, L.cur_mod).len,
+                            mem_str_ptr(mem, sym_mod_name(tab, L.cur_mod)));
+                    break;
+                }
+
+                uint16_t ov_idx = 0;
+                if (dup_idx >= 0) {
+                    ov_idx = (uint16_t)dup_idx;
+                } else {
+                    if (tab->overload_count >= SYM_MAX_OVERLOADS) {
+                        mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
+                        break;
+                    }
+                    ov_idx = tab->overload_count++;
+                }
+                OpOverload *ov     = &tab->overloads[ov_idx];
+                memset(ov, 0, sizeof(*ov));
+                ov->sym_id         = sym_id;
+                ov->mod_id         = L.cur_mod;
+                ov->fixity         = fixity;
+                ov->prec           = prec;
+                ov->param_count    = pcount;
+                ov->ret_type       = (uint8_t)rtid;
+                ov->ret_unit       = ruid;
+                ov->reserved       = (decl_flags & SYM_VAR_PRIVATE) ? SYM_OV_PRIVATE : 0;
+                ov->param_types[0] = (uint8_t)ptypes[0];
+                ov->param_units[0] = punits[0];
+                if (pcount == 2) {
+                    ov->param_types[1] = (uint8_t)ptypes[1];
+                    ov->param_units[1] = punits[1];
+                }
+                if (dup_idx < 0) {
+                    sym_link_overload(tab, ov_idx);
+                }
+
+                ext_compile_body(&L, ov, pnames);
+                if (!mem->has_error) mem_snapshot_perm(mem);
+                continue;
             }
-            if (mem->has_error) break;
-            if (!ext_match_char(&L, ')')) {
-                mem_err(mem, "Expected ')' at end of '@dim(...)'");
-                break;
-            }
-            tab->unit_dims[uid] = udim;
-            continue;
         }
 
-        if (c == '"') {
-            StrSlice sym = ext_read_quoted(&L);
-            if (mem->has_error) break;
-            uint16_t sym_id = sym_intern(tab, mem, sym);
-            if (mem->has_error) break;
-            ext_parse_sym_decl(&L, sym_id);
-            continue;
+        /* 5. Top-to-Bottom Executable Module Statement / Expression Chunk */
+        uint16_t chunk_end = ext_find_stmt_chunk_end(&L);
+        uint16_t saved_ast = mem->ast_count;
+
+        Parser P;
+        parser_init(&P, mem, tab, L.src, chunk_end, L.pos, false, false);
+        P.is_mod_scope = true;
+        P.cur_mod      = L.cur_mod;
+
+        lex_next(&P.lex);
+        uint16_t expr_root = parser_parse_expr(&P, 0);
+        if (!mem->has_error && P.lex.cur.kind != TOK_EOF) {
+            mem_err(mem, "Unexpected trailing token '%.*s'",
+                    (int)P.lex.cur.len, L.src + P.lex.cur.off);
+        }
+        if (!parser_check_labels(&P) || mem->has_error || expr_root == MEM_NO_IDX) {
+            break;
+        }
+        L.pos = chunk_end;
+
+        uint16_t saved_labels[MEM_MAX_LABELS];
+        memcpy(saved_labels, mem->label_ast, sizeof(saved_labels));
+        for (uint8_t i = 0; i < MEM_MAX_LABELS; ++i) {
+            mem->label_ast[i] = (i < P.label_count) ? P.labels[i].body_ast : MEM_NO_IDX;
         }
 
-        if (lex_is_ident_start((unsigned char)c)) {
-            StrSlice sym = ext_read_ident(&L);
-            if (mem->has_error || sym.len == 0) break;
-            uint16_t sym_id = sym_intern(tab, mem, sym);
-            if (mem->has_error) break;
-            ext_parse_sym_decl(&L, sym_id);
-            continue;
+        uint16_t frame_base = 0;
+        if (P.local_count > 0) {
+            frame_base = mem_push_frame(mem, P.local_count);
+            if (mem->has_error) {
+                memcpy(mem->label_ast, saved_labels, sizeof(saved_labels));
+                break;
+            }
+            for (uint8_t i = 0; i < P.local_count; ++i) {
+                mem_set_slot(mem, frame_base, i, val_make_f64(mem, mem->fast_real_type, 0.0));
+            }
         }
 
-        if (c == '(') {
-            StrSlice pnames[SYM_MAX_OV_PARAMS];
-            uint16_t ptypes[SYM_MAX_OV_PARAMS];
-            uint8_t  punits[SYM_MAX_OV_PARAMS];
-            if (!ext_parse_one_param(&L, &pnames[0], &ptypes[0], &punits[0])) break;
+        mem->eval_steps  = 0;
+        mem->eval_depth  = 0;
+        mem->call_depth  = 0;
+        mem->jump_active = JUMP_NONE;
 
-            ext_skip_ws(&L);
-            StrSlice sym = (L.pos < L.len && L.src[L.pos] == '"')
-                           ? ext_read_quoted(&L)
-                           : ext_read_ident(&L);
-            if (mem->has_error || sym.len == 0) break;
-            uint16_t sym_id = sym_intern(tab, mem, sym);
-            if (mem->has_error) break;
-            ext_skip_ws(&L);
-
-            uint8_t pcount = 1;
-            uint8_t fixity = FIX_POSTFIX;
-            uint8_t prec   = 0;
-
-            if (L.pos < L.len && L.src[L.pos] == '(') {
-                if (!ext_parse_one_param(&L, &pnames[1], &ptypes[1], &punits[1])) break;
-                pcount = 2;
-            }
-
-            if (!ext_match_char(&L, ':')) {
-                mem_err(mem, "Expected ':prec', ':<prec', or ':>prec' in operator declaration");
-                break;
-            }
-            if (pcount == 2) {
-                if (ext_match_char(&L, '<')) fixity = FIX_INFIX_LEFT;
-                else if (ext_match_char(&L, '>')) fixity = FIX_INFIX_RIGHT;
-                else fixity = FIX_INFIX_LEFT;
-            } else {
-                fixity = FIX_POSTFIX;
-            }
-
-            char *endp = NULL;
-            prec = (uint8_t)strtol(L.src + L.pos, &endp, 10);
-            L.pos = (uint16_t)(endp - L.src);
-
-            uint16_t rtid = 0;
-            uint8_t  ruid = SYM_UNIT_OMITTED;
-            if (!ext_parse_return_spec(&L, &rtid, &ruid)) break;
-            ext_match_char(&L, '=');
-
-            if (ext_has_duplicate_overload(tab, sym_id, L.cur_mod, fixity, pcount, ptypes, punits)) {
-                StrSlice s = tab->syms[sym_id];
-                mem_err(mem, "Duplicate declaration of '%.*s' in module '[%.*s]'",
-                        (int)s.len, mem_str_ptr(mem, s),
-                        (int)sym_mod_name(tab, L.cur_mod).len,
-                        mem_str_ptr(mem, sym_mod_name(tab, L.cur_mod)));
-                break;
-            }
-
-            if (tab->overload_count >= SYM_MAX_OVERLOADS) {
-                mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
-                break;
-            }
-            uint16_t ov_idx = tab->overload_count++;
-            OpOverload *ov  = &tab->overloads[ov_idx];
-            memset(ov, 0, sizeof(*ov));
-            ov->sym_id         = sym_id;
-            ov->mod_id         = L.cur_mod;
-            ov->fixity         = fixity;
-            ov->prec           = prec;
-            ov->param_count    = pcount;
-            ov->ret_type       = (uint8_t)rtid;
-            ov->ret_unit       = ruid;
-            ov->param_types[0] = (uint8_t)ptypes[0];
-            ov->param_units[0] = punits[0];
-            if (pcount == 2) {
-                ov->param_types[1] = (uint8_t)ptypes[1];
-                ov->param_units[1] = punits[1];
-            }
-            sym_link_overload(tab, ov_idx);
-
-            ext_compile_body(&L, ov, pnames);
-            continue;
+        Value step_val = eval_ast(mem, tab, expr_root, frame_base, 0);
+        bool early_return = false;
+        if (mem->jump_active == JUMP_RETURN) {
+            step_val         = mem->jump_val;
+            mem->jump_val    = val_void();
+            mem->jump_active = JUMP_NONE;
+            early_return     = true;
+        } else if (mem->jump_active != JUMP_NONE && !mem->has_error) {
+            mem->jump_active = JUMP_NONE;
+            mem_err(mem, "Unhandled jump, break, or continue outside active loop/scope");
         }
 
-        mem_err(mem, "Unrecognized declaration in extension near '%.*s'",
-                (int)(L.len - L.pos < 16 ? L.len - L.pos : 16), L.src + L.pos);
-        break;
+        if (P.local_count > 0) {
+            mem_pop_frame(mem, frame_base);
+        }
+        memcpy(mem->label_ast, saved_labels, sizeof(saved_labels));
+
+        if (mem->perm_ast_count <= saved_ast) {
+            mem->ast_count = saved_ast;
+        }
+
+        if (mem->has_error) break;
+        last_val = step_val;
+        if (early_return) break;
     }
 
+    if (!had_any_token && !mem->has_error && allow_redef) {
+        mem_err(mem, "Empty expression");
+    }
+
+    if (mem->has_error) {
+        /* Clean up any uninitialized parse-time placeholder variables on error */
+        ModVarDef *vars = sym_vars_mut(tab);
+        uint16_t w = 0;
+        for (uint16_t i = 0; i < tab->var_count; ++i) {
+            if (val_get_type(mem, vars[i].val) != MEM_TYPE_VOID) {
+                if (w != i) vars[w] = vars[i];
+                w++;
+            }
+        }
+        tab->var_count = w;
+    }
+
+    mem->cur_mod      = prev_mem_mod;
+    tab->cur_mod      = prev_tab_mod;
+    mem->last_mod_val = last_val;
+    if (out_val) *out_val = last_val;
     return !mem->has_error;
+}
+
+bool ext_compile_slice(MemArena *mem, SymTable *tab,
+                       const char *slice_src, uint16_t slice_len) {
+    return ext_eval_slice(mem, tab, "default", false, slice_src, slice_len, NULL);
 }
 
 /* ============================================================================
@@ -1134,60 +1661,58 @@ bool ext_compile_unit(MemArena *mem, const SymTable *tab,
         /* 4. Top-level `[module]` header or `<[dep]` dependency */
         if (at_stmt_start && depth == 0 && !in_pattern) {
             if (src[pos] == '[') {
-                uint16_t hdr_start = pos;
-                pos++;
-                while (pos < len && (src[pos] == ' ' || src[pos] == '\t')) pos++;
-                uint16_t id_start = pos;
-                while (pos < len && lex_is_ident_cont((unsigned char)src[pos])) pos++;
-                uint16_t id_len = (uint16_t)(pos - id_start);
-                while (pos < len && (src[pos] == ' ' || src[pos] == '\t')) pos++;
+                uint16_t hdr_start   = pos;
+                uint16_t id_start    = 0;
+                uint16_t id_len      = 0;
+                uint16_t after_rbrck = 0;
+                bool     malformed   = false;
+                if (ext_peek_is_mod_header(src, pos, len, &id_start, &id_len, &after_rbrck, &malformed)) {
+                    pos = after_rbrck;
+                    char mname[32];
+                    memcpy(mname, src + id_start, id_len);
+                    mname[id_len] = '\0';
+                    bool is_def = (strcmp(mname, "default") == 0);
 
-                if (id_len == 0 || id_len >= 32u || pos >= len || src[pos] != ']') {
+                    if (!is_def) {
+                        /* Reject if module is already loaded in SymTable */
+                        for (uint16_t i = 0; i < tab->mod_count; ++i) {
+                            if (mem_slice_eq_cstr(mem, loaded_mods[i], mname)) {
+                                mem_err(mem, "Module '[%s]' is already loaded", mname);
+                                ctx->has_error = true;
+                                snprintf(ctx->err_msg, sizeof(ctx->err_msg), "%s", mem->err_msg);
+                                return false;
+                            }
+                        }
+                        /* Reject if module is already staged in ExtBuildCtx */
+                        const ExtCompiledUnit *staged = ext_ctx_units(ctx);
+                        for (uint16_t i = 0; i < ctx->unit_count; ++i) {
+                            if (!staged[i].is_default_mod &&
+                                strcmp(staged[i].mod_name, mname) == 0) {
+                                mem_err(mem, "Module '[%s]' is already loaded", mname);
+                                ctx->has_error = true;
+                                snprintf(ctx->err_msg, sizeof(ctx->err_msg), "%s", mem->err_msg);
+                                return false;
+                            }
+                        }
+                    }
+
+                    if (cur_u >= 0) {
+                        ExtCompiledUnit *prev = &ext_ctx_units_mut(ctx)[cur_u];
+                        prev->src_len = (uint16_t)((base_off + hdr_start) - prev->src_off);
+                    }
+                    cur_u = ext_alloc_unit(mem, ctx);
+                    if (cur_u < 0) return false;
+                    ExtCompiledUnit *u = &ext_ctx_units_mut(ctx)[cur_u];
+                    memcpy(u->mod_name, mname, (size_t)id_len + 1u);
+                    u->is_default_mod = is_def;
+                    u->src_off        = base_off + hdr_start;
+                    u->src_len        = 0;
+                    at_stmt_start     = true;
+                    continue;
+                }
+                if (malformed) {
                     return build_fail(mem, ctx, "Expected closing ']' in module header");
                 }
-                pos++; /* consume ']' */
-
-                char mname[32];
-                memcpy(mname, src + id_start, id_len);
-                mname[id_len] = '\0';
-                bool is_def = (strcmp(mname, "default") == 0);
-
-                if (!is_def) {
-                    /* Reject if module is already loaded in SymTable */
-                    for (uint16_t i = 0; i < tab->mod_count; ++i) {
-                        if (mem_slice_eq_cstr(mem, loaded_mods[i], mname)) {
-                            mem_err(mem, "Module '[%s]' is already loaded", mname);
-                            ctx->has_error = true;
-                            snprintf(ctx->err_msg, sizeof(ctx->err_msg), "%s", mem->err_msg);
-                            return false;
-                        }
-                    }
-                    /* Reject if module is already staged in ExtBuildCtx */
-                    const ExtCompiledUnit *staged = ext_ctx_units(ctx);
-                    for (uint16_t i = 0; i < ctx->unit_count; ++i) {
-                        if (!staged[i].is_default_mod &&
-                            strcmp(staged[i].mod_name, mname) == 0) {
-                            mem_err(mem, "Module '[%s]' is already loaded", mname);
-                            ctx->has_error = true;
-                            snprintf(ctx->err_msg, sizeof(ctx->err_msg), "%s", mem->err_msg);
-                            return false;
-                        }
-                    }
-                }
-
-                if (cur_u >= 0) {
-                    ExtCompiledUnit *prev = &ext_ctx_units_mut(ctx)[cur_u];
-                    prev->src_len = (uint16_t)((base_off + hdr_start) - prev->src_off);
-                }
-                cur_u = ext_alloc_unit(mem, ctx);
-                if (cur_u < 0) return false;
-                ExtCompiledUnit *u = &ext_ctx_units_mut(ctx)[cur_u];
-                memcpy(u->mod_name, mname, (size_t)id_len + 1u);
-                u->is_default_mod = is_def;
-                u->src_off        = base_off + hdr_start;
-                u->src_len        = 0;
-                at_stmt_start     = true;
-                continue;
             }
 
             if (src[pos] == '<' && pos + 1 < len && src[pos + 1] == '[') {
@@ -1226,7 +1751,7 @@ bool ext_compile_unit(MemArena *mem, const SymTable *tab,
             }
         }
 
-        /* 5. Any declaration before an explicit `[module]` header creates an implicit `[default]` unit */
+        /* 5. Any declaration/statement before an explicit `[module]` header creates an implicit `[default]` unit */
         if (cur_u < 0) {
             cur_u = ext_alloc_unit(mem, ctx);
             if (cur_u < 0) return false;
@@ -1264,10 +1789,16 @@ bool ext_compile_unit(MemArena *mem, const SymTable *tab,
                 pos++;
             }
         } else {
-            if (src[pos] == '~' && depth == 0) {
-                in_pattern    = true;
-                at_stmt_start = false;
+            if (src[pos] == '$' && depth == 0) {
+                /* Consuming type `~` only applies inside `$type` declarations */
                 pos++;
+                while (pos < len && lex_is_ident_cont((unsigned char)src[pos])) pos++;
+                while (pos < len && (src[pos] == ' ' || src[pos] == '\t')) pos++;
+                if (pos < len && src[pos] == '~') {
+                    in_pattern = true;
+                    pos++;
+                }
+                at_stmt_start = false;
             } else if (src[pos] == '(' || src[pos] == '{' || src[pos] == '[') {
                 depth++;
                 at_stmt_start = false;

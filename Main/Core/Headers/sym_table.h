@@ -1,5 +1,5 @@
 /*
- * sym_table.h — Dynamic Module, Type, Unit, Struct, Symbol, Overload & Extern Registry
+ * sym_table.h — Dynamic Module, Type, Unit, Struct, Symbol, Variable, Overload & Extern Registry
  *
  * Purpose:
  *   Stores and queries extension modules (with unbounded SBO+heap capacity and O(1) active-state toggling),
@@ -7,7 +7,8 @@
  *   `angle`, `mass`, `time`, `speed`, ...), flat C-style structs, dynamic
  *   vectors (`$vec`), multidimensional matrices (`$mat`), first-class lambdas
  *   (`$fn`), generic entity & unit wildcards (`T` / `any`), operator/function
- *   overloads (with O(1) per-symbol chain indexing), global constants,
+ *   overloads (with O(1) per-symbol chain indexing), module-scoped variables &
+ *   constants (with privacy, scoping, mutability & concrete type/unit locks),
  *   private C intrinsic IDs, and host-registered extern callbacks (`@<extern_name>`).
  */
 
@@ -26,6 +27,8 @@ extern "C" {
 
 #define SYM_SBO_MODULES        64   /* Inline SBO module slots before heap growth */
 #define SYM_HEAP_MOD_MAGIC 0x4D4F4448u /* "MODH" magic for heap-spilled modules  */
+#define SYM_SBO_VARS          256   /* Inline SBO module variable slots           */
+#define SYM_HEAP_VAR_MAGIC 0x56415248u /* "VARH" magic for heap-spilled vars     */
 #define SYM_MAX_TYPES          64
 #define SYM_MAX_UNITS          64
 #define SYM_MAX_PAT_ELEMS     256
@@ -40,6 +43,16 @@ extern "C" {
 #define SYM_UNIT_OMITTED    0xFFu   /* Unannotated parameter/return unit         */
 #define SYM_UNIT_GENERIC    0xFEu   /* Explicit generic unit `T` / `any`         */
 #define SYM_UNIT_LOCK_NONE  0xFDu   /* Explicit concrete unitless `none`         */
+
+/* Module Variable, Constant, Overload & Type Privacy / Mutability Flags */
+#define SYM_VAR_MUTABLE        0x01u /* 1 = mutable (`:=`/`mut`), 0 = immutable (`=`/`const`) */
+#define SYM_VAR_PRIVATE        0x02u /* 1 = module-private (`priv`), 0 = public (`pub`)       */
+#define SYM_VAR_EXPLICIT_CONST 0x04u /* 1 = explicitly declared with `const`                  */
+#define SYM_VAR_REASSIGN_ONLY  0x08u /* AST store flag: plain `=` or compound `+=`            */
+#define SYM_VAR_COMPOUND_OP    0x10u /* AST store flag: compound assignment (`+=`, `-=`, ...) */
+
+#define SYM_OV_PRIVATE         0x02u /* OpOverload.reserved bit: private to `ov->mod_id`      */
+#define SYM_TYPE_PRIVATE       0x02u /* TypeDef.reserved bit: private to `td->mod_id`         */
 
 /* High-bit `OpOverload.meta_tag` flags for `.math` lazy bound-variable (`var_x`) functions */
 #define SYM_META_LAZY_MASK     0x80u /* Bit 7: lazy bound-variable function (`(V << 3) | E`) */
@@ -295,7 +308,7 @@ typedef struct {
     uint8_t  ret_type;
     uint8_t  ret_unit;       /* SYM_UNIT_OMITTED, SYM_UNIT_GENERIC, SYM_UNIT_LOCK_NONE, or 1..63 */
     uint8_t  meta_tag;       /* 1 = inlined alias, meta IntrinsicId, or SYM_META_LAZY_MASK       */
-    uint8_t  reserved;
+    uint8_t  reserved;       /* SYM_OV_PRIVATE when declared with `priv`                         */
     uint8_t  param_types[SYM_MAX_OV_PARAMS];
     uint8_t  param_units[SYM_MAX_OV_PARAMS];
     uint16_t body_ast;
@@ -307,9 +320,19 @@ typedef struct {
     uint8_t  type_id;
     uint8_t  unit_id;
     uint8_t  val_idx;
-    uint8_t  reserved;
-    uint16_t pool_idx;       /* Index into MemArena.f64_pool for ABI-neutral binary image */
+    uint8_t  reserved;       /* SYM_VAR_MUTABLE | SYM_VAR_PRIVATE flags in `.mathc`              */
+    uint16_t pool_idx;       /* Index into MemArena.f64_pool for ABI-neutral binary image        */
 } ConstDef;
+
+/* Runtime Module-Scoped Variable / Constant Descriptor (supports all Value types & SBO+heap growth) */
+typedef struct {
+    uint16_t sym_id;         /* Interned symbol ID in SymTable.syms                              */
+    uint16_t mod_id;         /* Owning module ID in SymTable                                     */
+    uint16_t lock_type;      /* 0 = unlocked, 1..63 = concrete entity type lock                  */
+    uint8_t  lock_unit;      /* 0/SYM_UNIT_OMITTED = unlocked, 1..63 or SYM_UNIT_LOCK_NONE       */
+    uint8_t  flags;          /* SYM_VAR_MUTABLE | SYM_VAR_PRIVATE | SYM_VAR_EXPLICIT_CONST       */
+    Value    val;            /* Live 8-byte NaN-boxed Value (scalar, $str, $vec, $mat, $map, $fn)*/
+} ModVarDef;
 
 _Static_assert(sizeof(StrSlice)   == 4,  "StrSlice must be strictly 4 bytes");
 _Static_assert(sizeof(PatElem)    == 6,  "PatElem must be strictly 6 bytes");
@@ -334,7 +357,7 @@ typedef struct {
 } ExternDef;
 
 /* ============================================================================
- * 4. SYMBOL, TYPE & UNIT TABLE CONTEXT
+ * 4. SYMBOL, TYPE, UNIT & MODULE VARIABLE TABLE CONTEXT
  * ============================================================================ */
 
 typedef struct SymTable {
@@ -345,6 +368,7 @@ typedef struct SymTable {
     uint32_t    heap_mod_magic;
     uint16_t    mod_cap;
     uint16_t    mod_count;
+    uint16_t    cur_mod;
 
     TypeDef     types[SYM_MAX_TYPES];
     uint8_t     type_count;
@@ -373,6 +397,13 @@ typedef struct SymTable {
     ConstDef    consts[SYM_MAX_CONSTS];
     Value       const_vals[SYM_MAX_CONSTS];
     uint8_t     const_count;
+
+    /* Unbounded SBO + Heap Module-Scoped Variable & Constant Table */
+    ModVarDef   sbo_vars[SYM_SBO_VARS];
+    ModVarDef  *heap_vars;
+    uint32_t    heap_var_magic;
+    uint16_t    var_cap;
+    uint16_t    var_count;
 
     /* Host-registered runtime callbacks (not serialized into binary images) */
     ExternDef   externs[SYM_MAX_EXTERNS];
@@ -411,17 +442,55 @@ static inline StrSlice sym_mod_name(const SymTable *tab, uint16_t mod_id) {
     return sym_mod_names(tab)[mod_id];
 }
 
+static inline const ModVarDef *sym_vars(const SymTable *tab) {
+    return (tab->heap_var_magic == SYM_HEAP_VAR_MAGIC && tab->heap_vars != NULL)
+           ? tab->heap_vars
+           : tab->sbo_vars;
+}
+
+static inline ModVarDef *sym_vars_mut(SymTable *tab) {
+    return (tab->heap_var_magic == SYM_HEAP_VAR_MAGIC && tab->heap_vars != NULL)
+           ? tab->heap_vars
+           : tab->sbo_vars;
+}
+
+static inline bool sym_mod_enabled(const SymTable *tab, uint16_t mod_id) {
+    if (!tab || mod_id >= tab->mod_count) {
+        return false;
+    }
+    return sym_mod_active(tab)[mod_id] != 0;
+}
+
+static inline bool sym_ov_is_visible(const SymTable *tab, const OpOverload *ov) {
+    if (!sym_mod_enabled(tab, ov->mod_id)) return false;
+    if ((ov->reserved & SYM_OV_PRIVATE) != 0 && ov->mod_id != tab->cur_mod) return false;
+    return true;
+}
+
 void        sym_init(SymTable *tab);
 void        sym_free_heap(SymTable *tab);
 bool        sym_ensure_mod_cap(SymTable *tab, MemArena *mem, uint16_t needed_cap);
+bool        sym_ensure_var_cap(SymTable *tab, MemArena *mem, uint16_t needed_cap);
 void        sym_rebuild_index(SymTable *tab);
 void        sym_link_overload(SymTable *tab, uint16_t ov_idx);
 
 /* Module management & O(1) active state toggling (unbounded module count) */
 uint16_t    sym_find_or_add_mod(SymTable *tab, MemArena *mem, StrSlice name);
+int         sym_find_mod(const SymTable *tab, const MemArena *mem, const char *mod_name);
 bool        sym_set_module(SymTable *tab, const MemArena *mem, const char *mod_name, bool enabled);
 bool        sym_is_module_active(const SymTable *tab, const MemArena *mem, const char *mod_name);
-bool        sym_mod_enabled(const SymTable *tab, uint16_t mod_id);
+bool        sym_reset_module(SymTable *tab, MemArena *mem, const char *mod_name);
+
+/* Module-Scoped Variable & Constant Lookup, Privacy & Mutability API */
+void        sym_sync_consts_to_vars(SymTable *tab, MemArena *mem);
+int         sym_find_own_var(const SymTable *tab, uint16_t sym_id, uint16_t mod_id);
+int         sym_find_var(const SymTable *tab, uint16_t sym_id, uint16_t caller_mod,
+                         uint16_t *out_priv_mod);
+int         sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t mod_id,
+                               Value val, uint16_t lock_type, uint8_t lock_unit,
+                               uint8_t flags, bool is_decl);
+bool        sym_has_priv_ov(const SymTable *tab, uint16_t sym_id, OpFixity fix_filter,
+                            uint16_t *out_priv_mod);
 
 /* Symbol Interning & Lookup */
 uint16_t    sym_intern(SymTable *tab, MemArena *mem, StrSlice s);

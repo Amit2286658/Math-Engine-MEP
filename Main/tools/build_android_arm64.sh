@@ -32,7 +32,6 @@ ARCH=aarch64
 CC="$NDK_BIN/${ARCH}-linux-android${API}-clang"
 LD="$NDK_BIN/lld"
 
-INCS="-I$ROOT/Core/Headers -I$ROOT/Core/compile -I$ROOT/Core/session -I$ROOT/Core/jni -I$ROOT/Core/lib/delegate -I$ROOT/Core/lib/hardcode"
 
 # NOTE: the engine always boots blank; the stdlib image is loaded from disk
 # by the host (no embedded k_stdlib_mathc anymore).
@@ -46,7 +45,6 @@ i=0
 for src in \
     "$ROOT/Core/Code/"*.c \
     "$ROOT/Core/compile/"*.c \
-    "$ROOT/Core/session/"*.c \
     "$ROOT/Core/jni/"*.c \
     "$ROOT/Core/lib/delegate/"*.c \
     "$ROOT/Core/lib/hardcode/"*.c

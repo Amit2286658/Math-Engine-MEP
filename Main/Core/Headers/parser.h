@@ -4,6 +4,7 @@
  * Purpose:
  *   Consumes tokens from `Lexer` and builds compact 8-byte `AstNode` trees in
  *   `MemArena` using operator binding powers, lexical `{ ... }` scopes,
+ *   module-scoped variables (`pub`/`priv`, `:=` mutable vs `=`/`const` immutable),
  *   `if ... then ... else` chains, `switch` blocks, `cond ? x : y` ternary
  *   expressions, and `Tag : { ... }` labeled scopes from `SymTable`.
  */
@@ -25,12 +26,17 @@ extern "C" {
 #define AST_SLOT_DUAL_UNIT_BIT  0x8000u /* Variable on RHS of `in` also matches unit sym */
 #define AST_SLOT_SYM_MASK       0x3FFFu
 
+/* Bit flag stored in `AstNode.sub` on `AST_SLOT_LOAD` when declaring a local `const` */
+#define AST_SLOT_CONST_DECL_BIT 0x80u
+#define AST_SLOT_IDX_MASK       0x7Fu
+
 typedef struct {
     StrSlice name;
     uint16_t type_id;
     uint8_t  slot;
     uint8_t  scope_depth;
     uint8_t  is_loop_iter;
+    uint8_t  is_const;
 } LocalVar;
 
 typedef struct {
@@ -42,6 +48,10 @@ typedef struct {
 typedef struct {
     Lexer      lex;
     bool       in_ext_body;
+    bool       is_mod_scope;      /* True when top-level (`scope_depth == 0`) binds to `SymTable.vars` */
+    uint16_t   cur_mod;           /* Active module ID for privacy & module-variable binding            */
+    uint8_t    pending_var_flags; /* Modifier flags (`SYM_VAR_*`) from `pub`/`priv`/`const`/`mut`      */
+    bool       has_pending_mods;
     LocalVar   locals[PARSER_MAX_LOCALS];
     uint16_t   slot_types[PARSER_MAX_LOCALS];
     uint8_t    vis_count;

@@ -8,10 +8,12 @@
  *   - Transparent SBO-to-Heap spill (`HeapBlock` table) for large `$vec`, `$mat`,
  *     and `$map` payloads (`> 64` doubles or when `f64_pool` is near capacity).
  *   - Unified Mark-Sweep / Sliding Compaction Garbage Collector (`mem_compact_scratch`)
- *     that slides live `f64_pool` objects AND sweeps unreachable `HeapBlock`s.
+ *     that slides live `f64_pool` objects, traces module variables in `SymTable`,
+ *     AND sweeps unreachable `HeapBlock`s.
  */
 
 #include "mem_arena.h"
+#include "sym_table.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +42,7 @@ void mem_free_all_heap(MemArena *mem) {
 void mem_init(MemArena *mem) {
     memset(mem, 0, sizeof(*mem));
     mem->jump_val              = val_void();
+    mem->last_mod_val          = val_void();
     mem->invalid_ast_mut.kind  = 0xFFu;
     mem->invalid_ast_mut.ref   = MEM_NO_IDX;
     mem->invalid_ast_mut.left  = MEM_NO_IDX;
@@ -61,21 +64,20 @@ void mem_clear_err(MemArena *mem) {
 }
 
 void mem_snapshot_perm(MemArena *mem) {
-    mem->perm_src_len   = mem->src_len;
-    mem->perm_ast_count = mem->ast_count;
-    mem->perm_pool_top  = mem->pool_top;
+    mem->perm_src_len      = mem->src_len;
+    mem->perm_ast_count    = mem->ast_count;
+    mem->perm_pool_top     = mem->pool_top;
+    mem->perm_fn_src_count = mem->fn_src_count;
 }
 
 void mem_rewind_scratch(MemArena *mem) {
-    mem_free_all_heap(mem);
     mem->src_len        = mem->perm_src_len;
     mem->ast_count      = mem->perm_ast_count;
-    mem->pool_top       = mem->perm_pool_top;
     mem->sp             = 0;
     mem->jump_active    = 0;
     mem->jump_target_id = 0;
     mem->jump_val       = val_void();
-    mem->fn_src_count    = 0;
+    mem->fn_src_count    = mem->perm_fn_src_count;
     mem->temp_root_count = 0;
     memset(mem->local_slot_names, 0, sizeof(mem->local_slot_names));
     mem->vrange_cnt      = 0;
@@ -85,6 +87,13 @@ void mem_rewind_scratch(MemArena *mem) {
     mem->eval_steps     = 0;
     for (uint8_t i = 0; i < MEM_MAX_LABELS; ++i) {
         mem->label_ast[i] = MEM_NO_IDX;
+    }
+
+    if (mem->sym_tab != NULL && mem->sym_tab->var_count > 0) {
+        (void)mem_compact_scratch(mem, NULL, 0);
+    } else {
+        mem_free_all_heap(mem);
+        mem->pool_top = mem->perm_pool_top;
     }
 }
 
@@ -317,7 +326,7 @@ static bool mem_should_use_sbo(const MemArena *mem, uint32_t total_slots, bool i
 
 /*
  * Dynamic Vector 4-Slot Header Layout in `f64_pool[hdr_idx .. hdr_idx+3]`:
- *   [0] = elem_type_id (0 = untyped/auto-inferred on first push, >0 = type ID T)
+ *   [0] = elem_type_id (0 = untyped/auto-inferred on first push, >0 = type ID T; bit 15 = MEM_HDR_IMMUTABLE_BIT)
  *   [1] = len          (current number of active elements T)
  *   [2] = cap          (allocated capacity in elements T)
  *   [3] = data_idx     (start index in `f64_pool` OR `MEM_HEAP_IDX_BIT | heap_id`, or 0)
@@ -435,8 +444,6 @@ bool mem_vec_reserve(MemArena *mem, uint16_t hdr_idx, uint16_t stride, uint32_t 
     if (copy_slots > 0 && dst != NULL) {
         memcpy(dst, &mem->f64_pool[data_idx], (size_t)copy_slots * sizeof(double));
     }
-    /* Note: Old SBO slots in `f64_pool[data_idx .. data_idx + cap*stride)` are now unreferenced
-       and will be reclaimed by `mem_compact_scratch` (`gc_compact()`). */
     mem_write_pool(mem, (uint16_t)(hdr_idx + 2), (double)new_cap);
     mem_write_pool(mem, (uint16_t)(hdr_idx + 3), (double)heap_idx);
     return true;
@@ -487,7 +494,7 @@ void mem_vec_shrink_to_fit(MemArena *mem, uint16_t hdr_idx, uint16_t stride) {
  *   [0] = rank       (number of dimensions: 1, 2, 3, or 4)
  *   [1] = total_len  (total scalar elements = d0 * d1 * ... * d_{rank-1})
  *   [2] = data_idx   (start index in `f64_pool` OR `MEM_HEAP_IDX_BIT | heap_id` of `total_len` doubles)
- *   [3] = elem_tid   (element type ID, default fast_real_type)
+ *   [3] = elem_tid   (element type ID, default fast_real_type; bit 15 = MEM_HDR_IMMUTABLE_BIT)
  *   [4] = d0         (dimension 0 size, e.g. rows)
  *   [5] = d1         (dimension 1 size, e.g. cols)
  *   [6] = d2         (dimension 2 size)
@@ -536,7 +543,7 @@ uint16_t mem_mat_alloc_hdr(MemArena *mem, uint8_t rank, const uint16_t *dims,
 
 /*
  * Dynamic Map (`$map`) 4-Slot Header Layout in `f64_pool[hdr_idx .. hdr_idx+3]`:
- *   [0] = packed_val_type (low 8 bits = locked val type ID or 0, high 8 bits = locked unit ID)
+ *   [0] = packed_val_type (low 8 bits = locked val type ID or 0, bits 8..14 = locked unit ID, bit 15 = MEM_HDR_IMMUTABLE_BIT)
  *   [1] = len             (number of active key-value pairs)
  *   [2] = cap             (allocated entry capacity)
  *   [3] = data_idx        (start index in `f64_pool` OR `MEM_HEAP_IDX_BIT | heap_id` of `cap * 2` doubles:
@@ -671,6 +678,45 @@ void mem_map_set_entry(MemArena *mem, uint16_t data_idx, uint16_t entry_i,
     memcpy(pv, &val, sizeof(Value));
 }
 
+void mem_val_mark_immutable(MemArena *mem, Value v) {
+    if (!mem) return;
+    uint16_t tid = val_get_type(mem, v);
+    if (tid == 0) return;
+    if (tid == mem->vec_type_id || tid == mem->map_type_id) {
+        uint16_t hdr = val_get_pool_idx(v);
+        if (hdr < MEM_MAX_F64_POOL) {
+            uint16_t raw0 = (uint16_t)mem_read_pool(mem, hdr);
+            mem_write_pool(mem, hdr, (double)(uint16_t)(raw0 | MEM_HDR_IMMUTABLE_BIT));
+        }
+    } else if (tid == mem->mat_type_id) {
+        uint16_t hdr = val_get_pool_idx(v);
+        if ((uint32_t)hdr + 3u < MEM_MAX_F64_POOL) {
+            uint16_t raw3 = (uint16_t)mem_read_pool(mem, (uint16_t)(hdr + 3u));
+            mem_write_pool(mem, (uint16_t)(hdr + 3u), (double)(uint16_t)(raw3 | MEM_HDR_IMMUTABLE_BIT));
+        }
+    }
+}
+
+bool mem_val_is_immutable(const MemArena *mem, Value v) {
+    if (!mem) return false;
+    uint16_t tid = val_get_type(mem, v);
+    if (tid == 0) return false;
+    if (tid == mem->vec_type_id || tid == mem->map_type_id) {
+        uint16_t hdr = val_get_pool_idx(v);
+        if (hdr < MEM_MAX_F64_POOL) {
+            uint16_t raw0 = (uint16_t)mem_read_pool(mem, hdr);
+            return (raw0 & MEM_HDR_IMMUTABLE_BIT) != 0;
+        }
+    } else if (tid == mem->mat_type_id) {
+        uint16_t hdr = val_get_pool_idx(v);
+        if ((uint32_t)hdr + 3u < MEM_MAX_F64_POOL) {
+            uint16_t raw3 = (uint16_t)mem_read_pool(mem, (uint16_t)(hdr + 3u));
+            return (raw3 & MEM_HDR_IMMUTABLE_BIT) != 0;
+        }
+    }
+    return false;
+}
+
 uint16_t mem_push_temp_root(MemArena *mem, Value *vptr) {
     if (!mem || !vptr) return 0;
     uint16_t saved = mem->temp_root_count;
@@ -738,6 +784,7 @@ uint16_t mem_push_frame(MemArena *mem, uint8_t slot_count) {
     if (slot_count > 0) {
         memset(&mem->slot_locked_type[base], 0, slot_count);
         memset(&mem->slot_locked_unit[base], 0, slot_count);
+        memset(&mem->slot_is_const[base],    0, slot_count);
     }
     mem->sp = (uint16_t)(mem->sp + slot_count);
     return base;
@@ -955,11 +1002,13 @@ bool val_as_cstr(const MemArena *mem, Value v, char *buf, size_t cap) {
 static void gc_mark_val_rec(MemArena *mem, Value v, uint16_t perm_top, uint16_t old_top, uint8_t depth);
 
 static void gc_mark_vec_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, uint16_t old_top, uint8_t depth) {
-    if (depth > 16 || hdr_idx < perm_top || (uint32_t)hdr_idx + MEM_VEC_HDR_SLOTS > old_top) return;
-    if (mem->gc_mark[hdr_idx] == 2u) return;
-    mem->gc_mark[hdr_idx] = 2u;
-    for (uint16_t k = 1; k < MEM_VEC_HDR_SLOTS; ++k) {
-        mem->gc_mark[hdr_idx + k] = 1u;
+    if (depth > 16 || (uint32_t)hdr_idx + MEM_VEC_HDR_SLOTS > old_top) return;
+    if (hdr_idx >= perm_top) {
+        if (mem->gc_mark[hdr_idx] == 2u) return;
+        mem->gc_mark[hdr_idx] = 2u;
+        for (uint16_t k = 1; k < MEM_VEC_HDR_SLOTS; ++k) {
+            mem->gc_mark[hdr_idx + k] = 1u;
+        }
     }
     uint16_t raw_hdr0 = (uint16_t)mem->f64_pool[hdr_idx + 0];
     uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
@@ -985,7 +1034,7 @@ static void gc_mark_vec_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
     }
 
     /* Reclaim slack SBO vector capacity during compaction */
-    if (cap > len) {
+    if (cap > len && data_idx >= perm_top) {
         mem->f64_pool[hdr_idx + 2] = (double)len;
         cap = len;
     }
@@ -1007,11 +1056,13 @@ static void gc_mark_vec_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
 }
 
 static void gc_mark_map_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, uint16_t old_top, uint8_t depth) {
-    if (depth > 16 || hdr_idx < perm_top || (uint32_t)hdr_idx + MEM_MAP_HDR_SLOTS > old_top) return;
-    if (mem->gc_mark[hdr_idx] == 3u) return;
-    mem->gc_mark[hdr_idx] = 3u;
-    for (uint16_t k = 1; k < MEM_MAP_HDR_SLOTS; ++k) {
-        mem->gc_mark[hdr_idx + k] = 1u;
+    if (depth > 16 || (uint32_t)hdr_idx + MEM_MAP_HDR_SLOTS > old_top) return;
+    if (hdr_idx >= perm_top) {
+        if (mem->gc_mark[hdr_idx] == 3u) return;
+        mem->gc_mark[hdr_idx] = 3u;
+        for (uint16_t k = 1; k < MEM_MAP_HDR_SLOTS; ++k) {
+            mem->gc_mark[hdr_idx + k] = 1u;
+        }
     }
     uint16_t len      = (uint16_t)mem->f64_pool[hdr_idx + 1];
     uint16_t cap      = (uint16_t)mem->f64_pool[hdr_idx + 2];
@@ -1038,7 +1089,7 @@ static void gc_mark_map_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
         return;
     }
 
-    if (cap > len) {
+    if (cap > len && data_idx >= perm_top) {
         mem->f64_pool[hdr_idx + 2] = (double)len;
         cap = len;
     }
@@ -1057,11 +1108,13 @@ static void gc_mark_map_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
 }
 
 static void gc_mark_mat_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, uint16_t old_top) {
-    if (hdr_idx < perm_top || (uint32_t)hdr_idx + MEM_MAT_HDR_SLOTS > old_top) return;
-    if (mem->gc_mark[hdr_idx] == 4u) return;
-    mem->gc_mark[hdr_idx] = 4u;
-    for (uint16_t k = 1; k < MEM_MAT_HDR_SLOTS; ++k) {
-        mem->gc_mark[hdr_idx + k] = 1u;
+    if ((uint32_t)hdr_idx + MEM_MAT_HDR_SLOTS > old_top) return;
+    if (hdr_idx >= perm_top) {
+        if (mem->gc_mark[hdr_idx] == 4u) return;
+        mem->gc_mark[hdr_idx] = 4u;
+        for (uint16_t k = 1; k < MEM_MAT_HDR_SLOTS; ++k) {
+            mem->gc_mark[hdr_idx + k] = 1u;
+        }
     }
     uint32_t tot_len  = (uint32_t)mem->f64_pool[hdr_idx + 1];
     uint16_t data_idx = (uint16_t)mem->f64_pool[hdr_idx + 2];
@@ -1085,7 +1138,7 @@ static void gc_mark_val_rec(MemArena *mem, Value v, uint16_t perm_top, uint16_t 
     uint16_t top = (uint16_t)(v >> NANBOX_TAG_SHIFT);
     if (top != NB_TAG_POOL) return;
     uint16_t idx = val_get_pool_idx(v);
-    if (idx < perm_top || idx >= old_top) return;
+    if (idx >= old_top) return;
 
     uint16_t tid = val_get_type(mem, v);
     if (tid == mem->vec_type_id && tid != 0) {
@@ -1094,7 +1147,7 @@ static void gc_mark_val_rec(MemArena *mem, Value v, uint16_t perm_top, uint16_t 
         gc_mark_map_hdr(mem, idx, perm_top, old_top, depth);
     } else if (tid == mem->mat_type_id && tid != 0) {
         gc_mark_mat_hdr(mem, idx, perm_top, old_top);
-    } else {
+    } else if (idx >= perm_top) {
         uint16_t fsz = (uint16_t)((v >> 16u) & 0xFFFFu);
         if (fsz == 0) fsz = 1u;
         for (uint16_t k = 0; k < fsz && (idx + k) < old_top; ++k) {
@@ -1116,11 +1169,14 @@ static Value gc_remap_val(const MemArena *mem, Value v, uint16_t perm_top, uint1
 }
 
 uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_root_count) {
-    if (!mem || mem->pool_top <= mem->perm_pool_top) return 0;
+    if (!mem) return 0;
+    if (mem->pool_top <= mem->perm_pool_top && mem->heap_active_count == 0) return 0;
     uint16_t perm_top = mem->perm_pool_top;
     uint16_t old_top  = mem->pool_top;
 
-    memset(&mem->gc_mark[perm_top], 0, (size_t)(old_top - perm_top));
+    if (old_top > perm_top) {
+        memset(&mem->gc_mark[perm_top], 0, (size_t)(old_top - perm_top));
+    }
     for (uint16_t i = 0; i < MEM_MAX_HEAP_BLOCKS; ++i) {
         mem->heap_blocks[i].marked = 0u;
     }
@@ -1135,7 +1191,7 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
         }
     }
 
-    /* 2. Mark all live Value roots (call stack, jump_val, temp_roots, extra_roots) */
+    /* 2. Mark all live Value roots (call stack, jump_val, temp_roots, module vars, extra_roots) */
     for (uint16_t i = 0; i < mem->sp; ++i) {
         gc_mark_val_rec(mem, mem->stack[i], perm_top, old_top, 0);
     }
@@ -1143,6 +1199,12 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
     for (uint16_t i = 0; i < mem->temp_root_count; ++i) {
         if (mem->temp_roots[i]) {
             gc_mark_val_rec(mem, *(mem->temp_roots[i]), perm_top, old_top, 0);
+        }
+    }
+    if (mem->sym_tab != NULL) {
+        const ModVarDef *mvars = sym_vars(mem->sym_tab);
+        for (uint16_t i = 0; i < mem->sym_tab->var_count; ++i) {
+            gc_mark_val_rec(mem, mvars[i].val, perm_top, old_top, 0);
         }
     }
     for (uint16_t i = 0; i < extra_root_count; ++i) {
@@ -1157,6 +1219,8 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
             mem_heap_free_block(mem, (uint16_t)(MEM_HEAP_IDX_BIT | i));
         }
     }
+
+    if (old_top <= perm_top) return 0;
 
     /* 3. Compute sliding destination addresses in gc_fwd */
     uint16_t write_pos = perm_top;
@@ -1233,7 +1297,7 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
     }
     mem->pool_top = write_pos;
 
-    /* 6. Remap AST_LIT refs, vrange_hdr, stack, jump_val, temp_roots, and extra_roots */
+    /* 6. Remap AST_LIT refs, vrange_hdr, stack, jump_val, temp_roots, module vars, and extra_roots */
     for (uint16_t i = mem->perm_ast_count; i < mem->ast_count; ++i) {
         AstNode *n = &mem->ast[i];
         if (n->kind == 0 /* AST_LIT */ && n->sub != mem->str_type_id && n->sub != MEM_TYPE_VOID) {
@@ -1255,6 +1319,12 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
     for (uint16_t i = 0; i < mem->temp_root_count; ++i) {
         if (mem->temp_roots[i]) {
             *(mem->temp_roots[i]) = gc_remap_val(mem, *(mem->temp_roots[i]), perm_top, old_top);
+        }
+    }
+    if (mem->sym_tab != NULL) {
+        ModVarDef *mvars = sym_vars_mut(mem->sym_tab);
+        for (uint16_t i = 0; i < mem->sym_tab->var_count; ++i) {
+            mvars[i].val = gc_remap_val(mem, mvars[i].val, perm_top, old_top);
         }
     }
     for (uint16_t i = 0; i < extra_root_count; ++i) {

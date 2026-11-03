@@ -341,6 +341,7 @@ Value delegate_construct_token(MemArena *mem, const SymTable *tab,
                 s_len -= 2;
             }
             char stack_ubuf[1024];
+            stack_ubuf[0] = '\0';
             char *ubuf = stack_ubuf;
             size_t ucap = sizeof(stack_ubuf);
             if ((size_t)s_len + 2u > ucap) {
@@ -715,7 +716,9 @@ Value delegate_call_fn(MemArena *mem, SymTable *tab,
     }
     uint16_t hdr_idx     = val_get_pool_idx(fn_val);
     uint16_t body_ast    = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
-    uint8_t  param_cnt   = (uint8_t)((uint8_t)mem_read_pool(mem, hdr_idx + 1) & 0x3Fu);
+    uint32_t raw_p1      = (uint32_t)mem_read_pool(mem, hdr_idx + 1);
+    uint8_t  param_cnt   = (uint8_t)(raw_p1 & 0x3Fu);
+    uint16_t raw_mod_tag = (uint16_t)((raw_p1 >> 8u) & 0xFFFFu);
     uint32_t packed_slt  = (uint32_t)mem_read_pool(mem, hdr_idx + 2);
     uint16_t slot_range  = (uint16_t)(packed_slt & 0xFFFFu);
     uint16_t def_head    = (uint16_t)((packed_slt >> 16u) & 0xFFFFu);
@@ -779,6 +782,12 @@ Value delegate_call_fn(MemArena *mem, SymTable *tab,
         }
         Value res = val_void();
         if (!mem->has_error && mem->jump_active == JUMP_NONE) {
+            uint16_t saved_mod     = mem->cur_mod;
+            uint16_t saved_tab_mod = tab->cur_mod;
+            if (raw_mod_tag > 0 && (uint16_t)(raw_mod_tag - 1u) < tab->mod_count) {
+                mem->cur_mod = (uint16_t)(raw_mod_tag - 1u);
+                tab->cur_mod = mem->cur_mod;
+            }
             mem->call_depth++;
             res = eval_ast(mem, tab, body_ast, fbase, 0);
             if (mem->call_depth > 0) mem->call_depth--;
@@ -787,6 +796,8 @@ Value delegate_call_fn(MemArena *mem, SymTable *tab,
                 mem->jump_val    = val_void();
                 mem->jump_active = JUMP_NONE;
             }
+            mem->cur_mod = saved_mod;
+            tab->cur_mod = saved_tab_mod;
         }
         if (total_slots >= 1u) {
             mem->stack[s0]            = sv0;
@@ -839,6 +850,12 @@ Value delegate_call_fn(MemArena *mem, SymTable *tab,
 
     Value res = val_void();
     if (!mem->has_error && mem->jump_active == JUMP_NONE) {
+        uint16_t saved_mod     = mem->cur_mod;
+        uint16_t saved_tab_mod = tab->cur_mod;
+        if (raw_mod_tag > 0 && (uint16_t)(raw_mod_tag - 1u) < tab->mod_count) {
+            mem->cur_mod = (uint16_t)(raw_mod_tag - 1u);
+            tab->cur_mod = mem->cur_mod;
+        }
         mem->call_depth++;
         res = eval_ast(mem, tab, body_ast, fbase, 0);
         if (mem->call_depth > 0) mem->call_depth--;
@@ -847,6 +864,8 @@ Value delegate_call_fn(MemArena *mem, SymTable *tab,
             mem->jump_val    = val_void();
             mem->jump_active = JUMP_NONE;
         }
+        mem->cur_mod = saved_mod;
+        tab->cur_mod = saved_tab_mod;
     }
 
     for (uint8_t k = 0; k < total_slots; ++k) {
@@ -943,10 +962,14 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
             mem_err(mem, "Expected map ($map) as first argument");
             return val_void();
         }
+        if ((intr == INTR_MAP_SET || intr == INTR_MAP_DEL) && mem_val_is_immutable(mem, a)) {
+            mem_err(mem, "Cannot mutate immutable constant map");
+            return val_void();
+        }
         uint16_t hdr_idx  = val_get_pool_idx(a);
         uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
         uint16_t lock_tid = (uint16_t)(raw_hdr0 & 0xFFu);
-        uint8_t  lock_uid = (uint8_t)((raw_hdr0 >> 8u) & 0xFFu);
+        uint8_t  lock_uid = (uint8_t)((raw_hdr0 >> 8u) & 0x7Fu);
         uint16_t len      = (uint16_t)mem_read_pool(mem, hdr_idx + 1);
         uint16_t data_idx = (uint16_t)mem_read_pool(mem, hdr_idx + 3);
 
@@ -1035,6 +1058,10 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
             return val_make_f64(mem, mem->fast_real_type, mem_read_pool(mem, hdr_idx + 1));
         }
         if (intr == INTR_VCLEAR) {
+            if (mem_val_is_immutable(mem, a)) {
+                mem_err(mem, "Cannot mutate immutable constant map");
+                return val_void();
+            }
             mem_write_pool(mem, hdr_idx + 1, 0.0);
             return a;
         }
@@ -1128,8 +1155,8 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
         uint16_t raw_b = (uint16_t)mem_read_pool(mem, hb + 0);
         uint16_t tid_a = (uint16_t)(raw_a & 0xFFu);
         uint16_t tid_b = (uint16_t)(raw_b & 0xFFu);
-        uint8_t  uid_a = (uint8_t)((raw_a >> 8) & 0xFFu);
-        uint8_t  uid_b = (uint8_t)((raw_b >> 8) & 0xFFu);
+        uint8_t  uid_a = (uint8_t)((raw_a >> 8) & 0x7Fu);
+        uint8_t  uid_b = (uint8_t)((raw_b >> 8) & 0x7Fu);
         uint32_t len_a = (uint32_t)mem_read_pool(mem, ha + 1);
         uint32_t len_b = (uint32_t)mem_read_pool(mem, hb + 1);
         if (len_a > 0 && len_b > 0 && (tid_a != tid_b || uid_a != uid_b)) {
@@ -1234,10 +1261,16 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
         mem_err(mem, "Expected dynamic vector ($vec) argument");
         return val_void();
     }
+    if ((intr == INTR_VCLEAR || intr == INTR_VPUSH || intr == INTR_VPOP ||
+         intr == INTR_VSHIFT || intr == INTR_VSET  || intr == INTR_VRESIZE) &&
+        mem_val_is_immutable(mem, a)) {
+        mem_err(mem, "Cannot mutate immutable constant vector");
+        return val_void();
+    }
     uint16_t hdr_idx  = val_get_pool_idx(a);
     uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
     uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
-    uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0xFFu);
+    uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0x7Fu);
     uint32_t len      = (uint32_t)mem_read_pool(mem, hdr_idx + 1);
     uint32_t cap      = (uint32_t)mem_read_pool(mem, hdr_idx + 2);
     uint16_t stride   = (elem_tid > 0 && elem_tid < tab->type_count)
@@ -1440,7 +1473,7 @@ Value delegate_eval_mat_intrinsic(MemArena *mem, const SymTable *tab,
             uint16_t hdr_a    = val_get_pool_idx(a);
             uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_a + 0);
             uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
-            src_uid = (uint8_t)((raw_hdr0 >> 8u) & 0xFFu);
+            src_uid = (uint8_t)((raw_hdr0 >> 8u) & 0x7Fu);
             src_len = (uint16_t)mem_read_pool(mem, hdr_a + 1);
             src_dat = (uint16_t)mem_read_pool(mem, hdr_a + 3);
             if (src_len > 0 && elem_tid != mem->fast_real_type) {
@@ -2199,7 +2232,7 @@ Value delegate_eval_intrinsic(MemArena *mem, SymTable *tab,
             uint16_t vhdr = val_get_pool_idx(b);
             uint16_t raw0 = (uint16_t)mem_read_pool(mem, vhdr + 0);
             uint16_t etid = (uint16_t)(raw0 & 0xFFu);
-            uint8_t  euid = (uint8_t)((raw0 >> 8u) & 0xFFu);
+            uint8_t  euid = (uint8_t)((raw0 >> 8u) & 0x7Fu);
             uint16_t vlen = (uint16_t)mem_read_pool(mem, vhdr + 1);
             uint16_t vdat = (uint16_t)mem_read_pool(mem, vhdr + 3);
             uint16_t strd = (etid > 0 && etid < tab->type_count) ? tab->types[etid].flat_size : 1;

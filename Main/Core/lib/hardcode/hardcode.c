@@ -127,10 +127,6 @@ void hardcode_synthesize_default_overloads(MemArena *mem, SymTable *tab,
     base_ov->local_count = full_locals;
 
     for (uint8_t m = req_count; m < pcount; ++m) {
-        if (tab->overload_count >= SYM_MAX_OVERLOADS) {
-            mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
-            return;
-        }
         uint16_t wrapper_ast = full_body;
         for (int k = (int)pcount - 1; k >= (int)m; --k) {
             uint16_t slot_k  = mem_alloc_ast(mem, AST_SLOT_LOAD, (uint8_t)k, 0, 0, 0);
@@ -141,7 +137,32 @@ void hardcode_synthesize_default_overloads(MemArena *mem, SymTable *tab,
         }
         if (mem->has_error) return;
 
-        uint16_t dov_idx = tab->overload_count++;
+        int existing_dov = -1;
+        if (sym_id < tab->sym_count) {
+            for (uint16_t oi = tab->sym_first_ov[sym_id]; oi != MEM_NO_IDX; oi = tab->ov_next[oi]) {
+                const OpOverload *cand = &tab->overloads[oi];
+                if (cand->mod_id != cur_mod || cand->fixity != FIX_FUNC || cand->param_count != m) continue;
+                bool same = true;
+                for (uint8_t pi = 0; pi < m; ++pi) {
+                    if (cand->param_types[pi] != (uint8_t)ptypes[pi] || cand->param_units[pi] != punits[pi]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) { existing_dov = (int)oi; break; }
+            }
+        }
+
+        uint16_t dov_idx = 0;
+        if (existing_dov >= 0) {
+            dov_idx = (uint16_t)existing_dov;
+        } else {
+            if (tab->overload_count >= SYM_MAX_OVERLOADS) {
+                mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
+                return;
+            }
+            dov_idx = tab->overload_count++;
+        }
         OpOverload *dov  = &tab->overloads[dov_idx];
         memset(dov, 0, sizeof(*dov));
         dov->sym_id      = sym_id;
@@ -153,12 +174,15 @@ void hardcode_synthesize_default_overloads(MemArena *mem, SymTable *tab,
         dov->ret_type    = (uint8_t)rtid;
         dov->ret_unit    = ruid;
         dov->meta_tag    = base_ov->meta_tag;
+        dov->reserved    = base_ov->reserved;
         for (uint8_t i = 0; i < m; ++i) {
             dov->param_types[i] = (uint8_t)ptypes[i];
             dov->param_units[i] = punits[i];
         }
         dov->body_ast = wrapper_ast;
-        sym_link_overload(tab, dov_idx);
+        if (existing_dov < 0) {
+            sym_link_overload(tab, dov_idx);
+        }
     }
 }
 
@@ -327,10 +351,15 @@ bool hardcode_should_use_unit_for_in_rhs(const MemArena *mem, const SymTable *ta
         return false;
     }
     const AstNode *rn = mem_get_ast(mem, in_node->right);
-    if (!rn || rn->kind != AST_SLOT_LOAD || (rn->ref & AST_SLOT_DUAL_UNIT_BIT) == 0) {
+    if (!rn) return false;
+    uint16_t unit_sym = MEM_NO_IDX;
+    if (rn->kind == AST_SLOT_LOAD && (rn->ref & AST_SLOT_DUAL_UNIT_BIT) != 0) {
+        unit_sym = (uint16_t)(rn->ref & AST_SLOT_SYM_MASK);
+    } else if (rn->kind == AST_CONST_SYM && (rn->left & AST_SLOT_DUAL_UNIT_BIT) != 0) {
+        unit_sym = (uint16_t)(rn->left & AST_SLOT_SYM_MASK);
+    } else {
         return false;
     }
-    uint16_t unit_sym = (uint16_t)(rn->ref & AST_SLOT_SYM_MASK);
     if (unit_sym >= tab->sym_count) return false;
 
     uint8_t unit_uid = MEM_UNIT_NONE;
@@ -353,7 +382,7 @@ bool hardcode_should_use_unit_for_in_rhs(const MemArena *mem, const SymTable *ta
     if (mem->vec_type_id != 0 && r_tid == mem->vec_type_id) {
         uint16_t hdr_idx  = val_get_pool_idx(rhs_val);
         uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
-        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0xFFu);
+        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0x7Fu);
         uint16_t len      = (uint16_t)mem_read_pool(mem, hdr_idx + 1);
         if (len > 0 && elem_uid == lhs_uid) {
             /* `km` is a vector whose elements have the exact same unit as `lhs` -> membership test */
@@ -1598,7 +1627,7 @@ Value hardcode_eval_for_in_ast(MemArena *mem, SymTable *tab,
             uint16_t hdr_idx  = val_get_pool_idx(coll);
             uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
             uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
-            uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0xFFu);
+            uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0x7Fu);
             uint32_t len      = (uint32_t)mem_read_pool(mem, hdr_idx + 1);
             uint16_t data_idx = (uint16_t)mem_read_pool(mem, hdr_idx + 3);
             uint16_t stride   = (elem_tid > 0 && elem_tid < tab->type_count)
@@ -1828,7 +1857,7 @@ Value hardcode_eval_unpack_elem_ast(MemArena *mem, const SymTable *tab,
         uint16_t hdr_idx  = val_get_pool_idx(src);
         uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
         uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
-        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0xFFu);
+        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8) & 0x7Fu);
         uint32_t len      = (uint32_t)mem_read_pool(mem, hdr_idx + 1);
         uint16_t data_idx = (uint16_t)mem_read_pool(mem, hdr_idx + 3);
         uint16_t stride   = (elem_tid > 0 && elem_tid < tab->type_count)
