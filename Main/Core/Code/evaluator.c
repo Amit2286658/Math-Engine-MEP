@@ -1021,6 +1021,11 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                     }
                     if (lhs->right != 0 && lhs->right != MEM_NO_IDX) {
                         mem->slot_locked_unit[abs_slot] = (uint8_t)lhs->right;
+                        if ((uint8_t)lhs->right < SYM_UNIT_LOCK_NONE &&
+                            val_get_type(mem, rhs) != MEM_TYPE_VOID &&
+                            val_get_unit(mem, rhs) == MEM_UNIT_NONE) {
+                            rhs = val_with_unit(mem, rhs, (uint8_t)lhs->right);
+                        }
                     }
 
                     uint8_t req_type = mem->slot_locked_type[abs_slot];
@@ -1064,7 +1069,7 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                     uint16_t mod_id    = (lhs->right != MEM_NO_IDX && lhs->right < tab->mod_count)
                                          ? lhs->right : mem->cur_mod;
                     bool     is_decl   = (flags & SYM_VAR_REASSIGN_ONLY) == 0;
-                    if (!sym_set_or_add_var(tab, mem, sym_id, mod_id, rhs, lock_type, lock_unit, flags, is_decl)) {
+                    if (sym_set_or_add_var(tab, mem, sym_id, mod_id, rhs, lock_type, lock_unit, flags, is_decl) < 0) {
                         return val_void();
                     }
                     int mv_idx = sym_find_own_var(tab, sym_id, mod_id);

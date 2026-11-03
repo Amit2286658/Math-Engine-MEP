@@ -371,6 +371,10 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
                                  ? (uint16_t)(lock_type & 0xFFu)
                                  : (uint16_t)(mv->lock_type & 0xFFu);
             uint8_t  eff_lunit = (lock_unit != 0) ? lock_unit : mv->lock_unit;
+            if (is_uninit && eff_lunit != 0 && eff_lunit < SYM_UNIT_LOCK_NONE &&
+                vtid != MEM_TYPE_VOID && val_get_unit(mem, val) == MEM_UNIT_NONE) {
+                val = val_with_unit(mem, val, eff_lunit);
+            }
             if (!sym_check_var_locks(tab, mem, sym_id, eff_ltype, eff_lunit, val)) {
                 return -1;
             }
@@ -456,6 +460,10 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
     }
 
     /* Creating a new module variable or constant in `mod_id` */
+    if (is_decl && lock_unit != 0 && lock_unit < SYM_UNIT_LOCK_NONE &&
+        vtid != MEM_TYPE_VOID && val_get_unit(mem, val) == MEM_UNIT_NONE) {
+        val = val_with_unit(mem, val, lock_unit);
+    }
     if (!sym_check_var_locks(tab, mem, sym_id, lock_type, lock_unit, val)) {
         return -1;
     }
