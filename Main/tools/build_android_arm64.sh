@@ -38,6 +38,8 @@ LD="$NDK_BIN/lld"
 CFLAGS="--sysroot=$NDK_BIN/../sysroot -O2 -std=c11 -fPIC -fvisibility=hidden -fstack-protector-strong \
  -DANDROID -DMATH_ENGINE_SHARED=1 -D_FORTIFY_SOURCE=2 -ffunction-sections -fdata-sections"
 
+INCS="-I$ROOT/Core/Headers -I$ROOT/Core/compile -I$ROOT/Core/jni -I$ROOT/Core/lib/delegate -I$ROOT/Core/lib/hardcode"
+
 rm -rf "$TMP"; mkdir -p "$TMP" "$OUT"
 
 OBJS=""
