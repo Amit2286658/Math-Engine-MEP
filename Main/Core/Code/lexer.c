@@ -237,7 +237,9 @@ static bool next_line_starts_branch_kw(const Lexer *lex, uint16_t nl_pos) {
     if (p >= lex->len || !lex_is_ident_start((unsigned char)lex->src[p])) return false;
     uint16_t start = p;
     while (p < lex->len && lex_is_ident_cont((unsigned char)lex->src[p])) p++;
-    int sid = sym_find(lex->tab, lex->mem, lex->src + start, (uint16_t)(p - start));
+    uint16_t kw_len = (uint16_t)(p - start);
+    if (kw_len == 5 && memcmp(lex->src + start, "catch", 5) == 0) return true;
+    int sid = sym_find(lex->tab, lex->mem, lex->src + start, kw_len);
     if (sid < 0) return false;
     uint8_t m = sym_active_meta_tag(lex->tab, (uint16_t)sid, FIX_FUNC);
     return (m == INTR_OR_BRANCH || m == INTR_ELSE_BRANCH);
@@ -306,6 +308,43 @@ void lex_next(Lexer *lex) {
         lex->cur.kind = TOK_AT;
         lex->cur.len  = 1;
         lex->pos++;
+        return;
+    }
+
+    /* 1b. Interpolated string literal `$"..."` or `f"..."` */
+    if ((c == '$' || c == 'f') && lex->pos + 1 < lex->len &&
+        lex->src[lex->pos + 1] == '"' && mem->str_type_id != 0) {
+        uint16_t p = (uint16_t)(lex->pos + 2);
+        int brace_depth = 0;
+        while (p < lex->len) {
+            char ch = lex->src[p];
+            if (ch == '\\' && p + 1 < lex->len) {
+                p = (uint16_t)(p + 2);
+                continue;
+            }
+            if (ch == '{') {
+                brace_depth++;
+                p++;
+                continue;
+            }
+            if (ch == '}' && brace_depth > 0) {
+                brace_depth--;
+                p++;
+                continue;
+            }
+            if (ch == '"' && brace_depth == 0) {
+                p++;
+                break;
+            }
+            p++;
+        }
+        uint16_t q_start = (uint16_t)(lex->pos + 1);
+        uint16_t q_len   = (uint16_t)(p - q_start);
+        lex->cur.kind = TOK_VAL;
+        lex->cur.len  = (uint16_t)(p - lex->pos);
+        lex->cur.val  = delegate_construct_token(mem, tab, mem->str_type_id, lex->src, q_start, q_len);
+        lex->pos      = p;
+        lex->last_was_expr = true;
         return;
     }
 

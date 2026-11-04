@@ -125,6 +125,14 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
 bool ext_compile_slice(MemArena *mem, SymTable *tab,
                        const char *slice_src, uint16_t slice_len);
 
+/*
+ * Phase 5: Import a module or external `.math` file into `mem` + `tab`
+ * with automatic include-once / circular-import protection.
+ */
+bool ext_import_module_or_file(MemArena *mem, SymTable *tab,
+                               const char *spec, uint16_t spec_len,
+                               bool is_quoted_path, Value *out_val);
+
 #ifdef __cplusplus
 }
 #endif

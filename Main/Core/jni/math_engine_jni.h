@@ -146,6 +146,16 @@ Java_com_mathengine_MathEngineBridge_nativeRegisterExtern(JNIEnv *env, jclass cl
                                                           jlong handle, jstring name,
                                                           jobject callback);
 
+JNIEXPORT void JNICALL
+Java_com_mathengine_MathEngineBridge_nativeSetImportDir(JNIEnv *env, jclass clazz,
+                                                        jlong handle, jstring dirPath);
+
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeGetOutput(JNIEnv *env, jclass clazz, jlong handle);
+
+JNIEXPORT void JNICALL
+Java_com_mathengine_MathEngineBridge_nativeClearOutput(JNIEnv *env, jclass clazz, jlong handle);
+
 #ifdef __cplusplus
 }
 #endif

@@ -182,6 +182,17 @@ int sym_find_mod(const SymTable *tab, const MemArena *mem, const char *mod_name)
     return -1;
 }
 
+int sym_find_mod_slice(const SymTable *tab, const MemArena *mem, const char *name, uint16_t len) {
+    if (!tab || !mem || !name || len == 0) return -1;
+    const StrSlice *names = sym_mod_names(tab);
+    for (uint16_t i = 0; i < tab->mod_count; ++i) {
+        if (names[i].len == len && memcmp(mem_str_ptr(mem, names[i]), name, len) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
 bool sym_set_module(SymTable *tab, const MemArena *mem, const char *mod_name, bool enabled) {
     const StrSlice *names = sym_mod_names(tab);
     uint8_t *active = sym_mod_active_mut(tab);
@@ -348,10 +359,11 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
         val = val_clone_comp(mem, val, tab->types[vtid].flat_size);
         if (mem->has_error) return -1;
     }
-    if (mem->src_len > mem->perm_src_len) {
-        mem->perm_src_len = mem->src_len;
+    if ((uint32_t)vname.off + (uint32_t)vname.len > (uint32_t)mem->perm_src_len) {
+        mem->perm_src_len = (uint16_t)(vname.off + vname.len);
     }
     if (vtid == mem->fn_type_id && mem->fn_type_id != 0) {
+        if (mem->src_len > mem->perm_src_len)           mem->perm_src_len = mem->src_len;
         if (mem->ast_count > mem->perm_ast_count)       mem->perm_ast_count = mem->ast_count;
         if (mem->pool_top > mem->perm_pool_top)         mem->perm_pool_top = mem->pool_top;
         if (mem->fn_src_count > mem->perm_fn_src_count) mem->perm_fn_src_count = mem->fn_src_count;
@@ -419,6 +431,46 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
             sym_sync_var_to_const(tab, mem, mv);
             return own_idx;
         }
+    } else if ((flags & SYM_VAR_QUAL_MOD) != 0) {
+        int own_idx = sym_find_own_var(tab, sym_id, mod_id);
+        if (own_idx >= 0) {
+            ModVarDef *mv = &sym_vars_mut(tab)[own_idx];
+            if ((mv->flags & SYM_VAR_PRIVATE) != 0 && mod_id != tab->cur_mod) {
+                StrSlice pmod_s = sym_mod_name(tab, mod_id);
+                mem_err(mem, "Variable or constant '%.*s' is private to module '[%.*s]'",
+                        (int)vname.len, mem_str_ptr(mem, vname),
+                        (int)pmod_s.len, mem_str_ptr(mem, pmod_s));
+                return -1;
+            }
+            if ((mv->flags & SYM_VAR_MUTABLE) == 0 || (flags & SYM_VAR_EXPLICIT_CONST) != 0) {
+                mem_err(mem, "Cannot reassign or mutate immutable constant '%.*s'",
+                        (int)vname.len, mem_str_ptr(mem, vname));
+                return -1;
+            }
+            uint16_t eff_ltype = ((lock_type & 0xFFu) != 0)
+                                 ? (uint16_t)(lock_type & 0xFFu)
+                                 : (uint16_t)(mv->lock_type & 0xFFu);
+            uint8_t  eff_lunit = (lock_unit != 0) ? lock_unit : mv->lock_unit;
+            if (!sym_check_var_locks(tab, mem, sym_id, eff_ltype, eff_lunit, val)) {
+                return -1;
+            }
+            mv->lock_type = eff_ltype;
+            mv->lock_unit = eff_lunit;
+            mv->val       = val;
+            sym_sync_var_to_const(tab, mem, mv);
+            return own_idx;
+        }
+        StrSlice qmod_s = sym_mod_name(tab, mod_id);
+        if ((flags & SYM_VAR_COMPOUND_OP) != 0) {
+            mem_err(mem, "Cannot apply compound assignment to undeclared variable '%.*s::%.*s'",
+                    (int)qmod_s.len, mem_str_ptr(mem, qmod_s),
+                    (int)vname.len, mem_str_ptr(mem, vname));
+        } else {
+            mem_err(mem, "Undefined variable '%.*s' in module '[%.*s]'",
+                    (int)vname.len, mem_str_ptr(mem, vname),
+                    (int)qmod_s.len, mem_str_ptr(mem, qmod_s));
+        }
+        return -1;
     } else {
         uint16_t priv_mod = MEM_NO_IDX;
         int vis_idx = sym_find_var(tab, sym_id, mod_id, &priv_mod);
@@ -516,6 +568,7 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
 }
 
 bool sym_reset_module(SymTable *tab, MemArena *mem, const char *mod_name) {
+    if (mem) memset(mem->ov_bc_entry, 0, sizeof(mem->ov_bc_entry));
     if (!tab || !mem) return false;
     const char *eff_name = (mod_name && mod_name[0] != '\0') ? mod_name : "default";
     int mid = sym_find_mod(tab, mem, eff_name);

@@ -101,6 +101,18 @@ bool eng_eval(Engine *eng, const char *expr, Value *out_val) {
         return false;
     }
 
+    /* Delegate scripts containing top-level $type / $enum / $struct / import declarations to ext_eval_slice */
+    {
+        size_t p = 0;
+        while (p < raw_len && (expr[p] == ' ' || expr[p] == '\t' || expr[p] == '\r' || expr[p] == '\n')) p++;
+        if (p < raw_len && (expr[p] == '$' ||
+            (p + 5 <= raw_len && memcmp(expr + p, "enum ", 5) == 0) ||
+            (p + 7 <= raw_len && memcmp(expr + p, "struct ", 7) == 0) ||
+            (p + 7 <= raw_len && memcmp(expr + p, "import ", 7) == 0))) {
+            return ext_eval_slice(&eng->mem, &eng->sym, "default", true, expr, (uint16_t)raw_len, out_val);
+        }
+    }
+
     Parser P;
     parser_init(&P, &eng->mem, &eng->sym, expr, (uint16_t)raw_len, 0, false, false);
 
@@ -132,10 +144,21 @@ bool eng_eval(Engine *eng, const char *expr, Value *out_val) {
         }
     }
 
-    Value res = eval_ast(&eng->mem, &eng->sym, root, frame_base, 0);
+    Value res;
+    uint16_t bc_pc = (P.label_count == 0) ? bc_compile_ast(&eng->mem, &eng->sym, root, false) : MEM_NO_IDX;
+    if (bc_pc != MEM_NO_IDX) {
+        res = bc_exec(&eng->mem, &eng->sym, bc_pc, frame_base, 0);
+    } else {
+        res = eval_ast(&eng->mem, &eng->sym, root, frame_base, 0);
+    }
     if (eng->mem.jump_active == JUMP_RETURN) {
         res = eng->mem.jump_val;
         eng->mem.jump_active = JUMP_NONE;
+    } else if (eng->mem.jump_active == JUMP_THROW) {
+        eng->mem.jump_active = JUMP_NONE;
+        if (!eng->mem.has_error) {
+            mem_err(&eng->mem, "Unhandled exception");
+        }
     } else if (eng->mem.jump_active && !eng->mem.has_error) {
         eng->mem.jump_active = 0;
         mem_err(&eng->mem, "Unhandled jump, break, or continue outside active loop/scope");
@@ -571,6 +594,50 @@ static void format_struct_at(const Engine *eng, uint16_t type_id, uint16_t pool_
     char tname[32];
     eng_type_name(eng, type_id, tname, sizeof(tname));
 
+    if (!td->is_consuming && td->parser_intr == INTR_PARSE_I64 && td->field_count > 0) {
+        int v_tag = (int)llround(mem_read_pool(&eng->mem, pool_idx));
+        uint8_t i = 0;
+        while (i < td->field_count) {
+            uint16_t vfd_i = (uint16_t)(td->start_idx + i);
+            const FieldDef *vfd = &eng->sym.fields[vfd_i];
+            if (vfd->type_id == type_id) {
+                int cur_tag  = (int)(vfd->flat_offset & 0xFFu);
+                uint8_t pcnt = (uint8_t)(vfd->flat_offset >> 8u);
+                if (cur_tag == v_tag) {
+                    size_t used = 0;
+                    if (cap > 0) buf[0] = '\0';
+                    eng_buf_append(buf, cap, &used, "%s.%.*s",
+                                   tname, (int)vfd->name.len, mem_str_ptr(&eng->mem, vfd->name));
+                    if (pcnt > 0) {
+                        eng_buf_append(buf, cap, &used, "(");
+                        for (uint8_t pi = 0; pi < pcnt && used + 1 < cap; ++pi) {
+                            const FieldDef *pfd = &eng->sym.fields[vfd_i + 1u + pi];
+                            char p_str[64];
+                            if (!eng->sym.types[pfd->type_id].is_consuming) {
+                                format_struct_at(eng, pfd->type_id,
+                                                 (uint16_t)(pool_idx + pfd->flat_offset),
+                                                 (uint8_t)(depth + 1), p_str, sizeof(p_str));
+                            } else if (pfd->type_id == eng->mem.str_type_id && eng->mem.str_type_id != 0) {
+                                uint32_t pk = (uint32_t)mem_read_pool(&eng->mem, (uint16_t)(pool_idx + pfd->flat_offset));
+                                StrSlice s = { (uint16_t)(pk >> 16u), (uint16_t)(pk & 0xFFFFu) };
+                                snprintf(p_str, sizeof(p_str), "\"%.*s\"", (int)s.len, mem_str_ptr(&eng->mem, s));
+                            } else {
+                                snprintf(p_str, sizeof(p_str), "%.6g",
+                                         mem_read_pool(&eng->mem, (uint16_t)(pool_idx + pfd->flat_offset)));
+                            }
+                            eng_buf_append(buf, cap, &used, "%s%s", (pi > 0 ? ", " : ""), p_str);
+                        }
+                        eng_buf_append(buf, cap, &used, ")");
+                    }
+                    return;
+                }
+                i = (uint8_t)(i + 1u + pcnt);
+            } else {
+                i++;
+            }
+        }
+    }
+
     if (td->parser_intr == INTR_COMPLEX_TYPE && td->flat_size == 2) {
         double re = mem_read_pool(&eng->mem, pool_idx);
         double im = mem_read_pool(&eng->mem, (uint16_t)(pool_idx + 1));
@@ -591,6 +658,26 @@ static void format_struct_at(const Engine *eng, uint16_t type_id, uint16_t pool_
         if (!eng->sym.types[fd->type_id].is_consuming) {
             format_struct_at(eng, fd->type_id, (uint16_t)(pool_idx + fd->flat_offset),
                              (uint8_t)(depth + 1), f_str, sizeof(f_str));
+        } else if (fd->type_id == eng->mem.str_type_id && eng->mem.str_type_id != 0) {
+            uint32_t packed = (uint32_t)mem_read_pool(&eng->mem, (uint16_t)(pool_idx + fd->flat_offset));
+            StrSlice s = { (uint16_t)(packed >> 16u), (uint16_t)(packed & 0xFFFFu) };
+            snprintf(f_str, sizeof(f_str), "\"%.*s\"", (int)s.len, mem_str_ptr(&eng->mem, s));
+        } else if (eng->sym.types[fd->type_id].parser_intr == INTR_PARSE_I64 &&
+                   eng->sym.types[fd->type_id].field_count > 0) {
+            const TypeDef *etd = &eng->sym.types[fd->type_id];
+            int ev = (int)llround(mem_read_pool(&eng->mem, (uint16_t)(pool_idx + fd->flat_offset)));
+            bool found_ev = false;
+            for (uint8_t vi = 0; vi < etd->field_count; ++vi) {
+                const FieldDef *vfd = &eng->sym.fields[etd->start_idx + vi];
+                if ((int)(int16_t)vfd->flat_offset == ev) {
+                    snprintf(f_str, sizeof(f_str), "%.*s.%.*s",
+                             (int)etd->name.len, mem_str_ptr(&eng->mem, etd->name),
+                             (int)vfd->name.len, mem_str_ptr(&eng->mem, vfd->name));
+                    found_ev = true;
+                    break;
+                }
+            }
+            if (!found_ev) snprintf(f_str, sizeof(f_str), "%d", ev);
         } else {
             snprintf(f_str, sizeof(f_str), "%.6g", mem_read_pool(&eng->mem, (uint16_t)(pool_idx + fd->flat_offset)));
         }
@@ -616,6 +703,20 @@ void eng_format_value(const Engine *eng, Value val, char *buf, size_t buf_cap) {
             snprintf(buf, buf_cap, "\"%.*s\"", (int)s.len, mem_str_ptr(&eng->mem, s));
         } else if (td->parser_intr == INTR_PARSE_F64_TRIM1) {
             snprintf(buf, buf_cap, "%.6gi", val_get_f64(&eng->mem, val));
+        } else if (td->parser_intr == INTR_PARSE_I64 && td->field_count > 0) {
+            int ev = (int)llround(val_get_f64(&eng->mem, val));
+            bool found_ev = false;
+            for (uint8_t vi = 0; vi < td->field_count; ++vi) {
+                const FieldDef *vfd = &eng->sym.fields[td->start_idx + vi];
+                if ((int)(int16_t)vfd->flat_offset == ev) {
+                    snprintf(buf, buf_cap, "%.*s.%.*s",
+                             (int)td->name.len, mem_str_ptr(&eng->mem, td->name),
+                             (int)vfd->name.len, mem_str_ptr(&eng->mem, vfd->name));
+                    found_ev = true;
+                    break;
+                }
+            }
+            if (!found_ev) snprintf(buf, buf_cap, "%d", ev);
         } else {
             snprintf(buf, buf_cap, "%.10g", val_get_f64(&eng->mem, val));
         }
@@ -862,6 +963,10 @@ static void export_val_expr(Engine *eng, Value val, uint8_t depth,
             fval = val_with_unit(&eng->mem,
                                  val_make_comp(&eng->mem, fd->type_id, fpidx, eng->sym.types[fd->type_id].flat_size),
                                  uid);
+        } else if (fd->type_id == eng->mem.str_type_id && eng->mem.str_type_id != 0) {
+            uint32_t packed = (uint32_t)mem_read_pool(&eng->mem, fpidx);
+            StrSlice s = { (uint16_t)(packed >> 16u), (uint16_t)(packed & 0xFFFFu) };
+            fval = val_make_str(&eng->mem, fd->type_id, s);
         } else {
             fval = val_make_f64_unit(&eng->mem, fd->type_id, uid, mem_read_pool(&eng->mem, fpidx));
         }
@@ -924,4 +1029,47 @@ size_t eng_mod_export_source(Engine *eng, const char *mod_name,
         eng_buf_append(out_buf, buf_cap, &used, "\n");
     }
     return used;
+}
+
+const char *eng_get_output(const Engine *eng) {
+    if (!eng) return "";
+    return eng->mem.out_buf;
+}
+
+void eng_clear_output(Engine *eng) {
+    if (!eng) return;
+    mem_out_clear(&eng->mem);
+}
+
+void eng_set_import_dir(Engine *eng, const char *dir_path) {
+    if (!eng) return;
+    if (!dir_path) {
+        eng->mem.import_dir[0] = '\0';
+        return;
+    }
+    snprintf(eng->mem.import_dir, sizeof(eng->mem.import_dir), "%s", dir_path);
+}
+
+bool eng_import_file(Engine *eng, const char *file_path) {
+    if (!eng || !file_path || file_path[0] == '\0') return false;
+    eng->mem.sym_tab = &eng->sym;
+    mem_clear_err(&eng->mem);
+    return ext_import_module_or_file(&eng->mem, &eng->sym,
+                                     file_path, (uint16_t)strlen(file_path),
+                                     true, NULL);
+}
+
+uint32_t eng_bc_steps(const Engine *eng) {
+    return eng ? eng->mem.bc_exec_steps : 0u;
+}
+
+uint16_t eng_bc_inst_count(const Engine *eng) {
+    return eng ? eng->mem.bc_count : 0u;
+}
+
+size_t eng_bc_disasm(Engine *eng, const char *fn_name, char *out_buf, size_t buf_cap) {
+    if (!out_buf || buf_cap == 0) return 0;
+    out_buf[0] = '\0';
+    if (!eng || !fn_name || fn_name[0] == '\0') return 0;
+    return bc_disasm_func(&eng->mem, &eng->sym, fn_name, (uint16_t)strlen(fn_name), out_buf, buf_cap);
 }

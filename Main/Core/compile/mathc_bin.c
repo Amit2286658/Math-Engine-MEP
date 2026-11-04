@@ -161,7 +161,11 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
         if (td.mod_id >= hdr->mod_count) return false;
         if (td.parser_intr >= INTR_COUNT) return false;
         if (td.is_consuming) {
-            if ((uint32_t)td.start_idx + (uint32_t)td.field_count > hdr->pat_elem_count) return false;
+            if (td.parser_intr == INTR_PARSE_I64 && td.field_count > 0) {
+                if ((uint32_t)td.start_idx + (uint32_t)td.field_count > hdr->field_count) return false;
+            } else {
+                if ((uint32_t)td.start_idx + (uint32_t)td.field_count > hdr->pat_elem_count) return false;
+            }
         } else if (td.parser_intr == INTR_NONE || td.parser_intr == INTR_COMPLEX_TYPE) {
             if ((uint32_t)td.start_idx + (uint32_t)td.field_count > hdr->field_count) return false;
             if (td.flat_size == 0 || td.flat_size > 256u) return false;
@@ -191,7 +195,11 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
         memcpy(&fd, fields_ptr + (size_t)i * sizeof(FieldDef), sizeof(FieldDef));
         if ((uint32_t)fd.name.off + (uint32_t)fd.name.len > hdr->perm_src_len) return false;
         if (fd.type_id == 0 || fd.type_id >= hdr->type_count) return false;
-        if (fd.flat_offset >= 256u) return false;
+        TypeDef f_owner;
+        memcpy(&f_owner, types_ptr + (size_t)fd.type_id * sizeof(TypeDef), sizeof(TypeDef));
+        if (f_owner.parser_intr != INTR_PARSE_I64 && fd.flat_offset >= 256u) {
+            return false;
+        }
     }
 
     /* 7. Validate struct field ranges against parent struct flat_size */
@@ -303,6 +311,8 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
                         uint8_t c_tid = (uint8_t)(n.right & 0x3Fu);
                         uint8_t c_uid = (uint8_t)((n.right >> 6u) & 0x3Fu);
                         if (c_tid >= hdr->type_count || c_uid >= eff_units) return false;
+                    } else if ((n.right & AST_CALL_QUAL_MOD_BIT) != 0) {
+                        if ((n.right & 0x3FFFu) >= hdr->mod_count) return false;
                     } else if (!AST_OPT_OK(n.right)) {
                         return false;
                     }
@@ -314,7 +324,7 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
                 break;
 
             case AST_INTRINSIC:
-                if (n.sub == INTR_NONE || n.sub >= INTR_COUNT) return false;
+                if (n.sub == INTR_NONE || (n.sub >= INTR_COUNT && n.sub < 238u)) return false;
                 if (!AST_OPT_OK(n.left) || !AST_OPT_OK(n.right)) return false;
                 if (n.ref != 0 && !AST_OPT_OK(n.ref)) return false;
                 break;
@@ -332,7 +342,7 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
                 break;
 
             case AST_SWITCH_EQ:
-                if (n.sub > 3 || !AST_REQ_OK(n.left) || !AST_OPT_OK(n.right)) return false;
+                if (n.sub > 4 || !AST_REQ_OK(n.left) || !AST_OPT_OK(n.right)) return false;
                 if (n.sub == 0 && !AST_REQ_OK(n.right)) return false;
                 if (n.sub == 1 && (n.ref == 0 || n.ref >= hdr->type_count)) return false;
                 if (n.sub == 2 && n.ref >= PARSER_MAX_LOCALS) return false;

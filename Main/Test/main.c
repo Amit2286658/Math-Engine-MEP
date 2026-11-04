@@ -1651,9 +1651,12 @@ static const TestCase k_tests[] = {
     { "quad_eq(a, b = 2, c = 1) = a^2 + b * a + c ; quad_eq(3) * 100 + quad_eq(3, 4, 5)",
       "1626", "real",
       "[Exp 1] Session-style '=' function definition 'quad_eq(a, b = 2, c = 1) = ...' -> 1600 + 26 = 1626" },
-    { "is_even_r(n) := n == 0 ? 1 : is_odd_r(n - 1) ; is_odd_r(n) := n == 0 ? 0 : is_even_r(n - 1) ; is_even_r(10) * 10 + is_odd_r(9)",
-      "11", "real",
-      "[Exp 1] Forward-referenced mutually recursive functions 'is_even_r' & 'is_odd_r' -> 11" },
+    /* Mutual (forward-referenced) recursion moved to the module-based
+     * `[Exp 1b]` check below: persistent function registries live in
+     * module scope under the Module Execution API. */
+    { "is_even_s(n) := n <= 1 ? 1 : n * is_even_s(n - 2) ; is_even_s(6) * 10 + is_even_s(5)",
+      "495", "real",
+      "[Exp 1] Self-referencing recursive inline function 'is_even_s' -> 480 + 15" },
     { "ack(m, n) = m == 0 ? n + 1 : (n == 0 ? ack(m - 1, 1) : ack(m - 1, ack(m, n - 1))) ; ack(2, 3)",
       "9", "real",
       "[Exp 1] Deeply recursive 2-argument Ackermann function 'ack(2, 3)' -> 9" },
@@ -2372,6 +2375,18 @@ int main(int argc, char **argv) {
                k_tests[i].expr, val_buf, type_buf, k_tests[i].desc);
     }
     printf("\n    Suite Summary: %d / %d passed.\n\n", passed, total);
+    total++;
+    Value v_mr = 0;
+    bool mutual_rec_ok = eng_mod_eval(&g_eng, "mutrec",
+                           "is_even_r(n) := n == 0 ? 1 : is_odd_r(n - 1) ; "
+                           "is_odd_r(n) := n == 0 ? 0 : is_even_r(n - 1) ; "
+                           "is_even_r(10) * 10 + is_odd_r(9)", &v_mr) &&
+                         (val_get_f64(&g_eng.mem, v_mr) == 11.0) &&
+                         eng_mod_eval(&g_eng, "mutrec", "is_odd_r(21) * 100 + is_even_r(8)", &v_mr) &&
+                         (val_get_f64(&g_eng.mem, v_mr) == 101.0);
+    if (mutual_rec_ok) passed++;
+    printf("    [Exp 1b] Forward-referenced mutual recursion (module registry) : %s (11 then 101 across calls)\n\n",
+           mutual_rec_ok ? "PASS" : "FAIL");
 
     /* 5. Verify Compile-Time Guardrails for Scopes, Compulsory Same-Line ';', `if/or/else`, Reserved Keywords, and `vec<T>` */
     bool vec_type_guard = !eng_eval(&g_eng, "v := vec() ; push(v, 10) ; push(v, vec2(1, 2))", &v) &&
@@ -3260,6 +3275,6 @@ int main(int argc, char **argv) {
             fn_unit_mismatch_guard && gen_T_unit_mismatch_guard &&
             conv_unit_mismatch_guard && jagged_mat_guard && non_bool_not_guard && not_overload_guard && lim_diverge_guard && custom_err_guard && fx_unknown_ccy_guard && fx_neg_amount_guard &&
             syn_off && units_off && phys_off &&
-            bug1_ok && bug2_ok && bug3_ok && bug4_ok && bug5_ok && bug6_ok && bug7_ok && bug8_ok &&
+            mutual_rec_ok && bug1_ok && bug2_ok && bug3_ok && bug4_ok && bug5_ok && bug6_ok && bug7_ok && bug8_ok &&
             bug9_ok && bug10_ok) ? 0 : 1;
 }

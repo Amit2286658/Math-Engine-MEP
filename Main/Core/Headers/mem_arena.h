@@ -54,6 +54,8 @@ extern "C" {
 #define MEM_MAP_HDR_SLOTS      4u  /* [val_type_unit, len, cap, data_pool_idx]   */
 #define MEM_FN_MAX_PARAMS     16u  /* Max parameters for lambdas & module fns    */
 #define MEM_MAX_TEMP_ROOTS    64u  /* C stack temporary Value* roots for GC      */
+#define MEM_MAX_BC_INSTS    8192u  /* Bytecode VM instruction pool capacity      */
+#define MEM_OUT_BUF_CAP     4096u  /* Captured print/println stdout buffer bytes */
 
 typedef enum {
     JUMP_NONE          = 0,
@@ -62,7 +64,8 @@ typedef enum {
     JUMP_BREAK_TAG     = 3,  /* `break(Tag[,val])` — exit enclosing `Tag` loop/scope */
     JUMP_CONTINUE_ANON = 4,  /* `continue`         — next iteration of innermost loop*/
     JUMP_CONTINUE_TAG  = 5,  /* `continue(Tag)`    — next iteration of `Tag` loop    */
-    JUMP_RETURN        = 6   /* `return [val]`     — early return from function/eval */
+    JUMP_RETURN        = 6,  /* `return [val]`     — early return from function/eval */
+    JUMP_THROW         = 7   /* `throw [val]`      — structured exception unwind     */
 } JumpKind;
 
 /* ============================================================================
@@ -90,6 +93,52 @@ typedef struct {
 } AstNode;
 
 _Static_assert(sizeof(AstNode) == 8, "AstNode must be strictly 8 bytes");
+
+/* Phase 6: 8-Byte Stack Bytecode VM Opcodes & Instruction Format */
+typedef enum {
+    BC_NOP = 0,
+    BC_PUSH_F64,     /* Push f64 constant at `mem->f64_pool[imm16]` (type = a)    */
+    BC_PUSH_LIT,     /* Push literal AST node `imm16` ($str, void, etc.)          */
+    BC_LOAD_SLOT,    /* Push local slot `frame_base + a`                          */
+    BC_STORE_SLOT,   /* Store TOS into `frame_base + a` (fallback AST = aux16)    */
+    BC_POP,          /* Discard top value on VM operand stack                     */
+    BC_ADD,          /* Pop b, a -> push a + b (fast f64 path + op sym `b`)       */
+    BC_SUB,          /* Pop b, a -> push a - b                                    */
+    BC_MUL,          /* Pop b, a -> push a * b                                    */
+    BC_DIV,          /* Pop b, a -> push a / b                                    */
+    BC_MOD,          /* Pop b, a -> push fmod(a, b)                               */
+    BC_POW,          /* Pop b, a -> push pow(a, b)                                */
+    BC_NEG,          /* Pop a -> push -a                                          */
+    BC_EQ,           /* Pop b, a -> push (a == b)                                 */
+    BC_NE,           /* Pop b, a -> push (a != b)                                 */
+    BC_LT,           /* Pop b, a -> push (a <  b)                                 */
+    BC_LE,           /* Pop b, a -> push (a <= b)                                 */
+    BC_GT,           /* Pop b, a -> push (a >  b)                                 */
+    BC_GE,           /* Pop b, a -> push (a >= b)                                 */
+    BC_NOT,          /* Pop a -> push !a                                          */
+    BC_JMP,          /* Unconditional jump `pc = imm16`                           */
+    BC_JMP_FALSE,    /* Pop cond; if |c| <= 1e-15, `pc = imm16`                   */
+    BC_JMP_TRUE,     /* Pop cond; if |c| >  1e-15, `pc = imm16`                   */
+    BC_LOOP_GUARD,   /* Periodic loop step/GC guard inside bytecode loop          */
+    BC_FOR_INIT,     /* Initialize numeric range `for` loop (`a = var_slot`)      */
+    BC_FOR_STEP,     /* Advance numeric range `for` loop (`imm16 = body_pc`)      */
+    BC_CALL,         /* Direct module/stdlib function call (`a = argc, b = sym`)  */
+    BC_FN_CALL,      /* First-class `$fn` closure call (`a = argc`)               */
+    BC_INTRINSIC,    /* Direct `@intrinsic` call (`a = intr_id, b = arg_mask`)    */
+    BC_EVAL_AST,     /* Evaluate general AST subtree `imm16` via `eval_ast`       */
+    BC_RET,          /* Return TOS from function (`JUMP_RETURN`)                  */
+    BC_HALT          /* End of bytecode sequence, return TOS                      */
+} BcOp;
+
+typedef struct {
+    uint8_t  op;     /* BcOp opcode                                               */
+    uint8_t  a;      /* Slot index / type_id / flag                               */
+    uint16_t b;      /* Operator sym_id / auxiliary index                         */
+    uint16_t imm16;  /* Target PC / pool_idx / AST node index                     */
+    uint16_t aux16;  /* Fallback AST node index for stores / compound ops         */
+} BcInst;
+
+_Static_assert(sizeof(BcInst) == 8, "BcInst must be strictly 8 bytes");
 
 /* Dynamically spilled heap payload block for large `$vec`, `$mat`, and `$map` containers */
 typedef struct {
@@ -184,6 +233,20 @@ typedef struct {
     uint16_t    call_depth;
     uint32_t    eval_steps;
 
+    /* Phase 5: Standard Output Capture Buffer & Module/File Import State */
+    char        out_buf[MEM_OUT_BUF_CAP];
+    uint16_t    out_len;
+    char        import_dir[128];
+    char        imported_files[16][64];
+    uint8_t     imported_file_count;
+
+    /* Phase 6: Stack Bytecode VM Code Pool & Per-Overload Entry Table */
+    BcInst      bc_code[MEM_MAX_BC_INSTS];
+    uint16_t    bc_count;
+    uint16_t    perm_bc_count;
+    uint16_t    ov_bc_entry[2048];
+    uint32_t    bc_exec_steps;
+
     /* Error state */
     bool        has_error;
     char        err_msg[128];
@@ -197,6 +260,8 @@ void     mem_init(MemArena *mem);
 void     mem_free_all_heap(MemArena *mem);
 void     mem_err(MemArena *mem, const char *fmt, ...);
 void     mem_clear_err(MemArena *mem);
+void     mem_out_append(MemArena *mem, const char *s, size_t len);
+void     mem_out_clear(MemArena *mem);
 
 /* Snapshot permanent watermarks (after loading extensions) & rewind scratch per eval */
 void     mem_snapshot_perm(MemArena *mem);
@@ -217,6 +282,8 @@ void     mem_write_pool(MemArena *mem, uint16_t idx, double val);
 static inline bool mem_is_heap_idx(uint16_t data_idx) {
     return (data_idx & MEM_HEAP_IDX_BIT) != 0 && data_idx != MEM_NO_IDX;
 }
+uint16_t      mem_heap_alloc_block(MemArena *mem, uint16_t owner_hdr, uint32_t slots);
+void          mem_compact_strings(MemArena *mem);
 double       *mem_data_ptr(MemArena *mem, uint16_t data_idx, uint32_t offset);
 const double *mem_data_ptr_ro(const MemArena *mem, uint16_t data_idx, uint32_t offset);
 double        mem_data_read(const MemArena *mem, uint16_t data_idx, uint32_t offset);

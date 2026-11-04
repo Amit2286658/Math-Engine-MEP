@@ -50,6 +50,8 @@ extern "C" {
 #define SYM_VAR_EXPLICIT_CONST 0x04u /* 1 = explicitly declared with `const`                  */
 #define SYM_VAR_REASSIGN_ONLY  0x08u /* AST store flag: plain `=` or compound `+=`            */
 #define SYM_VAR_COMPOUND_OP    0x10u /* AST store flag: compound assignment (`+=`, `-=`, ...) */
+#define SYM_VAR_QUAL_MOD       0x80u /* AST_CONST_SYM sub bit: explicit module qualifier      */
+#define AST_CALL_QUAL_MOD_BIT  0x4000u /* AST_CALL right bit: explicit module qualifier       */
 
 #define SYM_OV_PRIVATE         0x02u /* OpOverload.reserved bit: private to `ov->mod_id`      */
 #define SYM_TYPE_PRIVATE       0x02u /* TypeDef.reserved bit: private to `td->mod_id`         */
@@ -477,6 +479,7 @@ void        sym_link_overload(SymTable *tab, uint16_t ov_idx);
 /* Module management & O(1) active state toggling (unbounded module count) */
 uint16_t    sym_find_or_add_mod(SymTable *tab, MemArena *mem, StrSlice name);
 int         sym_find_mod(const SymTable *tab, const MemArena *mem, const char *mod_name);
+int         sym_find_mod_slice(const SymTable *tab, const MemArena *mem, const char *name, uint16_t len);
 bool        sym_set_module(SymTable *tab, const MemArena *mem, const char *mod_name, bool enabled);
 bool        sym_is_module_active(const SymTable *tab, const MemArena *mem, const char *mod_name);
 bool        sym_reset_module(SymTable *tab, MemArena *mem, const char *mod_name);

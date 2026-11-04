@@ -405,6 +405,42 @@ Java_com_mathengine_MathEngineBridge_nativeCompactScratch(JNIEnv *env, jclass cl
     return (jint)eng_compact_scratch(eng);
 }
 
+
+JNIEXPORT void JNICALL
+Java_com_mathengine_MathEngineBridge_nativeSetImportDir(JNIEnv *env, jclass clazz,
+                                                        jlong handle, jstring dirPath) {
+    (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng) return;
+    if (!dirPath) {
+        eng_set_import_dir(eng, "");
+        return;
+    }
+    const char *c_dir = (*env)->GetStringUTFChars(env, dirPath, NULL);
+    if (c_dir) {
+        eng_set_import_dir(eng, c_dir);
+        (*env)->ReleaseStringUTFChars(env, dirPath, c_dir);
+    }
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeGetOutput(JNIEnv *env, jclass clazz, jlong handle) {
+    (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng) return (*env)->NewStringUTF(env, "");
+    const char *out_s = eng_get_output(eng);
+    char buf[4096];
+    snprintf(buf, sizeof(buf), "%s", out_s ? out_s : "");
+    return jni_new_safe_utf(env, buf);
+}
+
+JNIEXPORT void JNICALL
+Java_com_mathengine_MathEngineBridge_nativeClearOutput(JNIEnv *env, jclass clazz, jlong handle) {
+    (void)env; (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (eng) eng_clear_output(eng);
+}
+
 JNIEXPORT jint JNICALL
 Java_com_mathengine_MathEngineBridge_nativeScratchPoolUsed(JNIEnv *env, jclass clazz, jlong handle) {
     (void)env; (void)clazz;

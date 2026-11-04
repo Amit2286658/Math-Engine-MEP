@@ -724,7 +724,12 @@ Value delegate_call_fn(MemArena *mem, SymTable *tab,
     uint16_t def_head    = (uint16_t)((packed_slt >> 16u) & 0xFFFFu);
     uint8_t  slot_start  = (uint8_t)(slot_range & 0xFFu);
     uint8_t  total_slots = (uint8_t)((slot_range >> 8u) & 0xFFu);
-    uint16_t fbase       = (uint16_t)mem_read_pool(mem, hdr_idx + 3);
+    uint32_t raw_f3      = (uint32_t)mem_read_pool(mem, hdr_idx + 3);
+    uint16_t low16       = (uint16_t)(raw_f3 & 0xFFFFu);
+    bool     has_env     = (slot_start > 0 && mem_is_heap_idx(low16));
+    uint16_t env_hid     = has_env ? (uint16_t)(low16 & MEM_HEAP_ID_MASK) : MEM_NO_IDX;
+    uint16_t orig_fbase  = has_env ? (uint16_t)(raw_f3 >> 16u) : low16;
+    uint16_t fbase       = orig_fbase;
 
     if (total_slots < param_cnt) total_slots = param_cnt;
     if (total_slots > 64u) total_slots = 64u;
@@ -748,7 +753,115 @@ Value delegate_call_fn(MemArena *mem, SymTable *tab,
         return val_void();
     }
 
-    uint16_t saved_sp   = mem->sp;
+    uint16_t saved_sp = mem->sp;
+    if (has_env && env_hid < MEM_MAX_HEAP_BLOCKS && mem->heap_blocks[env_hid].in_use >= 2u) {
+        fbase = saved_sp;
+        uint16_t max_needed = (uint16_t)(fbase + slot_start + total_slots);
+        if (max_needed > MEM_MAX_CALL_STACK) {
+            mem_err(mem, "Call stack overflow in closure invocation");
+            return val_void();
+        }
+        mem->sp = max_needed;
+        Value pre_env_vals[64];
+        HeapBlock *hb = &mem->heap_blocks[env_hid];
+        for (uint8_t k = 0; k < slot_start; ++k) {
+            uint16_t abs_s = (uint16_t)(fbase + k);
+            Value cv = val_void();
+            if (k < hb->cap_slots) {
+                memcpy(&cv, &hb->data[k], sizeof(Value));
+            }
+            if (hb->in_use == 2u && val_get_type(mem, cv) == MEM_TYPE_VOID &&
+                (uint16_t)(orig_fbase + k) < saved_sp) {
+                cv = mem->stack[orig_fbase + k];
+            }
+            mem->stack[abs_s] = cv;
+            if (k < 64u) pre_env_vals[k] = cv;
+            uint32_t lpack = ((uint32_t)(slot_start + k) < hb->cap_slots)
+                             ? (uint32_t)hb->data[slot_start + k] : 0u;
+            mem->slot_locked_type[abs_s] = (uint8_t)(lpack & 0xFFu);
+            mem->slot_locked_unit[abs_s] = (uint8_t)((lpack >> 8u) & 0xFFu);
+            mem->slot_is_const[abs_s]    = (uint8_t)((lpack >> 16u) & 0xFFu);
+        }
+        for (uint8_t k = 0; k < total_slots; ++k) {
+            uint16_t abs_s = (uint16_t)(fbase + slot_start + k);
+            mem->slot_locked_type[abs_s] = 0;
+            mem->slot_locked_unit[abs_s] = 0;
+            mem->slot_is_const[abs_s]    = 0;
+            mem->stack[abs_s] = (k < argc) ? args[k] : val_make_f64(mem, mem->fast_real_type, 0.0);
+        }
+        if (argc < param_cnt && def_head != MEM_NO_IDX && def_head != 0) {
+            uint16_t cur_d = def_head;
+            while (cur_d != MEM_NO_IDX && !mem->has_error) {
+                const AstNode *dl = mem_get_ast(mem, cur_d);
+                uint8_t p_idx = dl->sub;
+                if (p_idx >= argc && p_idx < param_cnt) {
+                    Value dval = eval_ast(mem, tab, dl->left, fbase, 0);
+                    if (mem->has_error || mem->jump_active != JUMP_NONE) break;
+                    mem->stack[fbase + slot_start + p_idx] = dval;
+                }
+                cur_d = dl->right;
+            }
+        }
+        Value res = val_void();
+        if (!mem->has_error && mem->jump_active == JUMP_NONE) {
+            uint16_t saved_mod     = mem->cur_mod;
+            uint16_t saved_tab_mod = tab->cur_mod;
+            if (raw_mod_tag > 0 && (uint16_t)(raw_mod_tag - 1u) < tab->mod_count) {
+                mem->cur_mod = (uint16_t)(raw_mod_tag - 1u);
+                tab->cur_mod = mem->cur_mod;
+            }
+            mem->call_depth++;
+            res = eval_ast(mem, tab, body_ast, fbase, 0);
+            if (mem->call_depth > 0) mem->call_depth--;
+            if (mem->jump_active == JUMP_RETURN) {
+                res = mem->jump_val;
+                mem->jump_val    = val_void();
+                mem->jump_active = JUMP_NONE;
+            }
+            mem->cur_mod = saved_mod;
+            tab->cur_mod = saved_tab_mod;
+        }
+        hb = &mem->heap_blocks[env_hid];
+        if (hb->in_use >= 2u && hb->data != NULL) {
+            for (uint8_t k = 0; k < slot_start && (uint32_t)k * 2u + 1u < hb->cap_slots; ++k) {
+                uint16_t abs_s = (uint16_t)(fbase + k);
+                Value uv = mem->stack[abs_s];
+                memcpy(&hb->data[k], &uv, sizeof(Value));
+                uint32_t lpack = (uint32_t)mem->slot_locked_type[abs_s]
+                               | ((uint32_t)mem->slot_locked_unit[abs_s] << 8u)
+                               | ((uint32_t)mem->slot_is_const[abs_s] << 16u);
+                hb->data[slot_start + k] = (double)lpack;
+                if (hb->in_use == 2u && (uint16_t)(orig_fbase + k) < saved_sp &&
+                    k < 64u && uv != pre_env_vals[k]) {
+                    mem->stack[orig_fbase + k]            = uv;
+                    mem->slot_locked_type[orig_fbase + k] = mem->slot_locked_type[abs_s];
+                    mem->slot_locked_unit[orig_fbase + k] = mem->slot_locked_unit[abs_s];
+                    mem->slot_is_const[orig_fbase + k]    = mem->slot_is_const[abs_s];
+                    /* Sync sibling active-frame closures sharing orig_fbase */
+                    for (uint16_t shid = 0; shid < MEM_MAX_HEAP_BLOCKS; ++shid) {
+                        if (shid == env_hid) continue;
+                        HeapBlock *shb = &mem->heap_blocks[shid];
+                        if (shb->in_use == 2u && shb->data != NULL && shb->cap_slots >= 3u) {
+                            uint32_t smeta = (uint32_t)shb->data[shb->cap_slots - 1u];
+                            uint16_t sfb   = (uint16_t)(smeta >> 8u);
+                            uint8_t  ss    = (uint8_t)(smeta & 0xFFu);
+                            if (sfb == orig_fbase && k < ss) {
+                                memcpy(&shb->data[k], &uv, sizeof(Value));
+                                shb->data[ss + k] = (double)lpack;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        mem_pop_frame(mem, saved_sp);
+        if (!mem->has_error && (mem->pool_top > (uint16_t)(MEM_MAX_F64_POOL - 1024u) ||
+                                mem->heap_active_count >= 64u)) {
+            (void)mem_compact_scratch(mem, &res, 1);
+        }
+        return res;
+    }
+
     uint16_t max_needed = (uint16_t)(fbase + slot_start + total_slots);
     if (max_needed > MEM_MAX_CALL_STACK) {
         mem_err(mem, "Call stack overflow in function invocation");
@@ -890,7 +1003,10 @@ Value delegate_call_fn(MemArena *mem, SymTable *tab,
 /*Construct vec<T>, list<T>, stack<T>, queue<T> element storage and retrieval*/
 void delegate_vec_write_elem(MemArena *mem, const SymTable *tab,
                              uint16_t elem_tid, uint16_t data_idx, uint32_t offset, Value item) {
-    if (elem_tid == mem->str_type_id && elem_tid != 0) {
+    if (elem_tid == SYM_TYPE_ANY) {
+        double *p = mem_data_ptr(mem, data_idx, offset);
+        if (p) memcpy(p, &item, sizeof(Value));
+    } else if (elem_tid == mem->str_type_id && elem_tid != 0) {
         StrSlice s = val_get_str(mem, item);
         uint32_t packed = ((uint32_t)s.off << 16) | (uint32_t)s.len;
         mem_data_write(mem, data_idx, offset, (double)packed);
@@ -907,7 +1023,13 @@ void delegate_vec_write_elem(MemArena *mem, const SymTable *tab,
 
 Value delegate_vec_read_elem(MemArena *mem, const SymTable *tab,
                              uint16_t elem_tid, uint8_t elem_uid, uint16_t data_idx, uint32_t offset) {
-    if (elem_tid == mem->str_type_id && elem_tid != 0) {
+    if (elem_tid == SYM_TYPE_ANY) {
+        const double *p = mem_data_ptr_ro(mem, data_idx, offset);
+        if (!p) return val_void();
+        Value v = 0;
+        memcpy(&v, p, sizeof(Value));
+        return v;
+    } else if (elem_tid == mem->str_type_id && elem_tid != 0) {
         uint32_t packed = (uint32_t)mem_data_read(mem, data_idx, offset);
         StrSlice s = { (uint16_t)(packed >> 16), (uint16_t)(packed & 0xFFFFu) };
         return val_make_str(mem, elem_tid, s);
@@ -1308,7 +1430,7 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
                 stride   = (elem_tid < tab->type_count) ? tab->types[elem_tid].flat_size : 1;
                 uint16_t packed_t = (uint16_t)(((uint32_t)elem_uid << 8u) | ((uint32_t)elem_tid & 0xFFu));
                 mem_write_pool(mem, hdr_idx + 0, (double)packed_t);
-            } else if (elem_tid != item_tid || elem_uid != item_uid) {
+            } else if (elem_tid != SYM_TYPE_ANY && (elem_tid != item_tid || elem_uid != item_uid)) {
                 char exp_t[32], got_t[32];
                 sym_type_name(tab, mem, elem_tid, exp_t, sizeof(exp_t));
                 sym_type_name(tab, mem, item_tid, got_t, sizeof(got_t));
@@ -1625,7 +1747,20 @@ static void delegate_format_vec_at(const MemArena *mem, const SymTable *tab,
     for (uint32_t i = 0; i < len && used + 1 < cap; ++i) {
         uint32_t off = i * (uint32_t)stride;
         char elem_str[96];
-        if (elem_tid == mem->str_type_id && elem_tid != 0) {
+        if (elem_tid == SYM_TYPE_ANY) {
+            double raw_d = mem_data_read(mem, data_idx, off);
+            Value ev = 0;
+            memcpy(&ev, &raw_d, sizeof(Value));
+            uint16_t etid = val_get_type(mem, ev);
+            if (etid == mem->str_type_id && etid != 0) {
+                StrSlice s = val_get_str(mem, ev);
+                snprintf(elem_str, sizeof(elem_str), "\"%.*s\"", (int)s.len, mem_str_ptr(mem, s));
+            } else if (etid > 0 && etid < tab->type_count && !tab->types[etid].is_consuming) {
+                delegate_format_struct_at(mem, tab, etid, val_get_pool_idx(ev), (uint8_t)(depth + 1), elem_str, sizeof(elem_str));
+            } else {
+                snprintf(elem_str, sizeof(elem_str), "%.6g", val_get_f64(mem, ev));
+            }
+        } else if (elem_tid == mem->str_type_id && elem_tid != 0) {
             uint32_t packed = (uint32_t)mem_data_read(mem, data_idx, off);
             StrSlice s = { (uint16_t)(packed >> 16), (uint16_t)(packed & 0xFFFFu) };
             snprintf(elem_str, sizeof(elem_str), "\"%.*s\"",
@@ -1706,6 +1841,50 @@ static void delegate_format_struct_at(const MemArena *mem, const SymTable *tab,
     char tname[32];
     sym_type_name(tab, mem, type_id, tname, sizeof(tname));
 
+    if (!td->is_consuming && td->parser_intr == INTR_PARSE_I64 && td->field_count > 0) {
+        int v_tag = (int)llround(mem_read_pool(mem, pool_idx));
+        uint8_t i = 0;
+        while (i < td->field_count) {
+            uint16_t vfd_i = (uint16_t)(td->start_idx + i);
+            const FieldDef *vfd = &tab->fields[vfd_i];
+            if (vfd->type_id == type_id) {
+                int cur_tag  = (int)(vfd->flat_offset & 0xFFu);
+                uint8_t pcnt = (uint8_t)(vfd->flat_offset >> 8u);
+                if (cur_tag == v_tag) {
+                    size_t used = 0;
+                    buf[0] = '\0';
+                    delegate_buf_append(buf, cap, &used, "%s.%.*s",
+                                        tname, (int)vfd->name.len, mem_str_ptr(mem, vfd->name));
+                    if (pcnt > 0) {
+                        delegate_buf_append(buf, cap, &used, "(");
+                        for (uint8_t pi = 0; pi < pcnt && used + 1 < cap; ++pi) {
+                            const FieldDef *pfd = &tab->fields[vfd_i + 1u + pi];
+                            char p_str[64];
+                            if (!tab->types[pfd->type_id].is_consuming) {
+                                delegate_format_struct_at(mem, tab, pfd->type_id,
+                                                          (uint16_t)(pool_idx + pfd->flat_offset),
+                                                          (uint8_t)(depth + 1), p_str, sizeof(p_str));
+                            } else if (pfd->type_id == mem->str_type_id && mem->str_type_id != 0) {
+                                uint32_t pk = (uint32_t)mem_read_pool(mem, (uint16_t)(pool_idx + pfd->flat_offset));
+                                StrSlice s = { (uint16_t)(pk >> 16u), (uint16_t)(pk & 0xFFFFu) };
+                                snprintf(p_str, sizeof(p_str), "\"%.*s\"", (int)s.len, mem_str_ptr(mem, s));
+                            } else {
+                                snprintf(p_str, sizeof(p_str), "%.6g",
+                                         mem_read_pool(mem, (uint16_t)(pool_idx + pfd->flat_offset)));
+                            }
+                            delegate_buf_append(buf, cap, &used, "%s%s", (pi > 0 ? ", " : ""), p_str);
+                        }
+                        delegate_buf_append(buf, cap, &used, ")");
+                    }
+                    return;
+                }
+                i = (uint8_t)(i + 1u + pcnt);
+            } else {
+                i++;
+            }
+        }
+    }
+
     if (td->parser_intr == INTR_COMPLEX_TYPE && td->flat_size == 2) {
         double re = mem_read_pool(mem, pool_idx);
         double im = mem_read_pool(mem, pool_idx + 1);
@@ -1726,6 +1905,26 @@ static void delegate_format_struct_at(const MemArena *mem, const SymTable *tab,
         if (!tab->types[fd->type_id].is_consuming) {
             delegate_format_struct_at(mem, tab, fd->type_id, (uint16_t)(pool_idx + fd->flat_offset),
                                       (uint8_t)(depth + 1), f_str, sizeof(f_str));
+        } else if (fd->type_id == mem->str_type_id && mem->str_type_id != 0) {
+            uint32_t packed = (uint32_t)mem_read_pool(mem, (uint16_t)(pool_idx + fd->flat_offset));
+            StrSlice s = { (uint16_t)(packed >> 16u), (uint16_t)(packed & 0xFFFFu) };
+            snprintf(f_str, sizeof(f_str), "\"%.*s\"", (int)s.len, mem_str_ptr(mem, s));
+        } else if (tab->types[fd->type_id].parser_intr == INTR_PARSE_I64 &&
+                   tab->types[fd->type_id].field_count > 0) {
+            const TypeDef *etd = &tab->types[fd->type_id];
+            int ev = (int)llround(mem_read_pool(mem, (uint16_t)(pool_idx + fd->flat_offset)));
+            bool found_ev = false;
+            for (uint8_t vi = 0; vi < etd->field_count; ++vi) {
+                const FieldDef *vfd = &tab->fields[etd->start_idx + vi];
+                if ((int)(int16_t)vfd->flat_offset == ev) {
+                    snprintf(f_str, sizeof(f_str), "%.*s.%.*s",
+                             (int)etd->name.len, mem_str_ptr(mem, etd->name),
+                             (int)vfd->name.len, mem_str_ptr(mem, vfd->name));
+                    found_ev = true;
+                    break;
+                }
+            }
+            if (!found_ev) snprintf(f_str, sizeof(f_str), "%d", ev);
         } else {
             snprintf(f_str, sizeof(f_str), "%.6g", mem_read_pool(mem, (uint16_t)(pool_idx + fd->flat_offset)));
         }
@@ -1751,6 +1950,20 @@ static Value delegate_eval_tostr(MemArena *mem, const SymTable *tab, Value val) 
     if (td->is_consuming) {
         if (td->parser_intr == INTR_PARSE_F64_TRIM1) {
             snprintf(buf, sizeof(buf), "%.6gi", val_get_f64(mem, val));
+        } else if (td->parser_intr == INTR_PARSE_I64 && td->field_count > 0) {
+            int ev = (int)llround(val_get_f64(mem, val));
+            bool found_ev = false;
+            for (uint8_t vi = 0; vi < td->field_count; ++vi) {
+                const FieldDef *vfd = &tab->fields[td->start_idx + vi];
+                if ((int)(int16_t)vfd->flat_offset == ev) {
+                    snprintf(buf, sizeof(buf), "%.*s.%.*s",
+                             (int)td->name.len, mem_str_ptr(mem, td->name),
+                             (int)vfd->name.len, mem_str_ptr(mem, vfd->name));
+                    found_ev = true;
+                    break;
+                }
+            }
+            if (!found_ev) snprintf(buf, sizeof(buf), "%d", ev);
         } else {
             snprintf(buf, sizeof(buf), "%.10g", val_get_f64(mem, val));
         }

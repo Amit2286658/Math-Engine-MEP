@@ -36,11 +36,32 @@
 #include "../lib/delegate/delegate.h"
 #include "../lib/hardcode/hardcode.h"
 #include <string.h>
+#include <stdio.h>
+
+static bool find_adt_variant(const SymTable *tab, const MemArena *mem, uint16_t etid,
+                             const char *vname, uint16_t vlen,
+                             uint8_t *out_tag, uint8_t *out_pcnt, uint16_t *out_vfd_idx);
+static bool find_any_adt_by_variant(const SymTable *tab, const MemArena *mem, uint16_t cur_mod,
+                                    const char *vname, uint16_t vlen,
+                                    uint16_t *out_etid, uint8_t *out_tag,
+                                    uint8_t *out_pcnt, uint16_t *out_vfd_idx);
 
 static bool is_var_modifier_kw(const char *s, uint16_t len) {
     return (len == 3 && (memcmp(s, "pub", 3) == 0 || memcmp(s, "mut", 3) == 0)) ||
            (len == 4 && memcmp(s, "priv", 4) == 0) ||
            (len == 5 && memcmp(s, "const", 5) == 0);
+}
+
+static bool is_try_kw(const char *s, uint16_t len) {
+    return (len == 3 && memcmp(s, "try", 3) == 0);
+}
+
+static bool is_catch_kw(const char *s, uint16_t len) {
+    return (len == 5 && memcmp(s, "catch", 5) == 0);
+}
+
+static bool is_throw_kw(const char *s, uint16_t len) {
+    return (len == 5 && memcmp(s, "throw", 5) == 0);
 }
 
 static int find_local_idx(const Parser *P, const char *name, uint16_t len) {
@@ -158,6 +179,24 @@ static bool sym_has_visible_func_ov(const SymTable *tab, uint16_t sym_id) {
     return false;
 }
 
+static bool sym_has_func_ov_in_mod(const SymTable *tab, uint16_t sym_id, uint16_t mod_id,
+                                   uint16_t caller_mod, bool *out_is_priv) {
+    if (out_is_priv) *out_is_priv = false;
+    if (sym_id >= tab->sym_count || !sym_mod_enabled(tab, mod_id)) return false;
+    bool saw_priv = false;
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
+        const OpOverload *ov = &tab->overloads[i];
+        if (ov->fixity != FIX_FUNC || ov->mod_id != mod_id) continue;
+        if ((ov->reserved & SYM_OV_PRIVATE) != 0 && mod_id != caller_mod) {
+            saw_priv = true;
+            continue;
+        }
+        return true;
+    }
+    if (out_is_priv) *out_is_priv = saw_priv;
+    return false;
+}
+
 static uint8_t token_func_meta(const Parser *P, Token t) {
     SymTable *tab = P->lex.tab;
     const MemArena *mem = P->lex.mem;
@@ -250,7 +289,9 @@ static bool lex_peek_is_branch_kw(const Parser *P) {
     if (p >= P->lex.len || !lex_is_ident_start((unsigned char)P->lex.src[p])) return false;
     uint16_t start = p;
     while (p < P->lex.len && lex_is_ident_cont((unsigned char)P->lex.src[p])) p++;
-    int sid = sym_find(P->lex.tab, P->lex.mem, P->lex.src + start, p - start);
+    uint16_t kw_len = (uint16_t)(p - start);
+    if (is_catch_kw(P->lex.src + start, kw_len)) return true;
+    int sid = sym_find(P->lex.tab, P->lex.mem, P->lex.src + start, kw_len);
     if (sid < 0) return false;
     uint8_t m = sym_active_meta_tag(P->lex.tab, (uint16_t)sid, FIX_FUNC);
     return (m == INTR_OR_BRANCH || m == INTR_ELSE_BRANCH);
@@ -277,8 +318,15 @@ static bool lex_is_multi_lhs(const Parser *P) {
         if (p >= lex->len || !lex_is_ident_start((unsigned char)lex->src[p])) {
             return false;
         }
+        uint16_t id_s = p;
         while (p < lex->len && lex_is_ident_cont((unsigned char)lex->src[p])) {
             p++;
+        }
+        uint16_t id_l = (uint16_t)(p - id_s);
+        if (sym_is_reserved_kw(tab, mem, lex->src + id_s, id_l) ||
+            is_var_modifier_kw(lex->src + id_s, id_l) ||
+            (id_l == 7 && memcmp(lex->src + id_s, "default", 7) == 0)) {
+            return false;
         }
         p = skip_raw_ws(lex->src, p, lex->len);
 
@@ -426,6 +474,106 @@ static bool parse_var_type_unit_annot(Parser *P, uint8_t *out_lock_type, uint8_t
     return !mem->has_error;
 }
 
+static bool ast_is_fn_expr_rec(const MemArena *mem, const SymTable *tab,
+                               const Parser *P, uint16_t idx, uint8_t depth) {
+    if (idx == MEM_NO_IDX || depth > 12 || mem->fn_type_id == 0) return false;
+    const AstNode *n = mem_get_ast(mem, idx);
+    switch ((AstKind)n->kind) {
+        case AST_LAMBDA:
+        case AST_FN_CALL:
+            return true;
+        case AST_SLOT_LOAD:
+            if (P != NULL) {
+                uint8_t s = (uint8_t)(n->sub & AST_SLOT_IDX_MASK);
+                return (P->slot_types[s] == mem->fn_type_id);
+            }
+            return false;
+        case AST_CONST_SYM: {
+            uint16_t cmod = (n->right != MEM_NO_IDX && n->right < tab->mod_count)
+                            ? n->right : (P ? P->cur_mod : 0);
+            int mv_idx = ((n->sub & SYM_VAR_QUAL_MOD) != 0)
+                         ? sym_find_own_var(tab, n->ref, cmod)
+                         : sym_find_var(tab, n->ref, cmod, NULL);
+            if (mv_idx >= 0) {
+                const ModVarDef *mv = &sym_vars(tab)[mv_idx];
+                uint16_t mv_tid = val_get_type(mem, mv->val);
+                if (mv_tid == MEM_TYPE_VOID) {
+                    mv_tid = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
+                                                     : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
+                }
+                return (mv_tid == mem->fn_type_id);
+            }
+            return false;
+        }
+        case AST_FIELD_LOAD:
+            return (n->sub == mem->fn_type_id);
+        case AST_RETURN:
+            return (n->sub == 0 && ast_is_fn_expr_rec(mem, tab, P, n->left, (uint8_t)(depth + 1)));
+        case AST_BREAK:
+            return ast_is_fn_expr_rec(mem, tab, P, n->left, (uint8_t)(depth + 1));
+        case AST_TAGGED_SCOPE:
+            return ast_is_fn_expr_rec(mem, tab, P, n->left, (uint8_t)(depth + 1));
+        case AST_TERNARY: {
+            if (n->sub == 2) {
+                const AstNode *pair = mem_get_ast(mem, n->right);
+                return ast_is_fn_expr_rec(mem, tab, P, n->left, (uint8_t)(depth + 1)) ||
+                       ast_is_fn_expr_rec(mem, tab, P, pair->right, (uint8_t)(depth + 1));
+            }
+            const AstNode *pair = mem_get_ast(mem, n->right);
+            return ast_is_fn_expr_rec(mem, tab, P, pair->left, (uint8_t)(depth + 1)) ||
+                   ast_is_fn_expr_rec(mem, tab, P, pair->right, (uint8_t)(depth + 1));
+        }
+        case AST_BINARY: {
+            uint8_t mtag = sym_active_meta_tag(tab, n->ref, (OpFixity)n->sub);
+            if (mtag == INTR_SEQ) {
+                return ast_is_fn_expr_rec(mem, tab, P, n->right, (uint8_t)(depth + 1)) ||
+                       ast_is_fn_expr_rec(mem, tab, P, n->left, (uint8_t)(depth + 1));
+            }
+            if (mtag == INTR_STORE) {
+                return ast_is_fn_expr_rec(mem, tab, P, n->right, (uint8_t)(depth + 1));
+            }
+            return false;
+        }
+        case AST_CALL: {
+            if (n->ref >= tab->sym_count) return false;
+            for (uint16_t i = tab->sym_first_ov[n->ref]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
+                const OpOverload *ov = &tab->overloads[i];
+                if (ov->fixity != FIX_FUNC || ov->param_count != n->sub ||
+                    !sym_mod_enabled(tab, ov->mod_id)) continue;
+                if (ov->ret_type == mem->fn_type_id) return true;
+                if (ov->body_ast != MEM_NO_IDX &&
+                    ast_is_fn_expr_rec(mem, tab, NULL, ov->body_ast, (uint8_t)(depth + 1))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        default:
+            return false;
+    }
+}
+
+static uint16_t ast_infer_struct_or_fn_type(const Parser *P, uint16_t idx) {
+    const MemArena *mem = P->lex.mem;
+    const SymTable *tab = P->lex.tab;
+    if (idx == MEM_NO_IDX) return 0;
+    const AstNode *rn = mem_get_ast(mem, idx);
+    if (rn->kind == AST_CONSTRUCT) return rn->ref;
+    if (rn->kind == AST_FIELD_LOAD && rn->sub != 0) return rn->sub;
+    if (ast_is_fn_expr_rec(mem, tab, P, idx, 0)) return mem->fn_type_id;
+    if (rn->kind == AST_CALL && rn->ref < tab->sym_count) {
+        for (uint16_t i = tab->sym_first_ov[rn->ref]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
+            const OpOverload *ov = &tab->overloads[i];
+            if (ov->fixity == FIX_FUNC && ov->param_count == rn->sub &&
+                sym_mod_enabled(tab, ov->mod_id) && ov->ret_type != 0 &&
+                ov->ret_type < tab->type_count && !tab->types[ov->ret_type].is_consuming) {
+                return ov->ret_type;
+            }
+        }
+    }
+    return 0;
+}
+
 static uint16_t build_store_or_compound(Parser *P, uint16_t op_sym_id,
                                         uint16_t lhs_ast, uint16_t rhs_ast) {
     MemArena       *mem = P->lex.mem;
@@ -435,23 +583,19 @@ static uint16_t build_store_or_compound(Parser *P, uint16_t op_sym_id,
     bool is_colon_eq = false;
     if (hardcode_is_plain_store_sym(mem, tab, op_sym_id, &is_colon_eq)) {
         const AstNode *ln = mem_get_ast(mem, lhs_ast);
-        const AstNode *rn = mem_get_ast(mem, rhs_ast);
+        uint16_t inferred_t = ast_infer_struct_or_fn_type(P, rhs_ast);
         if (ln->kind == AST_SLOT_LOAD && ln->left == 0) {
             uint8_t sidx = (uint8_t)(ln->sub & AST_SLOT_IDX_MASK);
-            if (rn->kind == AST_CONSTRUCT) {
-                P->slot_types[sidx] = rn->ref;
-            } else if (rn->kind == AST_LAMBDA && mem->fn_type_id != 0) {
-                P->slot_types[sidx] = mem->fn_type_id;
+            if (inferred_t != 0) {
+                P->slot_types[sidx] = inferred_t;
             }
-        } else if (ln->kind == AST_CONST_SYM) {
-            int own_idx = sym_find_own_var(tab, ln->ref, P->cur_mod);
+        } else if (ln->kind == AST_CONST_SYM && inferred_t != 0) {
+            uint16_t tmod = (ln->right != MEM_NO_IDX && ln->right < tab->mod_count)
+                            ? ln->right : P->cur_mod;
+            int own_idx = sym_find_own_var(tab, ln->ref, tmod);
             if (own_idx >= 0) {
                 ModVarDef *mv = &sym_vars_mut(tab)[own_idx];
-                if (rn->kind == AST_CONSTRUCT) {
-                    mv->lock_type = (uint16_t)((mv->lock_type & 0xFFu) | ((uint16_t)rn->ref << 8u));
-                } else if (rn->kind == AST_LAMBDA && mem->fn_type_id != 0) {
-                    mv->lock_type = (uint16_t)((mv->lock_type & 0xFFu) | ((uint32_t)mem->fn_type_id << 8u));
-                }
+                mv->lock_type = (uint16_t)((uint32_t)(mv->lock_type & 0xFFu) | ((uint32_t)(uint16_t)inferred_t << 8u));
             }
         }
         return mem_alloc_ast(mem, AST_BINARY, (uint8_t)FIX_INFIX_RIGHT, op_sym_id, lhs_ast, rhs_ast);
@@ -540,6 +684,8 @@ static uint16_t build_distributed_comp(Parser *P, OpFixity fix, uint16_t comp_sy
  * 2. STRUCT FIELD RESOLUTION (`.field`) & UFCS METHOD CHAINING (`.fn(...)`)
  * ============================================================================ */
 
+static uint16_t parse_fn_call_step(Parser *P, uint16_t fn_ast);
+
 static uint16_t parse_field_step(Parser *P, uint16_t left) {
     MemArena       *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
@@ -552,6 +698,76 @@ static uint16_t parse_field_step(Parser *P, uint16_t left) {
     const char *fname = P->lex.src + P->lex.cur.off;
     uint16_t flen     = P->lex.cur.len;
     lex_next(&P->lex);
+
+    /* Check if `left` is a struct whose field `fname` is a `$fn` closure (`obj.cb(args)`) */
+    if (P->lex.cur.kind == TOK_LPAREN && mem->fn_type_id != 0) {
+        const AstNode *lnode_p = mem_get_ast(mem, left);
+        uint16_t ctype    = MEM_TYPE_VOID;
+        uint16_t b_ast    = left;
+        uint16_t b_slot   = MEM_NO_IDX;
+        uint16_t p_off    = 0;
+        if (lnode_p->kind == AST_SLOT_LOAD) {
+            b_slot = (uint8_t)(lnode_p->sub & AST_SLOT_IDX_MASK);
+            ctype  = P->slot_types[b_slot];
+        } else if (lnode_p->kind == AST_CONST_SYM) {
+            uint16_t cmod = (lnode_p->right != MEM_NO_IDX && lnode_p->right < tab->mod_count)
+                            ? lnode_p->right : P->cur_mod;
+            int mv_i = sym_find_var(tab, lnode_p->ref, cmod, NULL);
+            if (mv_i >= 0) {
+                const ModVarDef *mv = &sym_vars(tab)[mv_i];
+                ctype = val_get_type(mem, mv->val);
+                if (ctype == MEM_TYPE_VOID) {
+                    ctype = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
+                                                    : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
+                }
+            }
+        } else if (lnode_p->kind == AST_CONSTRUCT) {
+            ctype = lnode_p->ref;
+        } else if (lnode_p->kind == AST_FIELD_LOAD) {
+            ctype  = lnode_p->sub;
+            p_off  = lnode_p->ref;
+            b_ast  = lnode_p->left;
+            b_slot = lnode_p->right;
+        }
+        uint16_t f_tid = MEM_TYPE_VOID, f_off = 0;
+        bool is_fn_field = false;
+        if (ctype != MEM_TYPE_VOID && ctype < tab->type_count &&
+            !tab->types[ctype].is_consuming && tab->types[ctype].field_count > 0) {
+            if (sym_resolve_field(tab, mem, ctype, fname, flen, &f_tid, &f_off) &&
+                f_tid == mem->fn_type_id) {
+                is_fn_field = true;
+            }
+        } else if (ctype == MEM_TYPE_VOID && find_local_idx(P, fname, flen) < 0) {
+            int f_sid = sym_find(tab, mem, fname, flen);
+            bool has_fn_or_var = (f_sid >= 0) &&
+                (sym_has_visible_func_ov(tab, (uint16_t)f_sid) ||
+                 sym_find_var(tab, (uint16_t)f_sid, P->cur_mod, NULL) >= 0);
+            if (!has_fn_or_var) {
+                for (uint16_t tid = 1; tid < tab->type_count; ++tid) {
+                    if (!tab->types[tid].is_consuming && tab->types[tid].field_count > 0 &&
+                        sym_mod_enabled(tab, tab->types[tid].mod_id)) {
+                        if (sym_resolve_field(tab, mem, tid, fname, flen, &f_tid, &f_off) &&
+                            f_tid == mem->fn_type_id) {
+                            is_fn_field = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (is_fn_field) {
+            uint16_t fload = left;
+            if (lnode_p->kind == AST_FIELD_LOAD) {
+                AstNode *mut = mem_get_ast_mut(mem, left);
+                mut->sub = (uint8_t)f_tid;
+                mut->ref = (uint16_t)(p_off + f_off);
+            } else {
+                fload = mem_alloc_ast(mem, AST_FIELD_LOAD, (uint8_t)f_tid,
+                                      (uint16_t)(p_off + f_off), b_ast, b_slot);
+            }
+            return parse_fn_call_step(P, fload);
+        }
+    }
 
     /* Uniform Function Call Syntax (UFCS): `base.fn(a, b)` -> `fn(base, a, b)` */
     if (P->lex.cur.kind == TOK_LPAREN) {
@@ -1489,6 +1705,15 @@ static bool tok_is_underscore(const Parser *P, Token t) {
             (t.kind == TOK_IDENT || t.kind == TOK_OP));
 }
 
+static bool tok_is_bindable_ident(const Parser *P, Token t) {
+    if (t.kind == TOK_IDENT || tok_is_underscore(P, t)) return true;
+    if (t.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[t.off]) &&
+        sym_get_active_prec(P->lex.tab, t.sym_id, FIX_PREFIX) < 0) {
+        return true;
+    }
+    return false;
+}
+
 static bool is_pattern_bind_ident(const Parser *P, const char *name, uint16_t len, uint8_t end_syn) {
     const MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
@@ -1524,6 +1749,133 @@ static uint16_t parse_single_switch_pattern(Parser *P, uint16_t slot_ast, uint8_
         return mem_alloc_ast(mem, AST_BINARY, (uint8_t)FIX_INFIX_LEFT, op_sym, slot_ast, rhs_ast);
     }
 
+    /* 1b. Qualified Enum / Tagged Union pattern: `case Result.Ok(v):`, `case Shape.Point:` */
+    if (P->lex.cur.kind == TOK_IDENT) {
+        const char *id1 = P->lex.src + P->lex.cur.off;
+        uint16_t    l1  = P->lex.cur.len;
+        uint16_t    etid = sym_find_type(tab, mem, id1, l1);
+        if (etid != MEM_TYPE_VOID && etid < tab->type_count &&
+            !tab->types[etid].is_consuming && tab->types[etid].parser_intr == INTR_PARSE_I64) {
+            uint16_t p = skip_raw_ws(P->lex.src, P->lex.pos, P->lex.len);
+            if (p < P->lex.len && (P->lex.src[p] == '.' ||
+                (p + 1 < P->lex.len && P->lex.src[p] == ':' && P->lex.src[p + 1] == ':'))) {
+                lex_next(&P->lex); /* consume EnumName */
+                if (P->lex.cur.kind == TOK_OP && cur_op_meta(P) == INTR_FIELD) {
+                    lex_next(&P->lex); /* consume '.' */
+                } else if (P->lex.pos + 2 <= P->lex.len && P->lex.src[P->lex.pos] == ':' && P->lex.src[P->lex.pos + 1] == ':') {
+                    P->lex.pos = (uint16_t)(P->lex.pos + 2);
+                    lex_next(&P->lex);
+                }
+                const char *vname = P->lex.src + P->lex.cur.off;
+                uint16_t    vlen  = P->lex.cur.len;
+                uint8_t     v_tag = 0, pcnt = 0;
+                uint16_t    vfd_i = 0;
+                if (!find_adt_variant(tab, mem, etid, vname, vlen, &v_tag, &pcnt, &vfd_i)) {
+                    mem_err(mem, "Unknown variant '%.*s' in enum '%.*s'", (int)vlen, vname, (int)l1, id1);
+                    return MEM_NO_IDX;
+                }
+                lex_next(&P->lex); /* consume VariantName */
+                uint16_t cond = mem_alloc_ast(mem, AST_SWITCH_EQ, 4,
+                                              (uint16_t)(((uint16_t)etid << 8u) | v_tag),
+                                              slot_ast, MEM_NO_IDX);
+                if (pcnt > 0 && P->lex.cur.kind == TOK_LPAREN) {
+                    lex_next(&P->lex); /* consume '(' */
+                    uint8_t f_idx = 0;
+                    while (!mem->has_error && P->lex.cur.kind != TOK_RPAREN && f_idx < pcnt) {
+                        const FieldDef *fd = &tab->fields[vfd_i + 1u + f_idx];
+                        uint16_t field_ast = mem_alloc_ast(mem, AST_FIELD_LOAD, (uint8_t)fd->type_id,
+                                                           fd->flat_offset, slot_ast, sw_slot);
+                        uint16_t step_cond = MEM_NO_IDX;
+                        if (tok_is_bindable_ident(P, P->lex.cur) &&
+                            is_pattern_bind_ident(P, P->lex.src + P->lex.cur.off, P->lex.cur.len, INTR_RPAREN)) {
+                            const char *bname = P->lex.src + P->lex.cur.off;
+                            uint16_t    blen  = P->lex.cur.len;
+                            lex_next(&P->lex);
+                            if (!(blen == 1 && bname[0] == '_')) {
+                                int pslot = parser_add_local(P, bname, blen, fd->type_id);
+                                if (mem->has_error) return MEM_NO_IDX;
+                                step_cond = mem_alloc_ast(mem, AST_SWITCH_EQ, 2, (uint16_t)pslot, field_ast, MEM_NO_IDX);
+                            }
+                        } else {
+                            P->in_ternary_then++;
+                            uint16_t f_expr = parser_parse_expr(P, 11);
+                            P->in_ternary_then--;
+                            if (mem->has_error || f_expr == MEM_NO_IDX) return MEM_NO_IDX;
+                            step_cond = mem_alloc_ast(mem, AST_SWITCH_EQ, 0, 0, field_ast, f_expr);
+                        }
+                        if (step_cond != MEM_NO_IDX && cand_sym >= 0) {
+                            cond = mem_alloc_ast(mem, AST_BINARY, (uint8_t)FIX_INFIX_LEFT,
+                                                 (uint16_t)cand_sym, cond, step_cond);
+                        }
+                        f_idx++;
+                        if (P->lex.cur.kind == TOK_COMMA) lex_next(&P->lex);
+                        else break;
+                    }
+                    if (P->lex.cur.kind != TOK_RPAREN) {
+                        mem_err(mem, "Expected ')' after enum variant pattern in 'case'");
+                        return MEM_NO_IDX;
+                    }
+                    lex_next(&P->lex);
+                }
+                return cond;
+            }
+        }
+    }
+
+    /* 1c. Unqualified ADT payload variant pattern: `case Ok(v):`, `case Err(msg):` */
+    if (P->lex.cur.kind == TOK_IDENT && lex_peek_is_lparen(&P->lex)) {
+        const char *vname = P->lex.src + P->lex.cur.off;
+        uint16_t    vlen  = P->lex.cur.len;
+        uint16_t    etid  = MEM_TYPE_VOID, vfd_i = 0;
+        uint8_t     v_tag = 0, pcnt = 0;
+        if ( sym_find_type(tab, mem, vname, vlen) == MEM_TYPE_VOID &&
+             find_any_adt_by_variant(tab, mem, P->cur_mod, vname, vlen, &etid, &v_tag, &pcnt, &vfd_i) &&
+             pcnt > 0 ) {
+            lex_next(&P->lex); /* consume VariantName */
+            lex_next(&P->lex); /* consume '(' */
+            uint16_t cond = mem_alloc_ast(mem, AST_SWITCH_EQ, 4,
+                                          (uint16_t)(((uint16_t)etid << 8u) | v_tag),
+                                          slot_ast, MEM_NO_IDX);
+            uint8_t f_idx = 0;
+            while (!mem->has_error && P->lex.cur.kind != TOK_RPAREN && f_idx < pcnt) {
+                const FieldDef *fd = &tab->fields[vfd_i + 1u + f_idx];
+                uint16_t field_ast = mem_alloc_ast(mem, AST_FIELD_LOAD, (uint8_t)fd->type_id,
+                                                   fd->flat_offset, slot_ast, sw_slot);
+                uint16_t step_cond = MEM_NO_IDX;
+                if (tok_is_bindable_ident(P, P->lex.cur) &&
+                    is_pattern_bind_ident(P, P->lex.src + P->lex.cur.off, P->lex.cur.len, INTR_RPAREN)) {
+                    const char *bname = P->lex.src + P->lex.cur.off;
+                    uint16_t    blen  = P->lex.cur.len;
+                    lex_next(&P->lex);
+                    if (!(blen == 1 && bname[0] == '_')) {
+                        int pslot = parser_add_local(P, bname, blen, fd->type_id);
+                        if (mem->has_error) return MEM_NO_IDX;
+                        step_cond = mem_alloc_ast(mem, AST_SWITCH_EQ, 2, (uint16_t)pslot, field_ast, MEM_NO_IDX);
+                    }
+                } else {
+                    P->in_ternary_then++;
+                    uint16_t f_expr = parser_parse_expr(P, 11);
+                    P->in_ternary_then--;
+                    if (mem->has_error || f_expr == MEM_NO_IDX) return MEM_NO_IDX;
+                    step_cond = mem_alloc_ast(mem, AST_SWITCH_EQ, 0, 0, field_ast, f_expr);
+                }
+                if (step_cond != MEM_NO_IDX && cand_sym >= 0) {
+                    cond = mem_alloc_ast(mem, AST_BINARY, (uint8_t)FIX_INFIX_LEFT,
+                                         (uint16_t)cand_sym, cond, step_cond);
+                }
+                f_idx++;
+                if (P->lex.cur.kind == TOK_COMMA) lex_next(&P->lex);
+                else break;
+            }
+            if (P->lex.cur.kind != TOK_RPAREN) {
+                mem_err(mem, "Expected ')' after enum variant pattern in 'case'");
+                return MEM_NO_IDX;
+            }
+            lex_next(&P->lex);
+            return cond;
+        }
+    }
+
     /* 2. Struct destructuring pattern: `case vec2(0, y) :`, `case vec3(x, 0, z) :` */
     if (P->lex.cur.kind == TOK_IDENT && lex_peek_is_lparen(&P->lex)) {
         const char *tname = P->lex.src + P->lex.cur.off;
@@ -1545,7 +1897,7 @@ static uint16_t parse_single_switch_pattern(Parser *P, uint16_t slot_ast, uint8_
                                                    fd->flat_offset, slot_ast, sw_slot);
                 uint16_t step_cond = MEM_NO_IDX;
 
-                if ((P->lex.cur.kind == TOK_IDENT || tok_is_underscore(P, P->lex.cur)) &&
+                if (tok_is_bindable_ident(P, P->lex.cur) &&
                     is_pattern_bind_ident(P, P->lex.src + P->lex.cur.off, P->lex.cur.len, INTR_RPAREN)) {
                     const char *vname = P->lex.src + P->lex.cur.off;
                     uint16_t    vlen  = P->lex.cur.len;
@@ -1598,7 +1950,7 @@ static uint16_t parse_single_switch_pattern(Parser *P, uint16_t slot_ast, uint8_
             uint16_t k_link   = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, k_lit, MEM_NO_IDX);
             uint16_t elem_ast = mem_alloc_ast(mem, AST_INDEX, 1, 0, slot_ast, k_link);
 
-            if ((P->lex.cur.kind == TOK_IDENT || tok_is_underscore(P, P->lex.cur)) &&
+            if (tok_is_bindable_ident(P, P->lex.cur) &&
                 is_pattern_bind_ident(P, P->lex.src + P->lex.cur.off, P->lex.cur.len, INTR_RBRACK)) {
                 const char *vname = P->lex.src + P->lex.cur.off;
                 uint16_t    vlen  = P->lex.cur.len;
@@ -1714,7 +2066,9 @@ static uint16_t parse_switch_construct(Parser *P) {
         if (P->lex.cur.kind == TOK_RBRACE || P->lex.cur.kind == TOK_EOF) break;
 
         uint8_t kw_meta = token_func_meta(P, P->lex.cur);
-        if (kw_meta == INTR_ELSE_BRANCH) {
+        bool is_default_kw = (P->lex.cur.kind == TOK_IDENT && P->lex.cur.len == 7 &&
+                              memcmp(P->lex.src + P->lex.cur.off, "default", 7) == 0);
+        if (kw_meta == INTR_ELSE_BRANCH || is_default_kw) {
             if (seen_default) {
                 mem_err(mem, "Only one 'else'/'default' branch is allowed in a 'switch' block");
                 return MEM_NO_IDX;
@@ -1849,12 +2203,15 @@ static bool can_follow_jump_value_expr(const Parser *P) {
     if (kw == INTR_OR_BRANCH || kw == INTR_ELSE_BRANCH || kw == INTR_CASE_BRANCH) {
         return false;
     }
+    if (is_catch_kw(P->lex.src + P->lex.cur.off, P->lex.cur.len)) {
+        return false;
+    }
     return true;
 }
 
 static uint16_t parse_break_construct(Parser *P) {
     MemArena *mem = P->lex.mem;
-    if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN) {
+    if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN && !hardcode_is_paren_lambda(P)) {
         lex_next(&P->lex);
         if (P->lex.cur.kind == TOK_RPAREN) {
             lex_next(&P->lex);
@@ -1960,20 +2317,12 @@ static uint16_t parse_continue_construct(Parser *P) {
 
 static uint16_t parse_return_construct(Parser *P) {
     MemArena *mem = P->lex.mem;
-    if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN) {
+    if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN &&
+        !hardcode_is_paren_lambda(P) &&
+        lex_at_is_syntax(&P->lex, P->lex.pos, INTR_RPAREN)) {
         lex_next(&P->lex);
-        if (P->lex.cur.kind == TOK_RPAREN) {
-            lex_next(&P->lex);
-            return mem_alloc_ast(mem, AST_RETURN, 0, 0, MEM_NO_IDX, MEM_NO_IDX);
-        }
-        uint16_t val_ast = parser_parse_expr(P, 0);
-        if (mem->has_error || val_ast == MEM_NO_IDX) return MEM_NO_IDX;
-        if (P->lex.cur.kind != TOK_RPAREN) {
-            mem_err(mem, "Expected ')' after 'return(...)'");
-            return MEM_NO_IDX;
-        }
         lex_next(&P->lex);
-        return mem_alloc_ast(mem, AST_RETURN, 0, 0, val_ast, MEM_NO_IDX);
+        return mem_alloc_ast(mem, AST_RETURN, 0, 0, MEM_NO_IDX, MEM_NO_IDX);
     }
 
     if (can_follow_jump_value_expr(P)) {
@@ -1982,6 +2331,181 @@ static uint16_t parse_return_construct(Parser *P) {
     }
 
     return mem_alloc_ast(mem, AST_RETURN, 0, 0, MEM_NO_IDX, MEM_NO_IDX);
+}
+
+static uint16_t parse_throw_construct(Parser *P) {
+    MemArena *mem = P->lex.mem;
+    if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN &&
+        !hardcode_is_paren_lambda(P) &&
+        lex_at_is_syntax(&P->lex, P->lex.pos, INTR_RPAREN)) {
+        lex_next(&P->lex);
+        lex_next(&P->lex);
+        return mem_alloc_ast(mem, AST_RETURN, 1, 0, MEM_NO_IDX, MEM_NO_IDX);
+    }
+
+    if (can_follow_jump_value_expr(P)) {
+        uint16_t val_ast = parser_parse_expr(P, 2);
+        return mem_alloc_ast(mem, AST_RETURN, 1, 0, val_ast, MEM_NO_IDX);
+    }
+
+    mem_err(mem, "Expected exception value or message after 'throw'");
+    return MEM_NO_IDX;
+}
+
+static uint16_t parse_try_construct(Parser *P) {
+    MemArena *mem = P->lex.mem;
+    uint16_t try_body = parse_branch_body(P);
+    if (mem->has_error || try_body == MEM_NO_IDX) return MEM_NO_IDX;
+
+    if (cur_op_meta(P) == INTR_SEQ && lex_peek_is_branch_kw(P)) {
+        lex_next(&P->lex);
+    }
+
+    if ((P->lex.cur.kind != TOK_IDENT && P->lex.cur.kind != TOK_OP) ||
+        !is_catch_kw(P->lex.src + P->lex.cur.off, P->lex.cur.len)) {
+        mem_err(mem, "Expected 'catch' block after 'try' block");
+        return MEM_NO_IDX;
+    }
+    lex_next(&P->lex); /* consume 'catch' */
+
+    uint8_t  saved_vis     = P->vis_count;
+    uint16_t catch_var_ast = MEM_NO_IDX;
+    P->scope_depth++;
+
+    if (P->lex.cur.kind == TOK_LPAREN) {
+        lex_next(&P->lex); /* consume '(' */
+        if (P->lex.cur.kind != TOK_RPAREN) {
+            if (P->lex.cur.kind != TOK_IDENT &&
+                !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                P->vis_count = saved_vis;
+                P->scope_depth--;
+                mem_err(mem, "Expected error variable identifier inside 'catch(...)'");
+                return MEM_NO_IDX;
+            }
+            const char *ename = P->lex.src + P->lex.cur.off;
+            uint16_t    elen  = P->lex.cur.len;
+            lex_next(&P->lex);
+
+            uint8_t c_ltype = 0, c_lunit = 0;
+            if (cur_op_meta(P) == INTR_COLON) {
+                if (!parse_var_type_unit_annot(P, &c_ltype, &c_lunit)) {
+                    P->vis_count = saved_vis;
+                    P->scope_depth--;
+                    return MEM_NO_IDX;
+                }
+            }
+            uint16_t init_tid = c_ltype ? c_ltype : (mem->str_type_id ? mem->str_type_id : mem->fast_real_type);
+            int c_slot = parser_add_local(P, ename, elen, init_tid);
+            if (mem->has_error) {
+                P->vis_count = saved_vis;
+                P->scope_depth--;
+                return MEM_NO_IDX;
+            }
+            catch_var_ast = mem_alloc_ast(mem, AST_SLOT_LOAD, (uint8_t)c_slot, 0, c_ltype, c_lunit);
+        }
+        if (P->lex.cur.kind != TOK_RPAREN) {
+            P->vis_count = saved_vis;
+            P->scope_depth--;
+            mem_err(mem, "Expected ')' after 'catch(...)' parameter");
+            return MEM_NO_IDX;
+        }
+        lex_next(&P->lex); /* consume ')' */
+    } else if ((P->lex.cur.kind == TOK_IDENT ||
+                (P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) &&
+               lex_peek_is_lbrace(&P->lex)) {
+        const char *ename = P->lex.src + P->lex.cur.off;
+        uint16_t    elen  = P->lex.cur.len;
+        lex_next(&P->lex);
+        uint16_t init_tid = mem->str_type_id ? mem->str_type_id : mem->fast_real_type;
+        int c_slot = parser_add_local(P, ename, elen, init_tid);
+        if (mem->has_error) {
+            P->vis_count = saved_vis;
+            P->scope_depth--;
+            return MEM_NO_IDX;
+        }
+        catch_var_ast = mem_alloc_ast(mem, AST_SLOT_LOAD, (uint8_t)c_slot, 0, 0, 0);
+    }
+
+    uint16_t catch_body = parse_branch_body(P);
+    P->vis_count = saved_vis;
+    P->scope_depth--;
+    if (mem->has_error || catch_body == MEM_NO_IDX) return MEM_NO_IDX;
+
+    uint16_t link = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, catch_var_ast, catch_body);
+    P->last_was_block = true;
+    return mem_alloc_ast(mem, AST_TERNARY, 2, 0, try_body, link);
+}
+
+static uint16_t resolve_qual_mod_assign(Parser *P, uint16_t qual_mod,
+                                        const char *name, uint16_t len,
+                                        uint16_t op_sym_id,
+                                        uint8_t lock_type, uint8_t lock_unit) {
+    MemArena *mem = P->lex.mem;
+    SymTable *tab = P->lex.tab;
+    if (sym_is_reserved_kw(tab, mem, name, len) || is_var_modifier_kw(name, len)) {
+        mem_err(mem, "Cannot use reserved keyword '%.*s' as a variable name",
+                (int)len, name);
+        return MEM_NO_IDX;
+    }
+
+    bool is_colon_eq = false;
+    bool is_plain    = hardcode_is_plain_store_sym(mem, tab, op_sym_id, &is_colon_eq);
+
+    StrSlice vslice = mem_intern_str(mem, name, len);
+    uint16_t sym_id = sym_intern(tab, mem, vslice);
+    if (mem->has_error) return MEM_NO_IDX;
+
+    int own_idx = sym_find_own_var(tab, sym_id, qual_mod);
+    if (own_idx >= 0) {
+        const ModVarDef *mv = &sym_vars(tab)[own_idx];
+        if ((mv->flags & SYM_VAR_PRIVATE) != 0 && qual_mod != P->cur_mod) {
+            StrSlice pmod_s = sym_mod_name(tab, qual_mod);
+            mem_err(mem, "Variable or constant '%.*s' is private to module '[%.*s]'",
+                    (int)len, name, (int)pmod_s.len, mem_str_ptr(mem, pmod_s));
+            return MEM_NO_IDX;
+        }
+        if ((mv->flags & SYM_VAR_MUTABLE) == 0) {
+            mem_err(mem, "Cannot reassign or mutate immutable constant '%.*s'",
+                    (int)len, name);
+            return MEM_NO_IDX;
+        }
+    }
+
+    uint8_t ast_flags = SYM_VAR_QUAL_MOD;
+    if (is_plain) {
+        if (is_colon_eq) {
+            ast_flags |= SYM_VAR_MUTABLE;
+            if (own_idx < 0) {
+                (void)sym_set_or_add_var(tab, mem, sym_id, qual_mod, val_void(),
+                                         lock_type, lock_unit, ast_flags, true);
+                if (mem->has_error) return MEM_NO_IDX;
+            }
+        } else if (own_idx >= 0) {
+            ast_flags |= SYM_VAR_REASSIGN_ONLY;
+        } else if (qual_mod == P->cur_mod && P->is_mod_scope && P->scope_depth == 0) {
+            ast_flags |= SYM_VAR_EXPLICIT_CONST;
+            (void)sym_set_or_add_var(tab, mem, sym_id, qual_mod, val_void(),
+                                     lock_type, lock_unit, ast_flags, true);
+            if (mem->has_error) return MEM_NO_IDX;
+        } else {
+            StrSlice qmod_s = sym_mod_name(tab, qual_mod);
+            mem_err(mem, "Undefined variable '%.*s' in module '[%.*s]'",
+                    (int)len, name, (int)qmod_s.len, mem_str_ptr(mem, qmod_s));
+            return MEM_NO_IDX;
+        }
+    } else {
+        if (own_idx < 0) {
+            StrSlice qmod_s = sym_mod_name(tab, qual_mod);
+            mem_err(mem, "Cannot apply compound assignment to undeclared variable '%.*s::%.*s'",
+                    (int)qmod_s.len, mem_str_ptr(mem, qmod_s), (int)len, name);
+            return MEM_NO_IDX;
+        }
+        ast_flags |= (uint8_t)(SYM_VAR_REASSIGN_ONLY | SYM_VAR_COMPOUND_OP);
+    }
+
+    uint16_t packed_lock = (uint16_t)(((uint16_t)lock_type & 0xFFu) |
+                                      (((uint16_t)lock_unit & 0xFFu) << 8u));
+    return mem_alloc_ast(mem, AST_CONST_SYM, ast_flags, sym_id, packed_lock, qual_mod);
 }
 
 static uint16_t resolve_var_for_assign(Parser *P, const char *name, uint16_t len,
@@ -2169,19 +2693,274 @@ static uint16_t resolve_var_for_assign(Parser *P, const char *name, uint16_t len
  * 4. PRATT PARSER NUD & LED DRIVERS
  * ============================================================================ */
 
+
+static bool find_adt_variant(const SymTable *tab, const MemArena *mem, uint16_t etid,
+                             const char *vname, uint16_t vlen,
+                             uint8_t *out_tag, uint8_t *out_pcnt, uint16_t *out_vfd_idx) {
+    if (etid == MEM_TYPE_VOID || etid >= tab->type_count) return false;
+    const TypeDef *td = &tab->types[etid];
+    if (td->is_consuming || td->parser_intr != INTR_PARSE_I64 || td->field_count == 0) return false;
+    uint8_t i = 0;
+    while (i < td->field_count) {
+        uint16_t idx = (uint16_t)(td->start_idx + i);
+        const FieldDef *fd = &tab->fields[idx];
+        if (fd->type_id == etid) {
+            uint8_t v_tag = (uint8_t)(fd->flat_offset & 0xFFu);
+            uint8_t pcnt  = (uint8_t)(fd->flat_offset >> 8u);
+            if (fd->name.len == vlen && memcmp(mem_str_ptr(mem, fd->name), vname, vlen) == 0) {
+                if (out_tag)     *out_tag     = v_tag;
+                if (out_pcnt)    *out_pcnt    = pcnt;
+                if (out_vfd_idx) *out_vfd_idx = idx;
+                return true;
+            }
+            i = (uint8_t)(i + 1u + pcnt);
+        } else {
+            i++;
+        }
+    }
+    return false;
+}
+
+static bool find_any_adt_by_variant(const SymTable *tab, const MemArena *mem, uint16_t cur_mod,
+                                    const char *vname, uint16_t vlen,
+                                    uint16_t *out_etid, uint8_t *out_tag,
+                                    uint8_t *out_pcnt, uint16_t *out_vfd_idx) {
+    for (uint16_t tid = 1; tid < tab->type_count; ++tid) {
+        const TypeDef *td = &tab->types[tid];
+        if (!td->is_consuming && td->parser_intr == INTR_PARSE_I64 && td->field_count > 0 &&
+            sym_mod_enabled(tab, td->mod_id) &&
+            ((td->reserved & SYM_TYPE_PRIVATE) == 0 || td->mod_id == cur_mod)) {
+            if (find_adt_variant(tab, mem, tid, vname, vlen, out_tag, out_pcnt, out_vfd_idx)) {
+                if (out_etid) *out_etid = tid;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static uint16_t make_str_lit_node(MemArena *mem, const char *s, uint16_t len) {
+    StrSlice sl = mem_intern_str(mem, s, len);
+    if (mem->has_error) return MEM_NO_IDX;
+    return mem_alloc_ast(mem, AST_LIT, (uint8_t)mem->str_type_id, 0, sl.off, sl.len);
+}
+
+static uint16_t parse_interpolated_string(Parser *P, StrSlice s, bool force_interp) {
+    MemArena *mem = P->lex.mem;
+    SymTable *tab = P->lex.tab;
+    if (s.len == 0 || s.len >= 1020u) {
+        return mem_alloc_ast(mem, AST_LIT, (uint8_t)mem->str_type_id, 0, s.off, s.len);
+    }
+    char raw[1024];
+    memcpy(raw, mem_str_ptr(mem, s), s.len);
+    raw[s.len] = '\0';
+
+    /* Quick scan to check if there is at least one valid `{expr}` placeholder */
+    bool has_placeholder = false;
+    bool has_escaped_brace = false;
+    for (uint16_t i = 0; i < s.len; ++i) {
+        if (raw[i] == '{' && i + 1 < s.len && raw[i + 1] == '{') {
+            has_escaped_brace = true;
+            i++;
+            continue;
+        }
+        if (raw[i] == '}' && i + 1 < s.len && raw[i + 1] == '}') {
+            has_escaped_brace = true;
+            i++;
+            continue;
+        }
+        if (raw[i] == '{') {
+            uint16_t j = (uint16_t)(i + 1);
+            while (j < s.len && (raw[j] == ' ' || raw[j] == '\t')) j++;
+            if (j < s.len && raw[j] != '}' && raw[j] != ':') {
+                unsigned char fc = (unsigned char)raw[j];
+                bool starts_expr = force_interp || lex_is_ident_start(fc) || fc == '(';
+                if (starts_expr) {
+                    int depth = 1;
+                    uint16_t k = j;
+                    while (k < s.len && depth > 0) {
+                        if (raw[k] == '{') depth++;
+                        else if (raw[k] == '}') depth--;
+                        k++;
+                    }
+                    if (depth == 0) {
+                        has_placeholder = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!has_placeholder) {
+        if (force_interp && has_escaped_brace) {
+            char unesc[1024];
+            uint16_t ulen = 0;
+            for (uint16_t i = 0; i < s.len; ++i) {
+                if ((raw[i] == '{' || raw[i] == '}') && i + 1 < s.len && raw[i + 1] == raw[i]) {
+                    unesc[ulen++] = raw[i++];
+                } else {
+                    unesc[ulen++] = raw[i];
+                }
+            }
+            return make_str_lit_node(mem, unesc, ulen);
+        }
+        return mem_alloc_ast(mem, AST_LIT, (uint8_t)mem->str_type_id, 0, s.off, s.len);
+    }
+
+    uint16_t acc_ast = MEM_NO_IDX;
+    char     lit_buf[1024];
+    uint16_t lit_len = 0;
+    uint16_t pos     = 0;
+
+    while (pos < s.len && !mem->has_error) {
+        if (raw[pos] == '{' && pos + 1 < s.len && raw[pos + 1] == '{') {
+            lit_buf[lit_len++] = '{';
+            pos = (uint16_t)(pos + 2);
+            continue;
+        }
+        if (raw[pos] == '}' && pos + 1 < s.len && raw[pos + 1] == '}') {
+            lit_buf[lit_len++] = '}';
+            pos = (uint16_t)(pos + 2);
+            continue;
+        }
+        if (raw[pos] == '{') {
+            uint16_t b_start = (uint16_t)(pos + 1);
+            int depth = 1;
+            uint16_t k = b_start;
+            while (k < s.len && depth > 0) {
+                if (raw[k] == '"') {
+                    k++;
+                    while (k < s.len && raw[k] != '"') {
+                        if (raw[k] == '\\' && k + 1 < s.len) k = (uint16_t)(k + 2);
+                        else k++;
+                    }
+                    if (k < s.len) k++;
+                    continue;
+                }
+                if (raw[k] == '{') depth++;
+                else if (raw[k] == '}') depth--;
+                if (depth > 0) k++;
+            }
+            if (depth != 0) {
+                mem_err(mem, "Unclosed '{' in interpolated string");
+                return MEM_NO_IDX;
+            }
+            uint16_t b_end = k;
+            uint16_t ws = b_start;
+            while (ws < b_end && (raw[ws] == ' ' || raw[ws] == '\t')) ws++;
+            unsigned char fc = (ws < b_end) ? (unsigned char)raw[ws] : 0;
+            bool is_interp = (ws < b_end && fc != '}' && fc != ':' &&
+                              (force_interp || lex_is_ident_start(fc) || fc == '('));
+            if (!is_interp) {
+                while (pos <= b_end) lit_buf[lit_len++] = raw[pos++];
+                continue;
+            }
+
+            if (lit_len > 0) {
+                uint16_t lnode = make_str_lit_node(mem, lit_buf, lit_len);
+                if (mem->has_error) return MEM_NO_IDX;
+                acc_ast = (acc_ast == MEM_NO_IDX)
+                          ? lnode
+                          : mem_alloc_ast(mem, AST_INTRINSIC, (uint8_t)INTR_ADD, 0, acc_ast, lnode);
+                lit_len = 0;
+            }
+
+            /* Split `{expr[:spec]}` at top-level format colon `:` */
+            uint16_t colon_pos = b_end;
+            int p_depth = 0;
+            int q_depth = 0;
+            for (uint16_t m = ws; m < b_end; ++m) {
+                char mc = raw[m];
+                if (mc == '"') {
+                    m++;
+                    while (m < b_end && raw[m] != '"') {
+                        if (raw[m] == '\\' && m + 1 < b_end) m++;
+                        m++;
+                    }
+                    continue;
+                }
+                if (mc == '(' || mc == '[' || mc == '{') { p_depth++; continue; }
+                if (mc == ')' || mc == ']' || mc == '}') { if (p_depth > 0) p_depth--; continue; }
+                if (p_depth == 0 && mc == '?') { q_depth++; continue; }
+                if (p_depth == 0 && mc == ':') {
+                    if (m + 1 < b_end && (raw[m + 1] == ':' || raw[m + 1] == '=')) {
+                        m++;
+                        continue;
+                    }
+                    if (q_depth > 0) {
+                        q_depth--;
+                        continue;
+                    }
+                    colon_pos = m;
+                    break;
+                }
+            }
+
+            uint16_t expr_len = (uint16_t)(colon_pos - ws);
+            Parser subP;
+            parser_init(&subP, mem, tab, raw + ws, expr_len, 0, false, P->in_ext_body);
+            subP.cur_mod      = P->cur_mod;
+            subP.is_mod_scope = P->is_mod_scope;
+            subP.scope_depth  = P->scope_depth;
+            subP.local_count  = P->local_count;
+            subP.vis_count    = P->vis_count;
+            memcpy(subP.locals,     P->locals,     sizeof(P->locals));
+            memcpy(subP.slot_types, P->slot_types, sizeof(P->slot_types));
+
+            lex_next(&subP.lex);
+            uint16_t expr_ast = parser_parse_expr(&subP, 0);
+            if (mem->has_error || expr_ast == MEM_NO_IDX) return MEM_NO_IDX;
+            P->local_count = subP.local_count;
+            memcpy(P->slot_types, subP.slot_types, sizeof(P->slot_types));
+
+            uint16_t seg_ast = MEM_NO_IDX;
+            if (colon_pos < b_end) {
+                char fmt_tmpl[64];
+                uint16_t sp_len = (uint16_t)(b_end - (colon_pos + 1));
+                if (sp_len > 56u) sp_len = 56u;
+                snprintf(fmt_tmpl, sizeof(fmt_tmpl), "{:%.*s}", (int)sp_len, raw + colon_pos + 1);
+                uint16_t tmpl_ast = make_str_lit_node(mem, fmt_tmpl, (uint16_t)strlen(fmt_tmpl));
+                if (mem->has_error) return MEM_NO_IDX;
+                seg_ast = mem_alloc_ast(mem, AST_INTRINSIC, (uint8_t)INTR_STR_FMT, MEM_NO_IDX, tmpl_ast, expr_ast);
+            } else {
+                seg_ast = mem_alloc_ast(mem, AST_INTRINSIC, (uint8_t)INTR_TOSTR, 0, expr_ast, MEM_NO_IDX);
+            }
+            acc_ast = (acc_ast == MEM_NO_IDX)
+                      ? seg_ast
+                      : mem_alloc_ast(mem, AST_INTRINSIC, (uint8_t)INTR_ADD, 0, acc_ast, seg_ast);
+            pos = (uint16_t)(b_end + 1);
+            continue;
+        }
+        lit_buf[lit_len++] = raw[pos++];
+    }
+
+    if (lit_len > 0 || acc_ast == MEM_NO_IDX) {
+        uint16_t lnode = make_str_lit_node(mem, lit_buf, lit_len);
+        if (mem->has_error) return MEM_NO_IDX;
+        acc_ast = (acc_ast == MEM_NO_IDX)
+                  ? lnode
+                  : mem_alloc_ast(mem, AST_INTRINSIC, (uint8_t)INTR_ADD, 0, acc_ast, lnode);
+    }
+    return acc_ast;
+}
+
 static uint16_t parse_nud(Parser *P) {
     MemArena       *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
     Token t = P->lex.cur;
     P->last_was_block = false;
 
-    /* 1. Consumed Literal Value ($real, $str) */
+    /* 1. Consumed Literal Value ($real, $str, or $"..." / f"..." interpolated string) */
     if (t.kind == TOK_VAL) {
+        bool force_interp = (t.len >= 3 &&
+                             (P->lex.src[t.off] == '$' || P->lex.src[t.off] == 'f') &&
+                             P->lex.src[t.off + 1] == '"');
         lex_next(&P->lex);
         uint16_t tid = val_get_type(mem, t.val);
         if (tid == mem->str_type_id && tid != 0) {
             StrSlice s = val_get_str(mem, t.val);
-            return mem_alloc_ast(mem, AST_LIT, (uint8_t)tid, 0, s.off, s.len);
+            return parse_interpolated_string(P, s, force_interp);
         } else {
             uint16_t pidx = mem_alloc_pool(mem, 1);
             if (mem->has_error) return MEM_NO_IDX;
@@ -2403,6 +3182,295 @@ static uint16_t parse_nud(Parser *P) {
             id_len = t.len;
         }
 
+        /* 5.95 Check for Module-Qualified Access `mod::member` */
+        if (P->lex.pos + 2 <= P->lex.len &&
+            P->lex.src[P->lex.pos] == ':' && P->lex.src[P->lex.pos + 1] == ':') {
+            if (P->has_pending_mods) {
+                P->pending_var_flags = 0;
+                P->has_pending_mods  = false;
+                mem_err(mem, "Declaration modifiers cannot be applied to module-qualified symbol '%.*s::...'",
+                        (int)id_len, id_str);
+                return MEM_NO_IDX;
+            }
+            int qmod = sym_find_mod_slice(tab, mem, id_str, id_len);
+            if (qmod < 0) {
+                /* Check for Type-Qualified Method or Enum Variant Access `Type::method(...)` / `Enum::Variant` */
+                uint16_t qtid = sym_find_type(tab, mem, id_str, id_len);
+                if (qtid != MEM_TYPE_VOID && qtid < tab->type_count) {
+                    P->lex.pos = (uint16_t)(P->lex.pos + 2);
+                    lex_next(&P->lex);
+                    Token mt = P->lex.cur;
+                    if (mt.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[mt.off])) {
+                        mt.kind = TOK_IDENT;
+                    }
+                    if (mt.kind != TOK_IDENT) {
+                        mem_err(mem, "Expected method or variant identifier after '%.*s::'", (int)id_len, id_str);
+                        return MEM_NO_IDX;
+                    }
+                    const char *m_str = P->lex.src + mt.off;
+                    uint16_t    m_len = mt.len;
+                    lex_next(&P->lex);
+
+                    const TypeDef *qtd = &tab->types[qtid];
+                    if (qtd->parser_intr == INTR_PARSE_I64 && qtd->field_count > 0) {
+                        if (qtd->is_consuming) {
+                            for (uint8_t vi = 0; vi < qtd->field_count; ++vi) {
+                                const FieldDef *fd = &tab->fields[qtd->start_idx + vi];
+                                if (fd->name.len == m_len && memcmp(mem_str_ptr(mem, fd->name), m_str, m_len) == 0) {
+                                    uint16_t pidx = mem_alloc_pool(mem, 1);
+                                    mem_write_pool(mem, pidx, (double)(int16_t)fd->flat_offset);
+                                    return mem_alloc_ast(mem, AST_LIT, (uint8_t)qtid, pidx, 0, 0);
+                                }
+                            }
+                        } else {
+                            uint8_t v_tag = 0, pcnt = 0;
+                            if (find_adt_variant(tab, mem, qtid, m_str, m_len, &v_tag, &pcnt, NULL)) {
+                                if (pcnt == 0) {
+                                    int vsid = sym_find(tab, mem, m_str, m_len);
+                                    if (vsid >= 0) {
+                                        return mem_alloc_ast(mem, AST_CONST_SYM, SYM_VAR_QUAL_MOD,
+                                                             (uint16_t)vsid, MEM_NO_IDX, qtd->mod_id);
+                                    }
+                                } else if (P->lex.cur.kind == TOK_LPAREN) {
+                                    lex_next(&P->lex);
+                                    uint16_t head = MEM_NO_IDX, tail = MEM_NO_IDX;
+                                    uint8_t argc = 0;
+                                    if (P->lex.cur.kind != TOK_RPAREN) {
+                                        while (!mem->has_error) {
+                                            uint16_t arg = parser_parse_expr(P, 0);
+                                            uint16_t link = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, arg, MEM_NO_IDX);
+                                            if (head == MEM_NO_IDX) head = link;
+                                            else mem_get_ast_mut(mem, tail)->right = link;
+                                            tail = link;
+                                            argc++;
+                                            if (P->lex.cur.kind == TOK_COMMA) lex_next(&P->lex);
+                                            else break;
+                                        }
+                                    }
+                                    if (P->lex.cur.kind != TOK_RPAREN) {
+                                        mem_err(mem, "Expected ')' after variant arguments");
+                                        return MEM_NO_IDX;
+                                    }
+                                    lex_next(&P->lex);
+                                    if (argc != pcnt) {
+                                        mem_err(mem, "Variant '%.*s::%.*s' expects %u argument(s), got %u",
+                                                (int)id_len, id_str, (int)m_len, m_str, (unsigned)pcnt, (unsigned)argc);
+                                        return MEM_NO_IDX;
+                                    }
+                                    uint8_t c_sub = (uint8_t)(0x80u | ((v_tag & 0x07u) << 4u) | (pcnt & 0x0Fu));
+                                    return mem_alloc_ast(mem, AST_CONSTRUCT, c_sub, qtid, head, MEM_NO_IDX);
+                                }
+                            }
+                        }
+                    }
+
+                    if (P->lex.cur.kind == TOK_LPAREN) {
+                        lex_next(&P->lex);
+                        uint16_t head = MEM_NO_IDX, tail = MEM_NO_IDX;
+                        uint8_t argc = 0;
+                        if (P->lex.cur.kind != TOK_RPAREN) {
+                            while (!mem->has_error) {
+                                uint16_t arg = parser_parse_expr(P, 0);
+                                uint16_t link = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, arg, MEM_NO_IDX);
+                                if (head == MEM_NO_IDX) head = link;
+                                else mem_get_ast_mut(mem, tail)->right = link;
+                                tail = link;
+                                argc++;
+                                if (P->lex.cur.kind == TOK_COMMA) lex_next(&P->lex);
+                                else break;
+                            }
+                        }
+                        if (P->lex.cur.kind != TOK_RPAREN) {
+                            mem_err(mem, "Expected ')' after '%.*s::%.*s(...)'", (int)id_len, id_str, (int)m_len, m_str);
+                            return MEM_NO_IDX;
+                        }
+                        lex_next(&P->lex);
+                        int msid = sym_find(tab, mem, m_str, m_len);
+                        if (msid >= 0 && sym_has_visible_func_ov(tab, (uint16_t)msid)) {
+                            return mem_alloc_ast(mem, AST_CALL, argc, (uint16_t)msid, head, MEM_NO_IDX);
+                        }
+                    }
+                    mem_err(mem, "Undefined method or variant '%.*s' on type '%.*s'",
+                            (int)m_len, m_str, (int)id_len, id_str);
+                    return MEM_NO_IDX;
+                }
+                mem_err(mem, "Unknown or unloaded module '[%.*s]'", (int)id_len, id_str);
+                return MEM_NO_IDX;
+            }
+            if (!sym_mod_enabled(tab, (uint16_t)qmod)) {
+                mem_err(mem, "Module '[%.*s]' is disabled", (int)id_len, id_str);
+                return MEM_NO_IDX;
+            }
+            uint16_t qual_mod = (uint16_t)qmod;
+            P->lex.pos = (uint16_t)(P->lex.pos + 2);
+            if (P->lex.pos >= P->lex.len || !lex_is_ident_start((unsigned char)P->lex.src[P->lex.pos])) {
+                mem_err(mem, "Expected symbol identifier after '%.*s::'", (int)id_len, id_str);
+                return MEM_NO_IDX;
+            }
+            lex_next(&P->lex);
+            Token mt = P->lex.cur;
+            if (mt.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[mt.off])) {
+                mt.kind = TOK_IDENT;
+            }
+            if (mt.kind != TOK_IDENT) {
+                mem_err(mem, "Expected symbol identifier after '%.*s::'", (int)id_len, id_str);
+                return MEM_NO_IDX;
+            }
+            const char *m_str = P->lex.src + mt.off;
+            uint16_t    m_len = mt.len;
+            int         msid  = sym_find(tab, mem, m_str, m_len);
+            lex_next(&P->lex);
+
+            /* 1) Type/unit annotated qualified assignment `mod::v : real, usd := 1` */
+            if (P->in_ternary_then == 0 && cur_op_meta(P) == INTR_COLON) {
+                uint8_t ltype = 0, lunit = 0;
+                if (!parse_var_type_unit_annot(P, &ltype, &lunit)) return MEM_NO_IDX;
+                if (P->lex.cur.kind != TOK_OP ||
+                    !hardcode_is_plain_store_sym(mem, tab, P->lex.cur.sym_id, NULL)) {
+                    mem_err(mem, "Expected ':=' or '=' after variable type annotation");
+                    return MEM_NO_IDX;
+                }
+                return resolve_qual_mod_assign(P, qual_mod, m_str, m_len, P->lex.cur.sym_id, ltype, lunit);
+            }
+
+            /* 2) Qualified assignment or compound assignment `mod::v = 10`, `mod::v += 5`, `mod::v := 10` */
+            if (P->in_symbolic_expr == 0 && P->lex.cur.kind == TOK_OP &&
+                sym_active_meta_tag(tab, P->lex.cur.sym_id, FIX_INFIX_RIGHT) == INTR_STORE) {
+                return resolve_qual_mod_assign(P, qual_mod, m_str, m_len, P->lex.cur.sym_id, 0, 0);
+            }
+
+            /* 3) Qualified function or `$fn` call `mod::fn(args...)` */
+            if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN) {
+                lex_next(&P->lex); /* consume '(' */
+                uint16_t head = MEM_NO_IDX;
+                uint16_t tail = MEM_NO_IDX;
+                uint8_t  argc = 0;
+                if (P->lex.cur.kind != TOK_RPAREN) {
+                    while (!mem->has_error) {
+                        if (argc >= 16) {
+                            mem_err(mem, "Max 16 arguments supported in function call");
+                            return MEM_NO_IDX;
+                        }
+                        uint16_t arg = parser_parse_expr(P, 0);
+                        if (mem->has_error || arg == MEM_NO_IDX) return MEM_NO_IDX;
+                        uint16_t link = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, arg, MEM_NO_IDX);
+                        if (head == MEM_NO_IDX) head = link;
+                        else mem_get_ast_mut(mem, tail)->right = link;
+                        tail = link;
+                        argc++;
+                        if (P->lex.cur.kind == TOK_COMMA) {
+                            lex_next(&P->lex);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if (P->lex.cur.kind != TOK_RPAREN) {
+                    mem_err(mem, "Expected ')' after arguments to '%.*s::%.*s'",
+                            (int)id_len, id_str, (int)m_len, m_str);
+                    return MEM_NO_IDX;
+                }
+                lex_next(&P->lex); /* consume ')' */
+
+                if (msid >= 0) {
+                    bool is_priv_fn = false;
+                    if (sym_has_func_ov_in_mod(tab, (uint16_t)msid, qual_mod, P->cur_mod, &is_priv_fn)) {
+                        uint16_t qspec = (uint16_t)(AST_CALL_QUAL_MOD_BIT | (qual_mod & 0x3FFFu));
+                        return mem_alloc_ast(mem, AST_CALL, argc, (uint16_t)msid, head, qspec);
+                    }
+                    if (is_priv_fn) {
+                        mem_err(mem, "Function '%.*s' is private to module '[%.*s]'",
+                                (int)m_len, m_str, (int)id_len, id_str);
+                        return MEM_NO_IDX;
+                    }
+                    int own_v = sym_find_own_var(tab, (uint16_t)msid, qual_mod);
+                    if (own_v >= 0) {
+                        const ModVarDef *mv = &sym_vars(tab)[own_v];
+                        if ((mv->flags & SYM_VAR_PRIVATE) != 0 && qual_mod != P->cur_mod) {
+                            mem_err(mem, "Function or variable '%.*s' is private to module '[%.*s]'",
+                                    (int)m_len, m_str, (int)id_len, id_str);
+                            return MEM_NO_IDX;
+                        }
+                        uint16_t fn_load = mem_alloc_ast(mem, AST_CONST_SYM, SYM_VAR_QUAL_MOD,
+                                                         (uint16_t)msid, MEM_NO_IDX, qual_mod);
+                        return mem_alloc_ast(mem, AST_FN_CALL, argc, 0, fn_load, head);
+                    }
+                }
+                mem_err(mem, "Undefined function '%.*s' in module '[%.*s]'",
+                        (int)m_len, m_str, (int)id_len, id_str);
+                return MEM_NO_IDX;
+            }
+
+            /* 3.5) Qualified enum variant `mod::EnumName.Variant` */
+            if (cur_op_meta(P) == INTR_FIELD) {
+                for (uint16_t tid = 1; tid < tab->type_count; ++tid) {
+                    const TypeDef *td = &tab->types[tid];
+                    if (td->mod_id == qual_mod && td->is_consuming &&
+                        td->parser_intr == INTR_PARSE_I64 && td->field_count > 0 &&
+                        td->name.len == m_len &&
+                        memcmp(mem_str_ptr(mem, td->name), m_str, m_len) == 0) {
+                        if ((td->reserved & SYM_TYPE_PRIVATE) != 0 && qual_mod != P->cur_mod) {
+                            mem_err(mem, "Enum '%.*s' is private to module '[%.*s]'",
+                                    (int)m_len, m_str, (int)id_len, id_str);
+                            return MEM_NO_IDX;
+                        }
+                        lex_next(&P->lex); /* consume '.' */
+                        if (P->lex.cur.kind != TOK_IDENT &&
+                            !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                            mem_err(mem, "Expected variant name after '%.*s::%.*s.'",
+                                    (int)id_len, id_str, (int)m_len, m_str);
+                            return MEM_NO_IDX;
+                        }
+                        const char *v_str = P->lex.src + P->lex.cur.off;
+                        uint16_t    v_len = P->lex.cur.len;
+                        lex_next(&P->lex);
+                        for (uint8_t vi = 0; vi < td->field_count; ++vi) {
+                            const FieldDef *fd = &tab->fields[td->start_idx + vi];
+                            if (fd->name.len == v_len &&
+                                memcmp(mem_str_ptr(mem, fd->name), v_str, v_len) == 0) {
+                                uint16_t pidx = mem_alloc_pool(mem, 1);
+                                if (mem->has_error) return MEM_NO_IDX;
+                                mem_write_pool(mem, pidx, (double)(int16_t)fd->flat_offset);
+                                return mem_alloc_ast(mem, AST_LIT, (uint8_t)tid, pidx, 0, 0);
+                            }
+                        }
+                        mem_err(mem, "Unknown variant '%.*s' in enum '%.*s'",
+                                (int)v_len, v_str, (int)m_len, m_str);
+                        return MEM_NO_IDX;
+                    }
+                }
+            }
+
+            /* 4) Qualified constant / variable read `mod::CONST`, `mod::var` */
+            if (msid >= 0) {
+                int own_v = sym_find_own_var(tab, (uint16_t)msid, qual_mod);
+                if (own_v >= 0) {
+                    const ModVarDef *mv = &sym_vars(tab)[own_v];
+                    if ((mv->flags & SYM_VAR_PRIVATE) != 0 && qual_mod != P->cur_mod) {
+                        mem_err(mem, "Variable or constant '%.*s' is private to module '[%.*s]'",
+                                (int)m_len, m_str, (int)id_len, id_str);
+                        return MEM_NO_IDX;
+                    }
+                    return mem_alloc_ast(mem, AST_CONST_SYM, SYM_VAR_QUAL_MOD,
+                                         (uint16_t)msid, MEM_NO_IDX, qual_mod);
+                }
+                for (uint8_t ci = 0; ci < tab->const_count; ++ci) {
+                    if (tab->consts[ci].sym_id == (uint16_t)msid && tab->consts[ci].mod_id == qual_mod) {
+                        if ((tab->consts[ci].reserved & SYM_VAR_PRIVATE) != 0 && qual_mod != P->cur_mod) {
+                            mem_err(mem, "Variable or constant '%.*s' is private to module '[%.*s]'",
+                                    (int)m_len, m_str, (int)id_len, id_str);
+                            return MEM_NO_IDX;
+                        }
+                        return mem_alloc_ast(mem, AST_CONST_SYM, SYM_VAR_QUAL_MOD,
+                                             (uint16_t)msid, MEM_NO_IDX, qual_mod);
+                    }
+                }
+            }
+            mem_err(mem, "Undefined symbol or constant '%.*s' in module '[%.*s]'",
+                    (int)m_len, m_str, (int)id_len, id_str);
+            return MEM_NO_IDX;
+        }
+
         int sym_id      = sym_find(tab, mem, id_str, id_len);
         uint8_t fn_meta = (sym_id >= 0) ? sym_active_meta_tag(tab, (uint16_t)sym_id, FIX_FUNC) : 0;
 
@@ -2430,12 +3498,147 @@ static uint16_t parse_nud(Parser *P) {
             }
         }
 
+        /* 6.05 Qualified Enum / Tagged Union Variant Access `EnumName.Variant` / `EnumName.Variant(...)` */
+        if (cur_op_meta(P) == INTR_FIELD && find_local_idx(P, id_str, id_len) < 0) {
+            uint16_t etid = sym_find_type(tab, mem, id_str, id_len);
+            if (etid != MEM_TYPE_VOID && etid < tab->type_count &&
+                !tab->types[etid].is_consuming &&
+                tab->types[etid].parser_intr == INTR_PARSE_I64 &&
+                tab->types[etid].field_count > 0) {
+                const TypeDef *td = &tab->types[etid];
+                lex_next(&P->lex); /* consume '.' */
+                if (P->lex.cur.kind != TOK_IDENT &&
+                    !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                    mem_err(mem, "Expected enum variant name after '%.*s.'", (int)id_len, id_str);
+                    return MEM_NO_IDX;
+                }
+                const char *v_str = P->lex.src + P->lex.cur.off;
+                uint16_t    v_len = P->lex.cur.len;
+                lex_next(&P->lex);
+                uint8_t v_tag = 0, pcnt = 0;
+                if (!find_adt_variant(tab, mem, etid, v_str, v_len, &v_tag, &pcnt, NULL)) {
+                    mem_err(mem, "Unknown variant '%.*s' in enum '%.*s'",
+                            (int)v_len, v_str, (int)id_len, id_str);
+                    return MEM_NO_IDX;
+                }
+                if (pcnt == 0) {
+                    int vsid = sym_find(tab, mem, v_str, v_len);
+                    if (vsid >= 0) {
+                        return mem_alloc_ast(mem, AST_CONST_SYM, SYM_VAR_QUAL_MOD,
+                                             (uint16_t)vsid, MEM_NO_IDX, td->mod_id);
+                    }
+                    mem_err(mem, "Undefined unit variant '%.*s'", (int)v_len, v_str);
+                    return MEM_NO_IDX;
+                }
+                if (P->lex.cur.kind != TOK_LPAREN) {
+                    mem_err(mem, "Variant '%.*s.%.*s' expects %u payload argument(s)",
+                            (int)id_len, id_str, (int)v_len, v_str, (unsigned)pcnt);
+                    return MEM_NO_IDX;
+                }
+                lex_next(&P->lex); /* consume '(' */
+                uint16_t head = MEM_NO_IDX, tail = MEM_NO_IDX;
+                uint8_t  argc = 0;
+                if (P->lex.cur.kind != TOK_RPAREN) {
+                    while (!mem->has_error) {
+                        uint16_t arg  = parser_parse_expr(P, 0);
+                        uint16_t link = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, arg, MEM_NO_IDX);
+                        if (head == MEM_NO_IDX) head = link;
+                        else mem_get_ast_mut(mem, tail)->right = link;
+                        tail = link;
+                        argc++;
+                        if (P->lex.cur.kind == TOK_COMMA) lex_next(&P->lex);
+                        else break;
+                    }
+                }
+                if (P->lex.cur.kind != TOK_RPAREN) {
+                    mem_err(mem, "Expected ')' after arguments to '%.*s.%.*s'",
+                            (int)id_len, id_str, (int)v_len, v_str);
+                    return MEM_NO_IDX;
+                }
+                lex_next(&P->lex);
+                if (argc != pcnt) {
+                    mem_err(mem, "Variant '%.*s.%.*s' expects %u argument(s), got %u",
+                            (int)id_len, id_str, (int)v_len, v_str, (unsigned)pcnt, (unsigned)argc);
+                    return MEM_NO_IDX;
+                }
+                uint8_t c_sub = (uint8_t)(0x80u | ((v_tag & 0x07u) << 4u) | (pcnt & 0x0Fu));
+                return mem_alloc_ast(mem, AST_CONSTRUCT, c_sub, etid, head, MEM_NO_IDX);
+            }
+            if (etid != MEM_TYPE_VOID && etid < tab->type_count &&
+                tab->types[etid].is_consuming &&
+                tab->types[etid].parser_intr == INTR_PARSE_I64 &&
+                tab->types[etid].field_count > 0) {
+                const TypeDef *td = &tab->types[etid];
+                lex_next(&P->lex); /* consume '.' */
+                if (P->lex.cur.kind != TOK_IDENT &&
+                    !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                    mem_err(mem, "Expected enum variant name after '%.*s.'", (int)id_len, id_str);
+                    return MEM_NO_IDX;
+                }
+                const char *v_str = P->lex.src + P->lex.cur.off;
+                uint16_t    v_len = P->lex.cur.len;
+                lex_next(&P->lex);
+                for (uint8_t vi = 0; vi < td->field_count; ++vi) {
+                    const FieldDef *fd = &tab->fields[td->start_idx + vi];
+                    if (fd->name.len == v_len &&
+                        memcmp(mem_str_ptr(mem, fd->name), v_str, v_len) == 0) {
+                        uint16_t pidx = mem_alloc_pool(mem, 1);
+                        if (mem->has_error) return MEM_NO_IDX;
+                        mem_write_pool(mem, pidx, (double)(int16_t)fd->flat_offset);
+                        return mem_alloc_ast(mem, AST_LIT, (uint8_t)etid, pidx, 0, 0);
+                    }
+                }
+                mem_err(mem, "Unknown variant '%.*s' in enum '%.*s'",
+                        (int)v_len, v_str, (int)id_len, id_str);
+                return MEM_NO_IDX;
+            }
+        }
+
         /* 6.1 Single-parameter unparenthesized lambda `x => expr` */
         if (cur_op_meta(P) == INTR_LAMBDA) {
             return parse_lambda_from_ident(P, id_str, id_len);
         }
 
-        /* 6a. Control-flow constructs bound in `Library/bootstrap.math` */
+        /* 6a. Control-flow constructs (`try`/`catch`/`throw` & `Library/bootstrap.math` constructs) */
+        if (is_try_kw(id_str, id_len)) {
+            return parse_try_construct(P);
+        }
+        if (is_catch_kw(id_str, id_len)) {
+            mem_err(mem, "Unexpected 'catch' without preceding 'try' block");
+            return MEM_NO_IDX;
+        }
+        if (is_throw_kw(id_str, id_len)) {
+            return parse_throw_construct(P);
+        }
+        if (id_len == 6 && memcmp(id_str, "import", 6) == 0 &&
+            (P->lex.cur.kind == TOK_VAL || P->lex.cur.kind == TOK_IDENT || P->lex.cur.kind == TOK_LPAREN)) {
+            bool has_paren = (P->lex.cur.kind == TOK_LPAREN);
+            if (has_paren) lex_next(&P->lex);
+            StrSlice spec = { 0, 0 };
+            uint8_t imp_op = 250u;
+            if (P->lex.cur.kind == TOK_VAL && mem->str_type_id != 0 &&
+                val_get_type(mem, P->lex.cur.val) == mem->str_type_id) {
+                spec   = val_get_str(mem, P->lex.cur.val);
+                imp_op = 250u;
+                lex_next(&P->lex);
+            } else if (P->lex.cur.kind == TOK_IDENT ||
+                       (P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                spec   = mem_intern_str(mem, P->lex.src + P->lex.cur.off, P->lex.cur.len);
+                imp_op = 251u;
+                lex_next(&P->lex);
+            } else {
+                mem_err(mem, "Expected file path string or module name after 'import'");
+                return MEM_NO_IDX;
+            }
+            if (has_paren) {
+                if (P->lex.cur.kind != TOK_RPAREN) {
+                    mem_err(mem, "Expected ')' after import argument");
+                    return MEM_NO_IDX;
+                }
+                lex_next(&P->lex);
+            }
+            return mem_alloc_ast(mem, AST_INTRINSIC, imp_op, 0, spec.off, spec.len);
+        }
         if (fn_meta == INTR_IF) {
             return parse_if_construct(P, (uint16_t)sym_id);
         }
@@ -2947,6 +4150,65 @@ static uint16_t parse_nud(Parser *P) {
                 return mem_alloc_ast(mem, AST_CONSTRUCT, argc, st_tid, head, MEM_NO_IDX);
             }
 
+            /* Phase 5 & Phase 6 built-in language functions: print, println, assert, clock_ms, bc_steps, typeof */
+            if (container_type_spec == MEM_NO_IDX && !P->in_ext_body) {
+                if (id_len == 5 && memcmp(id_str, "print", 5) == 0) {
+                    return mem_alloc_ast(mem, AST_INTRINSIC, 246u, argc, head, 0);
+                }
+                if (id_len == 7 && memcmp(id_str, "println", 7) == 0) {
+                    return mem_alloc_ast(mem, AST_INTRINSIC, 247u, argc, head, 1);
+                }
+                if (id_len == 6 && memcmp(id_str, "assert", 6) == 0 && (argc == 1 || argc == 2)) {
+                    return mem_alloc_ast(mem, AST_INTRINSIC, 248u, argc, head, 0);
+                }
+                if (id_len == 8 && memcmp(id_str, "clock_ms", 8) == 0 && argc == 0) {
+                    return mem_alloc_ast(mem, AST_INTRINSIC, 249u, 0, MEM_NO_IDX, MEM_NO_IDX);
+                }
+                if (id_len == 8 && memcmp(id_str, "bc_steps", 8) == 0 && argc == 0) {
+                    return mem_alloc_ast(mem, AST_INTRINSIC, 252u, 0, MEM_NO_IDX, MEM_NO_IDX);
+                }
+                if (id_len == 9 && memcmp(id_str, "bc_disasm", 9) == 0 && argc == 1 && head != MEM_NO_IDX) {
+                    return mem_alloc_ast(mem, AST_INTRINSIC, 253u, 0,
+                                         mem_get_ast(mem, head)->left, MEM_NO_IDX);
+                }
+                if (id_len == 6 && memcmp(id_str, "typeof", 6) == 0 && argc == 1 && head != MEM_NO_IDX) {
+                    return mem_alloc_ast(mem, AST_INTRINSIC, (uint8_t)INTR_TYPE_NAME, 0,
+                                         mem_get_ast(mem, head)->left, MEM_NO_IDX);
+                }
+                if (sym_id < 0 || !sym_has_visible_func_ov(tab, (uint16_t)sym_id)) {
+                    uint16_t a1 = (head != MEM_NO_IDX) ? mem_get_ast(mem, head)->left : MEM_NO_IDX;
+                    uint16_t a2 = (head != MEM_NO_IDX && mem_get_ast(mem, head)->right != MEM_NO_IDX)
+                                  ? mem_get_ast(mem, mem_get_ast(mem, head)->right)->left : MEM_NO_IDX;
+                    if (id_len == 9 && memcmp(id_str, "read_file", 9) == 0 && argc == 1) {
+                        return mem_alloc_ast(mem, AST_INTRINSIC, 238u, MEM_NO_IDX, a1, MEM_NO_IDX);
+                    }
+                    if (id_len == 10 && memcmp(id_str, "write_file", 10) == 0 && argc == 2) {
+                        return mem_alloc_ast(mem, AST_INTRINSIC, 239u, MEM_NO_IDX, a1, a2);
+                    }
+                    if (id_len == 11 && memcmp(id_str, "append_file", 11) == 0 && argc == 2) {
+                        return mem_alloc_ast(mem, AST_INTRINSIC, 240u, MEM_NO_IDX, a1, a2);
+                    }
+                    if (id_len == 11 && memcmp(id_str, "file_exists", 11) == 0 && argc == 1) {
+                        return mem_alloc_ast(mem, AST_INTRINSIC, 241u, MEM_NO_IDX, a1, MEM_NO_IDX);
+                    }
+                    if (id_len == 10 && memcmp(id_str, "json_parse", 10) == 0 && argc == 1) {
+                        return mem_alloc_ast(mem, AST_INTRINSIC, 242u, MEM_NO_IDX, a1, MEM_NO_IDX);
+                    }
+                    if (((id_len == 14 && memcmp(id_str, "json_stringify", 14) == 0) ||
+                         (id_len == 7  && memcmp(id_str, "to_json", 7) == 0)) && (argc == 1 || argc == 2)) {
+                        return mem_alloc_ast(mem, AST_INTRINSIC, 243u, MEM_NO_IDX, a1, a2);
+                    }
+                    if (id_len == 11 && memcmp(id_str, "json_pretty", 11) == 0 && (argc == 1 || argc == 2)) {
+                        if (argc == 1) {
+                            uint16_t two_p = mem_alloc_pool(mem, 1);
+                            if (!mem->has_error) mem_write_pool(mem, two_p, 2.0);
+                            a2 = mem_alloc_ast(mem, AST_LIT, mem->fast_real_type, two_p, 0, 0);
+                        }
+                        return mem_alloc_ast(mem, AST_INTRINSIC, 243u, MEM_NO_IDX, a1, a2);
+                    }
+                }
+            }
+
             if (sym_id < 0 || !sym_has_visible_func_ov(tab, (uint16_t)sym_id)) {
                 if (sym_id >= 0) {
                     uint16_t priv_mod = MEM_NO_IDX;
@@ -3082,10 +4344,13 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
     if (mem->has_error || left == MEM_NO_IDX) return MEM_NO_IDX;
 
     while (!mem->has_error) {
-        /* Direct call on lambda or function expression: `((x) => x^2)(5)` */
+        /* Direct call on lambda, scope block, or function-returning expression:
+           `((x) => x^2)(5)`, `{ scale := 10 ; (x) => x * scale }(5)`, `make_adder(10)(5)` */
         if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN && 95 >= min_prec &&
             (mem_get_ast(mem, left)->kind == AST_LAMBDA ||
-             mem_get_ast(mem, left)->kind == AST_FN_CALL)) {
+             mem_get_ast(mem, left)->kind == AST_FN_CALL ||
+             mem_get_ast(mem, left)->kind == AST_INDEX ||
+             ast_is_fn_expr_rec(mem, tab, P, left, 0))) {
             left = parse_fn_call_step(P, left);
             P->last_was_block = false;
             continue;
@@ -3180,6 +4445,9 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
                     if (kw == INTR_OR_BRANCH || kw == INTR_ELSE_BRANCH || kw == INTR_CASE_BRANCH) {
                         break;
                     }
+                    if (is_catch_kw(P->lex.src + P->lex.cur.off, P->lex.cur.len)) {
+                        break;
+                    }
                 }
 
                 uint16_t right          = MEM_NO_IDX;
@@ -3209,7 +4477,7 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
                     }
                 }
                 if (right == MEM_NO_IDX) {
-                    right = parser_parse_expr(P, next_min);
+                    right = parser_parse_expr(P, (mtag == INTR_STORE) ? 2 : next_min);
                     if (is_in_op && rhs_unparen && dual_unit_sid >= 0 && right != MEM_NO_IDX) {
                         AstKind rk = (AstKind)mem_get_ast(mem, right)->kind;
                         if (rk == AST_SLOT_LOAD) {

@@ -17,6 +17,10 @@
 /*Construct if, or, then, else, default, switch, case, for, jump, run, break, continue, return*/
 bool hardcode_is_reserved_kw(const SymTable *tab, const MemArena *mem,
                              const char *name, uint16_t len) {
+    if ((len == 3 && memcmp(name, "try", 3) == 0) ||
+        (len == 5 && (memcmp(name, "catch", 5) == 0 || memcmp(name, "throw", 5) == 0))) {
+        return true;
+    }
     int sid = sym_find(tab, mem, name, len);
     if (sid < 0) return false;
     uint8_t m = sym_active_meta_tag(tab, (uint16_t)sid, FIX_FUNC);
@@ -236,6 +240,9 @@ bool hardcode_can_start_newline_stmt(const Parser *P) {
 
     uint8_t kw = token_func_meta_hc(P, t);
     if (kw == INTR_OR_BRANCH || kw == INTR_ELSE_BRANCH || kw == INTR_CASE_BRANCH) {
+        return false;
+    }
+    if (t.len == 5 && memcmp(P->lex.src + t.off, "catch", 5) == 0) {
         return false;
     }
 
@@ -1639,7 +1646,7 @@ Value hardcode_eval_for_in_ast(MemArena *mem, SymTable *tab,
             if (elem_tid != 0 && elem_tid < tab->type_count &&
                 !tab->types[elem_tid].is_consuming &&
                 elem_tid != mem->vec_type_id && elem_tid != mem->mat_type_id &&
-                elem_tid != mem->fn_type_id) {
+                elem_tid != mem->fn_type_id && elem_tid != mem->map_type_id) {
                 item = val_clone_comp(mem, item, stride);
             }
             if (has_idx) {
@@ -1901,6 +1908,11 @@ Value hardcode_eval_unpack_elem_ast(MemArena *mem, const SymTable *tab,
                              val_make_comp(mem, fd->type_id, f_pidx, tab->types[fd->type_id].flat_size),
                              uid);
     }
+    if (fd->type_id == mem->str_type_id && mem->str_type_id != 0) {
+        uint32_t packed = (uint32_t)mem_read_pool(mem, f_pidx);
+        StrSlice s = { (uint16_t)(packed >> 16u), (uint16_t)(packed & 0xFFFFu) };
+        return val_make_str(mem, fd->type_id, s);
+    }
     return val_make_f64_unit(mem, fd->type_id ? fd->type_id : mem->fast_real_type, uid,
                              mem_read_pool(mem, f_pidx));
 }
@@ -1925,6 +1937,19 @@ Value hardcode_eval_switch_eq_ast(MemArena *mem, SymTable *tab,
     /* sub == 1: Struct type check (`ta == n->ref`) */
     if (n->sub == 1) {
         return val_make_f64(mem, mem->fast_real_type, (ta == n->ref) ? 1.0 : 0.0);
+    }
+
+    /* sub == 4: Tagged Union (ADT) type + variant tag check (`ref = (etid << 8) | v_tag`) */
+    if (n->sub == 4) {
+        uint16_t exp_tid = (uint16_t)(n->ref >> 8u);
+        uint8_t  exp_tag = (uint8_t)(n->ref & 0xFFu);
+        bool ok = false;
+        if (ta == exp_tid && ta > 0 && ta < tab->type_count && !tab->types[ta].is_consuming) {
+            uint16_t pidx = val_get_pool_idx(a);
+            int got_tag = (int)llround(mem_read_pool(mem, pidx));
+            ok = (got_tag == (int)exp_tag);
+        }
+        return val_make_f64(mem, mem->fast_real_type, ok ? 1.0 : 0.0);
     }
 
     /* sub == 3: Vector / 1D matrix length check (`len == n->ref`) */

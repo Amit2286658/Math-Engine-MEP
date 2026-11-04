@@ -114,6 +114,23 @@ static int ext_find_duplicate_overload(const SymTable *tab, uint16_t sym_id, uin
     return -1;
 }
 
+static bool ext_peek_is_kw_type_decl(const ExtLoader *L, uint16_t pos) {
+    if (pos >= L->len || !lex_is_ident_start((unsigned char)L->src[pos])) return false;
+    uint16_t p = pos;
+    while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+    uint16_t klen = (uint16_t)(p - pos);
+    bool is_enum   = (klen == 4 && memcmp(L->src + pos, "enum", 4) == 0);
+    bool is_struct = (klen == 6 && memcmp(L->src + pos, "struct", 6) == 0);
+    if (!is_enum && !is_struct) return false;
+    while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+    if (p >= L->len || !lex_is_ident_start((unsigned char)L->src[p])) return false;
+    while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+
+    while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+    if (p >= L->len) return false;
+    return is_enum ? (L->src[p] == '{' || L->src[p] == '(') : (L->src[p] == '(');
+}
+
 static void ext_parse_type_decl(ExtLoader *L, uint8_t decl_flags) {
     MemArena *mem = L->mem;
     SymTable *tab = L->tab;
@@ -121,9 +138,25 @@ static void ext_parse_type_decl(ExtLoader *L, uint8_t decl_flags) {
         mem_err(mem, "Modifiers 'const' and 'mut' cannot be applied to '$type' declarations");
         return;
     }
-    L->pos++; /* skip '$' */
+    if (L->pos < L->len && L->src[L->pos] == '$') {
+        L->pos++; /* skip '$' */
+    }
     StrSlice tname = ext_read_ident(L);
     if (mem->has_error || tname.len == 0) return;
+
+    bool is_enum_kw = (tname.len == 4 && memcmp(mem_str_ptr(mem, tname), "enum", 4) == 0);
+    bool is_struct_kw = (tname.len == 6 && memcmp(mem_str_ptr(mem, tname), "struct", 6) == 0);
+    if (is_enum_kw || is_struct_kw) {
+        uint16_t next_p = L->pos;
+        while (next_p < L->len && (L->src[next_p] == ' ' || L->src[next_p] == '\t')) next_p++;
+        if (next_p < L->len && lex_is_ident_start((unsigned char)L->src[next_p])) {
+            tname = ext_read_ident(L);
+            if (mem->has_error || tname.len == 0) return;
+        } else {
+            is_enum_kw   = false;
+            is_struct_kw = false;
+        }
+    }
 
     /* Reject duplicate type declarations */
     for (uint16_t i = 1; i < tab->type_count; ++i) {
@@ -323,8 +356,238 @@ static void ext_parse_type_decl(ExtLoader *L, uint8_t decl_flags) {
             StrSlice iname = ext_read_ident(L);
             td->parser_intr = (uint8_t)sym_lookup_intrinsic(mem_str_ptr(mem, iname), iname.len);
         }
+    } else if (ext_match_char(L, '{') || (is_enum_kw && ext_match_char(L, '('))) {
+        char close_ch = (L->src[L->pos - 1] == '(') ? ')' : '}';
+        /* Peek ahead to determine if any variant carries payload parameters `Variant(...)` */
+        bool has_payload = false;
+        {
+            uint16_t scan = L->pos;
+            int depth = 0;
+            while (scan < L->len) {
+                char c = L->src[scan];
+                if (c == close_ch && depth == 0) break;
+                if (c == '(') {
+                    has_payload = true;
+                    break;
+                }
+                if (c == '{' || c == '[') depth++;
+                else if (c == '}' || c == ']' || c == ')') { if (depth > 0) depth--; }
+                scan++;
+            }
+        }
+
+        if (!has_payload) {
+            td->is_consuming = 1;
+            td->flat_size    = 1;
+            td->parser_intr  = INTR_PARSE_I64;
+            td->start_idx    = tab->field_count;
+            uint8_t vcount   = 0;
+            long    next_val = 0;
+
+            while (L->pos < L->len && !mem->has_error) {
+                ext_skip_ws(L);
+                if (ext_match_char(L, close_ch)) break;
+                StrSlice vname = ext_read_ident(L);
+                if (mem->has_error || vname.len == 0) {
+                    mem_err(mem, "Expected variant identifier in enum '$%.*s'",
+                            (int)tname.len, mem_str_ptr(mem, tname));
+                    return;
+                }
+                ext_skip_ws(L);
+                if (ext_match_char(L, '=')) {
+                    ext_skip_ws(L);
+                    char *endp = NULL;
+                    long parsed = strtol(L->src + L->pos, &endp, 10);
+                    if (endp == L->src + L->pos) {
+                        mem_err(mem, "Expected integer value after '=' for enum variant '%.*s'",
+                                (int)vname.len, mem_str_ptr(mem, vname));
+                        return;
+                    }
+                    L->pos   = (uint16_t)(endp - L->src);
+                    next_val = parsed;
+                }
+                if (tab->field_count >= SYM_MAX_FIELDS) {
+                    mem_err(mem, "Struct/enum field table overflow (max %d)", SYM_MAX_FIELDS);
+                    return;
+                }
+                FieldDef *fd    = &tab->fields[tab->field_count++];
+                fd->name        = vname;
+                fd->type_id     = tid;
+                fd->flat_offset = (uint16_t)(int16_t)next_val;
+
+                uint16_t vsym = sym_intern(tab, mem, vname);
+                if (mem->has_error) return;
+                Value vval = val_make_f64(mem, tid, (double)next_val);
+                uint8_t vflags = (uint8_t)((decl_flags & SYM_VAR_PRIVATE) | SYM_VAR_EXPLICIT_CONST);
+                (void)sym_set_or_add_var(tab, mem, vsym, L->cur_mod, vval, tid, 0, vflags, true);
+                if (mem->has_error) return;
+
+                next_val++;
+                vcount++;
+                ext_skip_ws(L);
+                if (!ext_match_char(L, ',')) {
+                    (void)ext_match_char(L, ';');
+                }
+            }
+            if (vcount == 0 && !mem->has_error) {
+                mem_err(mem, "Enum '$%.*s' must declare at least one variant",
+                        (int)tname.len, mem_str_ptr(mem, tname));
+                return;
+            }
+            td->field_count = vcount;
+            if (tid < 64u) mem->type_stride[tid] = 1u;
+        } else {
+            /* Tagged Union / Algebraic Data Type (`$enum Result { Ok(val: real), Err(msg: str) }`) */
+            td->is_consuming = 0;
+            td->parser_intr  = INTR_PARSE_I64;
+            td->start_idx    = tab->field_count;
+            uint16_t max_payload_slots = 1;
+            uint8_t  total_fdefs       = 0;
+            uint8_t  v_idx             = 0;
+            uint16_t unit_var_syms[16];
+            uint8_t  unit_var_tags[16];
+            uint8_t  unit_var_cnt      = 0;
+
+            while (L->pos < L->len && !mem->has_error) {
+                ext_skip_ws(L);
+                if (ext_match_char(L, close_ch)) break;
+                StrSlice vname = ext_read_ident(L);
+                if (mem->has_error || vname.len == 0) {
+                    mem_err(mem, "Expected variant identifier in enum '$%.*s'",
+                            (int)tname.len, mem_str_ptr(mem, tname));
+                    return;
+                }
+                if (v_idx >= 15u) {
+                    mem_err(mem, "Tagged union '$%.*s' supports at most 15 variants",
+                            (int)tname.len, mem_str_ptr(mem, tname));
+                    return;
+                }
+                if (tab->field_count >= SYM_MAX_FIELDS) {
+                    mem_err(mem, "Struct/enum field table overflow (max %d)", SYM_MAX_FIELDS);
+                    return;
+                }
+                uint16_t vfd_idx = tab->field_count++;
+                total_fdefs++;
+                tab->fields[vfd_idx].name    = vname;
+                tab->fields[vfd_idx].type_id = tid;
+
+                uint8_t  pcnt  = 0;
+                uint16_t p_off = 1;
+                uint16_t ptypes[8];
+                ext_skip_ws(L);
+                if (ext_match_char(L, '(')) {
+                    while (L->pos < L->len && !mem->has_error) {
+                        ext_skip_ws(L);
+                        if (ext_match_char(L, ')')) break;
+                        if (pcnt >= 8u) {
+                            mem_err(mem, "Enum variant '%.*s' supports at most 8 payload fields",
+                                    (int)vname.len, mem_str_ptr(mem, vname));
+                            return;
+                        }
+                        StrSlice pname = ext_read_ident(L);
+                        uint16_t ptid  = mem->fast_real_type;
+                        ext_skip_ws(L);
+                        if (ext_match_char(L, ':')) {
+                            StrSlice pts = ext_read_ident(L);
+                            ptid = sym_find_type(tab, mem, mem_str_ptr(mem, pts), pts.len);
+                            if (ptid == MEM_TYPE_VOID || ptid == SYM_TYPE_ANY) {
+                                mem_err(mem, "Unknown payload field type '%.*s' in variant '%.*s'",
+                                        (int)pts.len, mem_str_ptr(mem, pts),
+                                        (int)vname.len, mem_str_ptr(mem, vname));
+                                return;
+                            }
+                        }
+                        if (tab->field_count >= SYM_MAX_FIELDS) {
+                            mem_err(mem, "Struct/enum field table overflow (max %d)", SYM_MAX_FIELDS);
+                            return;
+                        }
+                        FieldDef *pfd   = &tab->fields[tab->field_count++];
+                        total_fdefs++;
+                        pfd->name        = pname;
+                        pfd->type_id     = ptid;
+                        pfd->flat_offset = p_off;
+                        ptypes[pcnt++]   = ptid;
+                        p_off = (uint16_t)(p_off + tab->types[ptid].flat_size);
+                        ext_skip_ws(L);
+                        (void)ext_match_char(L, ',');
+                    }
+                }
+                tab->fields[vfd_idx].flat_offset = (uint16_t)(((uint16_t)pcnt << 8u) | (uint16_t)v_idx);
+                if ((uint16_t)(p_off - 1u) > max_payload_slots) {
+                    max_payload_slots = (uint16_t)(p_off - 1u);
+                }
+
+                uint16_t vsym = sym_intern(tab, mem, vname);
+                if (mem->has_error) return;
+                if (pcnt == 0) {
+                    if (unit_var_cnt < 16u) {
+                        unit_var_syms[unit_var_cnt] = vsym;
+                        unit_var_tags[unit_var_cnt] = v_idx;
+                        unit_var_cnt++;
+                    }
+                } else {
+                    /* Synthesize constructor overload `VariantName(p0, ...) -> EnumT` */
+                    if (tab->overload_count < SYM_MAX_OVERLOADS) {
+                        uint16_t head = MEM_NO_IDX;
+                        uint16_t tail = MEM_NO_IDX;
+                        for (uint8_t pi = 0; pi < pcnt; ++pi) {
+                            uint16_t sload = mem_alloc_ast(mem, AST_SLOT_LOAD, pi, 0, 0, 0);
+                            uint16_t link  = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, sload, MEM_NO_IDX);
+                            if (head == MEM_NO_IDX) head = link;
+                            else mem_get_ast_mut(mem, tail)->right = link;
+                            tail = link;
+                        }
+                        uint8_t c_sub = (uint8_t)(0x80u | ((v_idx & 0x07u) << 4u) | (pcnt & 0x0Fu));
+                        uint16_t body_ast = mem_alloc_ast(mem, AST_CONSTRUCT, c_sub, tid, head, MEM_NO_IDX);
+                        uint16_t ov_idx   = tab->overload_count++;
+                        OpOverload *ov    = &tab->overloads[ov_idx];
+                        memset(ov, 0, sizeof(*ov));
+                        ov->sym_id      = vsym;
+                        ov->mod_id      = L->cur_mod;
+                        ov->fixity      = FIX_FUNC;
+                        ov->param_count = pcnt;
+                        ov->local_count = pcnt;
+                        ov->ret_type    = (uint8_t)tid;
+                        ov->ret_unit    = SYM_UNIT_OMITTED;
+                        ov->reserved    = (decl_flags & SYM_VAR_PRIVATE) ? SYM_OV_PRIVATE : 0;
+                        for (uint8_t pi = 0; pi < pcnt; ++pi) {
+                            ov->param_types[pi] = (uint8_t)ptypes[pi];
+                            ov->param_units[pi] = SYM_UNIT_OMITTED;
+                        }
+                        ov->body_ast = body_ast;
+                        sym_link_overload(tab, ov_idx);
+                    }
+                }
+
+                v_idx++;
+                ext_skip_ws(L);
+                if (!ext_match_char(L, ',')) {
+                    (void)ext_match_char(L, ';');
+                }
+            }
+            if (v_idx == 0 && !mem->has_error) {
+                mem_err(mem, "Enum '$%.*s' must declare at least one variant",
+                        (int)tname.len, mem_str_ptr(mem, tname));
+                return;
+            }
+            td->field_count = total_fdefs;
+            td->flat_size   = (uint16_t)(1u + max_payload_slots);
+            if (tid < 64u) mem->type_stride[tid] = (uint8_t)td->flat_size;
+
+            for (uint8_t ui = 0; ui < unit_var_cnt; ++ui) {
+                uint16_t pidx = mem_alloc_pool(mem, td->flat_size);
+                if (mem->has_error) return;
+                for (uint16_t k = 0; k < td->flat_size; ++k) {
+                    mem_write_pool(mem, (uint16_t)(pidx + k), 0.0);
+                }
+                mem_write_pool(mem, pidx, (double)unit_var_tags[ui]);
+                Value uval = val_make_comp(mem, tid, pidx, td->flat_size);
+                uint8_t vflags = (uint8_t)((decl_flags & SYM_VAR_PRIVATE) | SYM_VAR_EXPLICIT_CONST);
+                (void)sym_set_or_add_var(tab, mem, unit_var_syms[ui], L->cur_mod, uval, tid, 0, vflags, true);
+            }
+        }
     } else {
-        mem_err(mem, "Expected '~' (consuming/container) or '(' (struct) in type declaration");
+        mem_err(mem, "Expected '~' (consuming/container), '(' (struct), or '{' (enum) in type declaration");
     }
 }
 
@@ -469,9 +732,22 @@ static void ext_compile_body(ExtLoader *L, OpOverload *ov, StrSlice *pnames) {
         parser_add_local(&P, mem_str_ptr(mem, pnames[i]), pnames[i].len, ov->param_types[i]);
     }
 
+    uint16_t ast_before = mem->ast_count;
     lex_next(&P.lex);
     int min_prec = (P.lex.cur.kind == TOK_LBRACE) ? 0 : 2;
     uint16_t body_root = parser_parse_expr(&P, min_prec);
+    if (mem->fn_type_id != 0 && !mem->has_error) {
+        for (uint16_t ai = ast_before; ai < mem->ast_count; ++ai) {
+            const AstNode *an = mem_get_ast(mem, ai);
+            if (an->kind == AST_FN_CALL && an->left != MEM_NO_IDX) {
+                const AstNode * target_n = mem_get_ast(mem, an->left);
+                if (target_n->kind == AST_SLOT_LOAD && target_n->sub < ov->param_count &&
+                    ov->param_types[target_n->sub] == (uint8_t)mem->fast_real_type) {
+                    ov->param_types[target_n->sub] = (uint8_t)mem->fn_type_id;
+                }
+            }
+        }
+    }
     (void)parser_check_labels(&P);
     ov->body_ast    = body_root;
     ov->local_count = P.local_count;
@@ -517,7 +793,15 @@ static bool ext_body_starts_with_sym_intrinsic(ExtLoader *L) {
     return (L->pos + 5 <= L->len && memcmp(L->src + L->pos, "@sym_", 5) == 0);
 }
 
+static void ext_parse_sym_decl_ex(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags,
+                                  bool allow_redef, uint16_t assoc_type_id);
+
 static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags, bool allow_redef) {
+    ext_parse_sym_decl_ex(L, sym_id, decl_flags, allow_redef, 0);
+}
+
+static void ext_parse_sym_decl_ex(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags,
+                                  bool allow_redef, uint16_t assoc_type_id) {
     MemArena *mem = L->mem;
     SymTable *tab = L->tab;
     ext_skip_ws(L);
@@ -652,7 +936,11 @@ static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags
                 break;
             }
         } else {
-            ptypes[pcount] = mem->fast_real_type ? mem->fast_real_type : 1;
+            if (pcount == 0 && assoc_type_id != 0) {
+                ptypes[pcount] = assoc_type_id;
+            } else {
+                ptypes[pcount] = mem->fast_real_type ? mem->fast_real_type : 1;
+            }
             punits[pcount] = SYM_UNIT_OMITTED;
         }
 
@@ -729,6 +1017,7 @@ static void ext_parse_sym_decl(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags
     uint16_t ov_idx = 0;
     if (dup_idx >= 0) {
         ov_idx = (uint16_t)dup_idx;
+        if (ov_idx < 2048u) mem->ov_bc_entry[ov_idx] = 0;
     } else {
         if (tab->overload_count >= SYM_MAX_OVERLOADS) {
             mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
@@ -999,6 +1288,21 @@ static bool ext_store_op_active(const SymTable *tab) {
     return false;
 }
 
+static uint16_t ext_skip_opt_fn_kw(const ExtLoader *L, uint16_t pos) {
+    if (pos >= L->len) return pos;
+    uint16_t p = pos;
+    if (L->src[p] == '$') p++;
+    if (p + 2 < L->len && L->src[p] == 'f' && L->src[p + 1] == 'n' &&
+        !lex_is_ident_cont((unsigned char)L->src[p + 2])) {
+        uint16_t q = (uint16_t)(p + 2);
+        while (q < L->len && (L->src[q] == ' ' || L->src[q] == '\t')) q++;
+        if (q < L->len && lex_is_ident_start((unsigned char)L->src[q])) {
+            return q;
+        }
+    }
+    return pos;
+}
+
 static bool ext_peek_is_fn_decl(const ExtLoader *L, uint16_t pos) {
     if (pos >= L->len || !lex_is_ident_start((unsigned char)L->src[pos])) return false;
     uint16_t id_start = pos;
@@ -1008,6 +1312,15 @@ static bool ext_peek_is_fn_decl(const ExtLoader *L, uint16_t pos) {
     if (ext_is_mod_kw(L->src + id_start, id_len)) {
         return false;
     }
+    /* Support `Type::method(...) = ...` method declarations */
+    if (p + 2 < L->len && L->src[p] == ':' && L->src[p + 1] == ':' &&
+        lex_is_ident_start((unsigned char)L->src[p + 2])) {
+        if (sym_find_type(L->tab, L->mem, L->src + id_start, id_len) != MEM_TYPE_VOID) {
+            p = (uint16_t)(p + 2);
+            while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+        }
+    }
+
 
     while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
     if (p >= L->len) return false;
@@ -1030,6 +1343,179 @@ static bool ext_peek_is_fn_decl(const ExtLoader *L, uint16_t pos) {
     if (q + 1 < L->len && L->src[q] == '-' && L->src[q + 1] == '>') return true;
     if (L->src[q] == ':' && !(q + 1 < L->len && L->src[q + 1] == '=')) return true;
     if (L->src[q] == '=' && !(q + 1 < L->len && (L->src[q + 1] == '=' || L->src[q + 1] == '>'))) return true;
+    return false;
+}
+
+static bool ext_peek_is_var_decl(const ExtLoader *L, uint16_t pos) {
+    if (pos >= L->len || !lex_is_ident_start((unsigned char)L->src[pos])) return false;
+    uint16_t id_start = pos;
+    uint16_t p        = pos;
+    while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+    uint16_t id_len = (uint16_t)(p - id_start);
+    if (ext_is_mod_kw(L->src + id_start, id_len) ||
+        sym_is_reserved_kw(L->tab, L->mem, L->src + id_start, id_len)) {
+        return false;
+    }
+    while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+    if (p >= L->len) return false;
+    if (L->src[p] == '=' && !(p + 1 < L->len && (L->src[p + 1] == '=' || L->src[p + 1] == '>'))) {
+        return true;
+    }
+    if (L->src[p] == ':') {
+        if (p + 1 < L->len && L->src[p + 1] == '=') return true;
+        p++;
+        while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+        if (p >= L->len || !lex_is_ident_start((unsigned char)L->src[p])) return false;
+        while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+        while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+        if (p < L->len && L->src[p] == ',') {
+            p++;
+            while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+            if (p >= L->len || !lex_is_ident_start((unsigned char)L->src[p])) return false;
+            while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+            while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+        }
+        if (p < L->len && L->src[p] == '=' &&
+            !(p + 1 < L->len && (L->src[p + 1] == '=' || L->src[p + 1] == '>'))) {
+            return true;
+        }
+        if (p + 1 < L->len && L->src[p] == ':' && L->src[p + 1] == '=') {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ext_peek_is_import_decl(const ExtLoader *L, uint16_t pos) {
+    if (pos + 6 > L->len) return false;
+    if (memcmp(L->src + pos, "import", 6) != 0) return false;
+    if (pos + 6 < L->len && lex_is_ident_cont((unsigned char)L->src[pos + 6])) return false;
+    uint16_t p = ext_skip_ws_at(L->src, (uint16_t)(pos + 6), L->len);
+    if (p >= L->len) return false;
+    return (L->src[p] == '"' || L->src[p] == '(' || lex_is_ident_start((unsigned char)L->src[p]));
+}
+
+bool ext_import_module_or_file(MemArena *mem, SymTable *tab,
+                               const char *spec, uint16_t spec_len,
+                               bool is_quoted_path, Value *out_val) {
+    if (out_val) *out_val = val_make_f64(mem, mem->fast_real_type, 1.0);
+    if (!mem || !tab || !spec || spec_len == 0) {
+        if (mem) mem_err(mem, "Empty module or file path in 'import'");
+        return false;
+    }
+
+    /* 1. If unquoted module identifier matches an already-loaded module, enable it */
+    if (!is_quoted_path) {
+        int mid = sym_find_mod_slice(tab, mem, spec, spec_len);
+        if (mid >= 0) {
+            sym_mod_active_mut(tab)[mid] = 1u;
+            return true;
+        }
+    }
+
+    char raw_path[120];
+    uint16_t rlen = (spec_len < sizeof(raw_path) - 6u) ? spec_len : (uint16_t)(sizeof(raw_path) - 6u);
+    memcpy(raw_path, spec, rlen);
+    raw_path[rlen] = '\0';
+
+    bool has_ext = (rlen >= 5 && memcmp(raw_path + rlen - 5, ".math", 5) == 0);
+    char with_ext[128];
+    if (has_ext) {
+        snprintf(with_ext, sizeof(with_ext), "%s", raw_path);
+    } else {
+        snprintf(with_ext, sizeof(with_ext), "%s.math", raw_path);
+    }
+
+    char cands[6][256];
+    int  cand_cnt = 0;
+    snprintf(cands[cand_cnt++], sizeof(cands[0]), "%s", with_ext);
+    if (!has_ext) {
+        snprintf(cands[cand_cnt++], sizeof(cands[0]), "%s", raw_path);
+    }
+    if (mem->import_dir[0] != '\0') {
+        snprintf(cands[cand_cnt++], sizeof(cands[0]), "%s/%s", mem->import_dir, with_ext);
+        if (!has_ext) {
+            snprintf(cands[cand_cnt++], sizeof(cands[0]), "%s/%s", mem->import_dir, raw_path);
+        }
+    }
+    snprintf(cands[cand_cnt++], sizeof(cands[0]), "Library/%s", with_ext);
+    snprintf(cands[cand_cnt++], sizeof(cands[0]), "patches/%s", with_ext);
+
+    FILE *fp = NULL;
+    const char *chosen = NULL;
+    for (int i = 0; i < cand_cnt; ++i) {
+        fp = fopen(cands[i], "rb");
+        if (fp != NULL) {
+            chosen = cands[i];
+            break;
+        }
+    }
+    if (!fp || !chosen) {
+        mem_err(mem, "Cannot find imported module or file '%.*s'", (int)spec_len, spec);
+        return false;
+    }
+
+    /* Extract normalized key (last 63 chars of chosen path) for include-once guard */
+    size_t clen = strlen(chosen);
+    const char *key = (clen > 63u) ? (chosen + (clen - 63u)) : chosen;
+    for (uint8_t i = 0; i < mem->imported_file_count; ++i) {
+        if (strcmp(mem->imported_files[i], key) == 0) {
+            fclose(fp);
+            return true; /* Already imported (idempotent / cycle-safe) */
+        }
+    }
+    if (mem->imported_file_count < 16u) {
+        snprintf(mem->imported_files[mem->imported_file_count++], 64, "%.63s", key);
+    }
+
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        mem_err(mem, "Failed to seek imported file '%s'", chosen);
+        return false;
+    }
+    long fsz = ftell(fp);
+    if (fsz < 0 || fsz > 65534L) {
+        fclose(fp);
+        mem_err(mem, "Imported file '%s' size (%ld) out of range", chosen, fsz);
+        return false;
+    }
+    rewind(fp);
+    char *fbuf = (char *)malloc((size_t)fsz + 1u);
+    if (!fbuf) {
+        fclose(fp);
+        mem_err(mem, "Out of memory reading imported file '%s'", chosen);
+        return false;
+    }
+    size_t nread = fread(fbuf, 1, (size_t)fsz, fp);
+    fclose(fp);
+    fbuf[nread] = '\0';
+
+    /* Derive default module stem from filename (e.g. "dir/foo.math" -> "foo") */
+    const char *slash = strrchr(chosen, '/');
+    const char *base  = slash ? (slash + 1) : chosen;
+    char stem[32];
+    size_t blen = 0;
+    while (base[blen] != '\0' && base[blen] != '.' && blen + 1u < sizeof(stem)) {
+        stem[blen] = base[blen];
+        blen++;
+    }
+    stem[blen] = '\0';
+    if (stem[0] == '\0') snprintf(stem, sizeof(stem), "default");
+
+    uint16_t saved_mem_mod = mem->cur_mod;
+    uint16_t saved_tab_mod = tab->cur_mod;
+    Value imp_val = val_void();
+    bool ok = ext_eval_slice(mem, tab, stem, true, fbuf, (uint16_t)nread, &imp_val);
+    free(fbuf);
+    mem->cur_mod = saved_mem_mod;
+    tab->cur_mod = saved_tab_mod;
+    if (ok && !mem->has_error) {
+        mem_snapshot_perm(mem);
+        if (out_val && val_get_type(mem, imp_val) != MEM_TYPE_VOID) {
+            *out_val = imp_val;
+        }
+        return true;
+    }
     return false;
 }
 
@@ -1058,8 +1544,13 @@ static bool ext_is_top_level_decl_at(const ExtLoader *L, uint16_t pos) {
     uint16_t am = ext_peek_modifiers(L, p, &dummy_flags, &dummy_mods, false);
     if (am >= L->len) return false;
 
+    (void)ext_peek_is_var_decl;
+    uint16_t fn_pos = ext_skip_opt_fn_kw(L, am);
+    if (fn_pos != am && ext_peek_is_fn_decl(L, fn_pos)) return true;
     char c = L->src[am];
     if (c == '$') return true;
+    if (ext_peek_is_kw_type_decl(L, am))            return true;
+    if (ext_peek_is_import_decl(L, am))             return true;
     if (c == '"' && ext_peek_is_quoted_decl(L, am)) return true;
     if (c == '(' && ext_peek_is_op_decl(L, am))     return true;
     if (lex_is_ident_start((unsigned char)c) && ext_peek_is_fn_decl(L, am)) return true;
@@ -1185,6 +1676,34 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
             }
         }
 
+        /* 1b. `import "file.math"` or `import mod_name` Directive */
+        if (ext_peek_is_import_decl(&L, L.pos)) {
+            L.pos = (uint16_t)(L.pos + 6);
+            ext_skip_ws(&L);
+            bool has_paren = ext_match_char(&L, '(');
+            ext_skip_ws(&L);
+            StrSlice spec = { 0, 0 };
+            bool is_quoted = false;
+            if (L.pos < L.len && L.src[L.pos] == '"') {
+                is_quoted = true;
+                spec = ext_read_quoted(&L);
+            } else {
+                spec = ext_read_ident(&L);
+            }
+            if (has_paren) {
+                ext_skip_ws(&L);
+                if (!ext_match_char(&L, ')')) {
+                    mem_err(mem, "Expected ')' after import argument");
+                    break;
+                }
+            }
+            if (mem->has_error) break;
+            if (!ext_import_module_or_file(mem, tab, mem_str_ptr(mem, spec), spec.len, is_quoted, &last_val)) {
+                break;
+            }
+            continue;
+        }
+
         /* 2. `<[dep]` Dependency Header */
         if (L.src[L.pos] == '<' && L.pos + 1 < L.len && L.src[L.pos + 1] == '[') {
             L.pos = (uint16_t)(L.pos + 2);
@@ -1252,10 +1771,14 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
         if (mem->has_error) break;
 
         if (after_mods < L.len) {
+            uint16_t fn_pos = ext_skip_opt_fn_kw(&L, after_mods);
+            if (fn_pos != after_mods && ext_peek_is_fn_decl(&L, fn_pos)) {
+                after_mods = fn_pos;
+            }
             char mc = L.src[after_mods];
 
-            /* 4a. `$type` Declaration */
-            if (mc == '$') {
+            /* 4a. `$type`, `$struct`, `$enum`, `struct`, or `enum` Declaration */
+            if (mc == '$' || ext_peek_is_kw_type_decl(&L, after_mods)) {
                 L.pos = after_mods;
                 ext_parse_type_decl(&L, decl_flags);
                 if (!mem->has_error) mem_snapshot_perm(mem);
@@ -1274,14 +1797,21 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
                 continue;
             }
 
-            /* 4c. Unquoted Function or Prefix Operator Declaration (`fn(...) = ...`) */
+            /* 4c. Unquoted Function, Type Method (`Type::fn(self) = ...`), or Prefix Operator Declaration */
             if (lex_is_ident_start((unsigned char)mc) && ext_peek_is_fn_decl(&L, after_mods)) {
                 L.pos = after_mods;
                 StrSlice sym = ext_read_ident(&L);
                 if (mem->has_error || sym.len == 0) break;
+                uint16_t assoc_tid = 0;
+                if (L.pos + 2 <= L.len && L.src[L.pos] == ':' && L.src[L.pos + 1] == ':') {
+                    assoc_tid = sym_find_type(tab, mem, mem_str_ptr(mem, sym), sym.len);
+                    L.pos = (uint16_t)(L.pos + 2);
+                    sym = ext_read_ident(&L);
+                    if (mem->has_error || sym.len == 0) break;
+                }
                 uint16_t sym_id = sym_intern(tab, mem, sym);
                 if (mem->has_error) break;
-                ext_parse_sym_decl(&L, sym_id, decl_flags, allow_redef);
+                ext_parse_sym_decl_ex(&L, sym_id, decl_flags, allow_redef, assoc_tid);
                 if (!mem->has_error) mem_snapshot_perm(mem);
                 continue;
             }
@@ -1433,6 +1963,11 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
             mem->jump_val    = val_void();
             mem->jump_active = JUMP_NONE;
             early_return     = true;
+        } else if (mem->jump_active == JUMP_THROW) {
+            mem->jump_active = JUMP_NONE;
+            if (!mem->has_error) {
+                mem_err(mem, "Unhandled exception");
+            }
         } else if (mem->jump_active != JUMP_NONE && !mem->has_error) {
             mem->jump_active = JUMP_NONE;
             mem_err(mem, "Unhandled jump, break, or continue outside active loop/scope");
