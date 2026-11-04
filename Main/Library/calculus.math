@@ -75,12 +75,10 @@ calc_integ_fn(f:fn, a, b, steps = 200) = {
     a_u := a + 0 * h
     b_u := b + 0 * h
     acc := f(a_u) + f(b_u)
-    k   := 1
-    (k < n) ?? {
+    (k in 1..<n) {
         xk  := a_u + k * h
         w   := (k % 2 == 1) ? 4 : 2
         acc += w * f(xk)
-        k   += 1
     }
     calc_snap((h / 3) * acc, 1e-9)
 }

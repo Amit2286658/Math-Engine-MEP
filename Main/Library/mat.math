@@ -45,6 +45,9 @@ any(m:mat, f:fn)                 = any(flatten(m), f)
 all(m:mat, f:fn)                 = all(flatten(m), f)
 find(m:mat, f:fn)                = find(flatten(m), f)
 count_if(m:mat, f:fn)            = count_if(flatten(m), f)
+take(m:mat, k)            -> vec = take(flatten(m), k)
+drop(m:mat, k)            -> vec = drop(flatten(m), k)
+sort_by(m:mat, key_fn:fn) -> vec = sort_by(flatten(m), key_fn)
 
 mat_zip(a:mat, b:mat, f:fn) -> mat = {
     if (mat_shape(a) != mat_shape(b)) { error("Matrix shape mismatch") }

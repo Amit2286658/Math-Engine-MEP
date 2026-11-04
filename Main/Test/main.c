@@ -202,37 +202,6 @@ static bool host_fx_rate_cb(MemArena *mem, const SymTable *tab,
     return true;
 }
 
-/* @currency_convert(from: str, to: str, amount: real) -> real
- * 3-value currency conversion extern — the host contract the `[currency]`
- * patch expects. Rates come from the same per-USD quote cache as @fx_rate:
- * amount * (to_per_usd / from_per_usd). */
-static bool host_currency_convert_cb(MemArena *mem, const SymTable *tab,
-                                     const Value *args, uint8_t argc,
-                                     void *user_ctx, Value *out_val) {
-    (void)tab;
-    if (argc != 3) {
-        mem_err(mem, "@currency_convert expects (from:str, to:str, amount:real)");
-        return false;
-    }
-    char from_ccy[16], to_ccy[16];
-    if (!val_as_cstr(mem, args[0], from_ccy, sizeof(from_ccy)) ||
-        !val_as_cstr(mem, args[1], to_ccy,   sizeof(to_ccy))) {
-        mem_err(mem, "@currency_convert currency codes must be strings");
-        return false;
-    }
-    double amount = val_get_f64(mem, args[2]);
-
-    const FxRateCache *cache = (const FxRateCache *)user_ctx;
-    double from_per_usd = 0.0, to_per_usd = 0.0;
-    if (!lookup_usd_rate(cache, from_ccy, &from_per_usd) ||
-        !lookup_usd_rate(cache, to_ccy,   &to_per_usd)) {
-        mem_err(mem, "Unsupported currency pair '%s' -> '%s'", from_ccy, to_ccy);
-        return false;
-    }
-    *out_val = val_from_f64(mem, amount * (to_per_usd / from_per_usd));
-    return true;
-}
-
 static bool host_fx_set_rate_cb(MemArena *mem, const SymTable *tab,
                                 const Value *args, uint8_t argc,
                                 void *user_ctx, Value *out_val) {
@@ -503,7 +472,6 @@ static void register_all_host_externs(Engine *eng) {
     eng_register_extern(eng, "fx_rate",     host_fx_rate_cb,     (void *)&g_fx_cache);
     eng_register_extern(eng, "fx_set_rate", host_fx_set_rate_cb, (void *)&g_fx_cache);
     eng_register_extern(eng, "fx_history",  host_fx_history_cb,  (void *)&g_fx_cache);
-    eng_register_extern(eng, "currency_convert", host_currency_convert_cb, (void *)&g_fx_cache);
     eng_register_extern(eng, "kv_set",      host_kv_set_cb,      (void *)&g_kv_store);
     eng_register_extern(eng, "kv_get",      host_kv_get_cb,      (void *)&g_kv_store);
     eng_register_extern(eng, "elem_mass",   host_elem_mass_cb,   NULL);
@@ -654,13 +622,6 @@ static const TestCase k_tests[] = {
       "Host persistent KV store '@kv_set' & '@kv_get' + 'to_inr'" },
     { "molar_mass_h2o() + molar_mass_co2()", "62.024", "real",
       "Host '@elem_mass' Periodic Table: H2O (18.015) + CO2 (44.009)" },
-
-    /* J2. Unregistered Extern Fallback: loud STRING, never a silent failure */
-    { "probe_unregistered_extern(100, \"EUR\", \"INR\")",
-      "\"unavailable: host extern '@ccy_probe_ext' not implemented yet\"", "str",
-      "Unregistered host extern degrades to a loud string (currency patch contract)" },
-    { "convert_ccy(100, \"USD\", \"INR\")", "8400", "real",
-      "3-arg host extern '@currency_convert' (100 USD -> 8400 INR at 84/USD)" },
 
     /* K. Local Scopes `{ ... }`, `if ... or ... else`, `switch`, `? :` Ternary & `Tag : { ... }` */
     { "x = { a := 3 ; b := 4 ; a^2 + b^2 } ; { x = x + 5 ; 9999 } ; x",

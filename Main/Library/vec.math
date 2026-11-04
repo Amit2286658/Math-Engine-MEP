@@ -176,10 +176,8 @@ sma(v:vec, window) = {
     w     := min(window, n)
     start := n - w
     acc   := 0
-    idx   := start
-    (idx < n) ?? {
+    (idx in start..<n) {
         acc += v[idx]
-        idx += 1
     }
     acc / w
 }
@@ -386,3 +384,61 @@ clear(m:map)                    -> map = @vclear(m)
 # 8. Pure MEP 7D SI Unit Dimensional Introspection (`dim_vec`, `same_dim`)
 dim_vec(x:T)         -> vec = [@unit_name(x, i) for i in 0..<7]
 same_dim(a:T, b:T)          = (dim_vec(a) == dim_vec(b))
+
+# 9. Extended Collection Slicing, Custom-Key Sorting & Functional Map Helpers
+take(v:vec, k) -> vec = {
+    n := v.len()
+    m := clamp(@floor(k), 0, n)
+    (m <= 0) ? vec() : v[0..<m]
+}
+
+drop(v:vec, k) -> vec = {
+    n := v.len()
+    m := clamp(@floor(k), 0, n)
+    (m >= n) ? vec() : v[m..<n]
+}
+
+sort_by(v:vec, key_fn:fn) -> vec = {
+    n := v.len()
+    if (n <= 1) { return [x for x in v] }
+    out  := [x for x in v]
+    keys := [key_fn(x) for x in v]
+    gap  := @floor(n / 2)
+    (gap > 0) ?? {
+        (i in gap..<n) {
+            temp_v := out[i]
+            temp_k := keys[i]
+            j      := i
+            (j >= gap && keys[j - gap] > temp_k) ?? {
+                out[j]  = out[j - gap]
+                keys[j] = keys[j - gap]
+                j -= gap
+            }
+            out[j]  = temp_v
+            keys[j] = temp_k
+        }
+        gap = @floor(gap / 2)
+    }
+    out
+}
+
+map_merge(a:map, b:map) -> map = {
+    out := map()
+    (k, v in a) { map_set(out, k, v) }
+    (k, v in b) { map_set(out, k, v) }
+    out
+}
+
+map_filter(m:map, pred:fn) -> map = {
+    out := map()
+    (k, v in m) {
+        if (pred(k, v)) { map_set(out, k, v) }
+    }
+    out
+}
+
+map_values(m:map, f:fn) -> map = {
+    out := map()
+    (k, v in m) { map_set(out, k, f(v)) }
+    out
+}

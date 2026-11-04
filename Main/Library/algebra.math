@@ -94,10 +94,10 @@ quad_croot(a, b, c) -> complex = {
 poly_val(coeffs:vec, x) = {
     n   := coeffs.len()
     acc := 0
-    idx := n - 1
-    (idx >= 0) ?? {
-        acc = acc * x + coeffs[idx]
-        idx -= 1
+    if (n > 0) {
+        (idx in (n - 1)...0) {
+            acc = acc * x + coeffs[idx]
+        }
     }
     acc
 }
@@ -109,10 +109,8 @@ poly_deriv(coeffs:vec) -> vec = {
     if (n <= 1) {
         0 into out
     } else {
-        idx := 1
-        (idx < n) ?? {
+        (idx in 1..<n) {
             (idx * coeffs[idx]) into out
-            idx += 1
         }
     }
     out
@@ -123,10 +121,10 @@ poly_integ(coeffs:vec, c0 = 0) -> vec = {
     n   := coeffs.len()
     out := vec<real>()
     c0 into out
-    idx := 0
-    (idx < n) ?? {
-        (coeffs[idx] / (idx + 1)) into out
-        idx += 1
+    if (n > 0) {
+        (idx in 0..<n) {
+            (coeffs[idx] / (idx + 1)) into out
+        }
     }
     out
 }
@@ -137,12 +135,12 @@ poly_add(p:vec, q:vec) -> vec = {
     nq  := q.len()
     n   := max(np, nq)
     out := vec<real>()
-    idx := 0
-    (idx < n) ?? {
-        vp := (idx < np) ? p[idx] : 0
-        vq := (idx < nq) ? q[idx] : 0
-        (vp + vq) into out
-        idx += 1
+    if (n > 0) {
+        (idx in 0..<n) {
+            vp := (idx < np) ? p[idx] : 0
+            vq := (idx < nq) ? q[idx] : 0
+            (vp + vq) into out
+        }
     }
     out
 }
@@ -153,15 +151,11 @@ poly_mul(p:vec, q:vec) -> vec = {
     nq  := q.len()
     deg := np + nq - 1
     out := vec<real>(deg, 0)
-    ip  := 0
-    (ip < np) ?? {
-        iq := 0
-        (iq < nq) ?? {
+    (ip in 0..<np) {
+        (iq in 0..<nq) {
             k := ip + iq
             out[k] += p[ip] * q[iq]
-            iq += 1
         }
-        ip += 1
     }
     out
 }
@@ -170,13 +164,19 @@ poly_mul(p:vec, q:vec) -> vec = {
 poly_newton(coeffs:vec, x0, steps = 12) = {
     dp := poly_deriv(coeffs)
     x  := x0
-    k  := 0
-    (k < steps) ?? {
+    (k in 0..<steps) {
         fx  := poly_val(coeffs, x)
         dfx := poly_val(dp, x)
         x  -= fx / dfx
-        k  += 1
     }
     x
 }
 
+mat2::inv(self) -> mat2  = inv_mat2(self)
+
+poly_val(coeffs:mat, x)                 = poly_val(flatten(coeffs), x)
+poly_deriv(coeffs:mat)           -> vec = poly_deriv(flatten(coeffs))
+poly_integ(coeffs:mat, c0 = 0)   -> vec = poly_integ(flatten(coeffs), c0)
+poly_add(p:mat, q:mat)           -> vec = poly_add(flatten(p), flatten(q))
+poly_mul(p:mat, q:mat)           -> vec = poly_mul(flatten(p), flatten(q))
+poly_newton(coeffs:mat, x0, steps = 12) = poly_newton(flatten(coeffs), x0, steps)

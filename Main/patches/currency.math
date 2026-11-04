@@ -1,70 +1,39 @@
-# =============================================================================
-# patches/currency.math — Currency Conversion Foundation (`[currency]`)
-# =============================================================================
-# Full conversion needs a HOST extern (FX rates live on the Android side), but
-# this module is engine-complete: register the three-value host extern
-# `@currency_convert` and everything below comes alive; until then every call
-# returns a loud STRING diagnostic like
-#
-#   "unavailable: host extern '@currency_convert' not implemented yet"
-#
-# instead of silently failing. App code can detect the missing backend by
-# checking for the 'unavailable:' prefix on the returned value.
-#
-# HOST CONTRACT (the ONLY thing a backend has to implement):
-#
-#   @currency_convert(from: str, to: str, amount: real) -> real
-#     - `from`   : source currency code, e.g. "USD", "INR"
-#     - `to`     : target currency code, e.g. "EUR", "JPY"
-#     - `amount` : how many units of `from` to convert
-#     - returns  : the converted amount in `to`
-#
-# Kotlin registration via this repo's JNI bridge (one line):
-#
-#   engine.registerExtern("currency_convert") { _, nums, strs ->
-#       fxProvider.rate(strs[0], strs[1]) * nums[0]   // your rate source
-#   }
-#   // strs[0] = from code, strs[1] = to code, nums[0] = amount
-#
-# .math usage after registration:
-#
-#   5$ into Rs          # USD -> INR via the `$` / `Rs` symbol aliases
-#   100 USD into EUR    # explicit ISO-code aliases
-#   convert(100, "USD", "EUR")
-
+# ==============================================================================
+# patches/currency.math – Currency Conversion Foundation (`[currency]`)
+# ==============================================================================
 [currency]
 <[boot_types]
 <[arith]
 <[string]
 
-# =============================================================================
+# ==============================================================================
 # 1. Currency symbol & code aliases (each marker is its own unit group so
 #    `unit_of(5$) == "usd"` lets `currency_convert` see the source currency)
-# =============================================================================
-(x)     "$"  :95 -> real, usd = x
-(x)     USD  :95 -> real, usd = x
-(x)     "€"  :95 -> real, eur = x
-(x)     EUR  :95 -> real, eur = x
-(x)     "£"  :95 -> real, gbp = x
-(x)     GBP  :95 -> real, gbp = x
-(x)     "Rs" :95 -> real, inr = x
-(x)     INR  :95 -> real, inr = x
-(x)     "¥"  :95 -> real, jpy = x
-(x)     JPY  :95 -> real, jpy = x
+# ==============================================================================
+(x)    "$"  :95 -> real, usd = x
+(x)    USD  :95 -> real, usd = x
+(x)    "€"  :95 -> real, eur = x
+(x)    EUR  :95 -> real, eur = x
+(x)    "£"  :95 -> real, gbp = x
+(x)    GBP  :95 -> real, gbp = x
+(x)    "Rs" :95 -> real, inr = x
+(x)    INR  :95 -> real, inr = x
+(x)    "¥"  :95 -> real, jpy = x
+(x)    JPY  :95 -> real, jpy = x
 
-# Bare constants (RHS of `into`): `5$ into Rs` — the right side resolves as a
+# Bare constants (RHS of `into`): `5$ into Rs` – the right side resolves as a
 # 1-unit value tagged with the target currency.
-USD : real, usd = 1
-EUR : real, eur = 1
-GBP : real, gbp = 1
-Rs  : real, inr = 1
-INR : real, inr = 1
-JPY : real, jpy = 1
+"USD" : real, usd = 1
+"EUR" : real, eur = 1
+"GBP" : real, gbp = 1
+"Rs"  : real, inr = 1
+"INR" : real, inr = 1
+"JPY" : real, jpy = 1
 
-# =============================================================================
-# 2. `from into to` conversion overloads (`5$ into Rs`, `100 USD into EUR`, …)
+# ==============================================================================
+# 2. `from into to` conversion overloads (`5$ into Rs`, `100 USD into EUR`, ...)
 #    All share fixity `:>55` to merge into the stdlib `[arith]` `into` chain.
-# =============================================================================
+# ==============================================================================
 (x: real, usd) "into" (y: real, eur) :>55 -> real = (type_of(r := @currency_convert("USD", "EUR", x)) == "str") ? r : with_unit(r, y)
 (x: real, usd) "into" (y: real, gbp) :>55 -> real = (type_of(r := @currency_convert("USD", "GBP", x)) == "str") ? r : with_unit(r, y)
 (x: real, usd) "into" (y: real, inr) :>55 -> real = (type_of(r := @currency_convert("USD", "INR", x)) == "str") ? r : with_unit(r, y)
@@ -90,9 +59,9 @@ JPY : real, jpy = 1
 (x: real, jpy) "into" (y: real, gbp) :>55 -> real = (type_of(r := @currency_convert("JPY", "GBP", x)) == "str") ? r : with_unit(r, y)
 (x: real, jpy) "into" (y: real, inr) :>55 -> real = (type_of(r := @currency_convert("JPY", "INR", x)) == "str") ? r : with_unit(r, y)
 
-# =============================================================================
+# ==============================================================================
 # 3. Plain function layer (ISO codes, no symbol aliases needed)
-# =============================================================================
+# ==============================================================================
 convert(amount: real, from: str, to: str) = @currency_convert(from, to, amount)
 
 # Ready-to-display string form: "(converted) <to>"

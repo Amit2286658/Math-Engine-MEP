@@ -2,12 +2,6 @@
 
 This folder holds incremental `.math` extension modules and a lightweight `manifest.json` index that Android clients (`Ecalc`) check to download newly published `.math` files without re-downloading `libmathengine.so` or `stdlib.mathc`.
 
-## Bundled Patches
-
-| file | what it gives `.math` code |
-|---|---|
-| `currency.math` | `[currency]` module: `convert(amount, to)`, `convert_str`, `convert_all`. Needs the app to register the two-value host extern `@currency_convert(to: str, amount: real) -> real` (see the header comment inside); until then every call returns the string `"unavailable: host extern '@currency_convert' not implemented yet"` instead of failing silently (`Main/Core/Code/evaluator.c` degrades ANY unregistered extern to that string). |
-
 ## Publishing a New `.math` Patch
 
 1. Drop your `.math` module file (for example, `astronomy_ext.math`) into `Main/patches/`:
