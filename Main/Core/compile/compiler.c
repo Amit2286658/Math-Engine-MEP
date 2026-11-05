@@ -1505,7 +1505,7 @@ bool ext_import_module_or_file(MemArena *mem, SymTable *tab,
     uint16_t saved_mem_mod = mem->cur_mod;
     uint16_t saved_tab_mod = tab->cur_mod;
     Value imp_val = val_void();
-    bool ok = ext_eval_slice(mem, tab, stem, true, fbuf, (uint16_t)nread, &imp_val);
+    bool ok = ext_eval_slice_ex(mem, tab, stem, true, true, fbuf, (uint16_t)nread, &imp_val);
     free(fbuf);
     mem->cur_mod = saved_mem_mod;
     tab->cur_mod = saved_tab_mod;
@@ -1534,7 +1534,8 @@ static bool ext_is_top_level_decl_at(const ExtLoader *L, uint16_t pos) {
         while (q < L->len && lex_is_ident_cont((unsigned char)L->src[q])) q++;
         uint16_t dlen = (uint16_t)(q - (p + 1));
         if ((dlen == 3 && memcmp(L->src + p + 1, "dim", 3) == 0) ||
-            (dlen == 8 && memcmp(L->src + p + 1, "unit_dim", 8) == 0)) {
+            (dlen == 8 && memcmp(L->src + p + 1, "unit_dim", 8) == 0) ||
+            (dlen == 5 && memcmp(L->src + p + 1, "entry", 5) == 0)) {
             return true;
         }
     }
@@ -1544,7 +1545,7 @@ static bool ext_is_top_level_decl_at(const ExtLoader *L, uint16_t pos) {
     uint16_t am = ext_peek_modifiers(L, p, &dummy_flags, &dummy_mods, false);
     if (am >= L->len) return false;
 
-    (void)ext_peek_is_var_decl;
+    if (dummy_mods && ext_peek_is_var_decl(L, am)) return true;
     uint16_t fn_pos = ext_skip_opt_fn_kw(L, am);
     if (fn_pos != am && ext_peek_is_fn_decl(L, fn_pos)) return true;
     char c = L->src[am];
@@ -1615,10 +1616,71 @@ static uint16_t ext_find_stmt_chunk_end(const ExtLoader *L) {
  * TOP-TO-BOTTOM MODULE SLICE EVALUATION & COMPILATION (`ext_eval_slice`)
  * ============================================================================ */
 
-bool ext_eval_slice(MemArena *mem, SymTable *tab,
-                    const char *default_mod_name, bool allow_redef,
-                    const char *slice_src, uint16_t slice_len,
-                    Value *out_val) {
+/* Check whether a top-level statement chunk [start..end) consists purely of
+ * module variable/constant declarations (`pub`/`priv`/`const`/`mut` or `id := ...` / `id = ...`). */
+static bool ext_chunk_is_var_decl_only(const ExtLoader *L, uint16_t start, uint16_t end) {
+    ExtLoader sub = *L;
+    sub.pos = start;
+    sub.len = end;
+    ext_skip_ws(&sub);
+    if (sub.pos >= sub.len) return false;
+    uint8_t dflags = 0;
+    bool    dmods  = false;
+    uint16_t am = ext_peek_modifiers(&sub, sub.pos, &dflags, &dmods, false);
+    if (am >= sub.len) return false;
+    if (!ext_peek_is_var_decl(&sub, am)) return false;
+    /* Ensure there is no semicolon separating a second non-declaration statement on the same chunk */
+    int depth = 0;
+    for (uint16_t i = am; i < end; ++i) {
+        char c = L->src[i];
+        if (c == '"') {
+            i++;
+            while (i < end && L->src[i] != '"') {
+                if (L->src[i] == '\\' && i + 1 < end) i++;
+                i++;
+            }
+            continue;
+        }
+        if (c == '#') {
+            while (i < end && L->src[i] != '\n') i++;
+            continue;
+        }
+        if (c == '(' || c == '{' || c == '[') depth++;
+        else if (c == ')' || c == '}' || c == ']') { if (depth > 0) depth--; }
+        else if (depth == 0 && (c == ';' || c == '\n')) {
+            uint16_t next_p = ext_skip_ws_at(L->src, (uint16_t)(i + 1), end);
+            if (next_p < end) {
+                uint8_t nf = 0;
+                bool    nm = false;
+                uint16_t nam = ext_peek_modifiers(&sub, next_p, &nf, &nm, false);
+                if (nam >= end || !ext_peek_is_var_decl(&sub, nam)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+/* Find a zero-required-argument function overload named `fn_name` defined inside `mod_id` */
+static int ext_find_mod_entry_overload(const SymTable *tab, const MemArena *mem,
+                                       uint16_t mod_id, const char *fn_name, uint16_t fn_len) {
+    int sid = sym_find(tab, mem, fn_name, fn_len);
+    if (sid < 0 || (uint16_t)sid >= tab->sym_count) return -1;
+    for (uint16_t i = tab->sym_first_ov[sid]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
+        const OpOverload *ov = &tab->overloads[i];
+        if (ov->mod_id == mod_id && ov->fixity == FIX_FUNC && ov->param_count == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
+                       const char *default_mod_name, bool allow_redef,
+                       bool is_dep_load,
+                       const char *slice_src, uint16_t slice_len,
+                       Value *out_val) {
     if (out_val) *out_val = val_void();
     if (!mem || !tab) return false;
     mem->sym_tab = tab;
@@ -1643,8 +1705,11 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
     mem->cur_mod = L.cur_mod;
     tab->cur_mod = L.cur_mod;
 
-    Value last_val      = val_void();
-    bool  had_any_token = false;
+    Value    last_val            = val_void();
+    bool     had_any_token       = false;
+    bool     had_standalone_expr = false;
+    bool     has_explicit_entry  = false;
+    StrSlice explicit_entry_sym  = { 0, 0 };
 
     while (L.pos < L.len && !mem->has_error) {
         ext_skip_ws(&L);
@@ -1760,6 +1825,22 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
                 }
                 tab->unit_dims[uid] = udim;
                 mem_snapshot_perm(mem);
+                continue;
+            }
+            if (dlen == 5 && memcmp(L.src + L.pos + 1, "entry", 5) == 0) {
+                L.pos = q;
+                bool has_p = ext_match_char(&L, '(');
+                StrSlice ename = ext_read_ident(&L);
+                if (ename.len == 0) {
+                    mem_err(mem, "Expected function name in '@entry'");
+                    break;
+                }
+                if (has_p && !ext_match_char(&L, ')')) {
+                    mem_err(mem, "Expected ')' at end of '@entry(...)'");
+                    break;
+                }
+                explicit_entry_sym = ename;
+                has_explicit_entry = true;
                 continue;
             }
         }
@@ -1915,6 +1996,17 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
 
         /* 5. Top-to-Bottom Executable Module Statement / Expression Chunk */
         uint16_t chunk_end = ext_find_stmt_chunk_end(&L);
+        bool is_var_decl_chunk = ext_chunk_is_var_decl_only(&L, L.pos, chunk_end);
+        if (is_dep_load && !is_var_decl_chunk) {
+            /* In declaration-only dependency mode (`<[dep]` / `import`), skip standalone
+             * top-level scratch expressions & demo prints so importing a module never
+             * triggers its standalone side effects. */
+            L.pos = chunk_end;
+            continue;
+        }
+        if (!is_var_decl_chunk) {
+            had_standalone_expr = true;
+        }
         uint16_t saved_ast = mem->ast_count;
 
         Parser P;
@@ -1991,6 +2083,84 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
         mem_err(mem, "Empty expression");
     }
 
+    /* 6. Hybrid Start Point Execution (`@entry(fn)` or `pub main()` / `main()`):
+     *    When evaluating a target module (`!is_dep_load`), if the module declared
+     *    `@entry(fn)` OR defines a 0-arg `main()` function without trailing standalone
+     *    expressions, automatically invoke the entry point via the bytecode VM / evaluator. */
+    if (!mem->has_error && !is_dep_load) {
+        const char *entry_name = NULL;
+        uint16_t    entry_len  = 0;
+        char        entry_buf[64];
+        if (has_explicit_entry && explicit_entry_sym.len > 0) {
+            uint16_t clen = explicit_entry_sym.len < 60u ? explicit_entry_sym.len : 60u;
+            memcpy(entry_buf, mem_str_ptr(mem, explicit_entry_sym), clen);
+            entry_buf[clen] = '\0';
+            entry_name = entry_buf;
+            entry_len  = clen;
+        } else if (!had_standalone_expr &&
+                   ext_find_mod_entry_overload(tab, mem, L.cur_mod, "main", 4) >= 0) {
+            memcpy(entry_buf, "main", 5);
+            entry_name = entry_buf;
+            entry_len  = 4;
+        }
+
+        if (entry_name != NULL) {
+            if (ext_find_mod_entry_overload(tab, mem, L.cur_mod, entry_name, entry_len) < 0) {
+                mem_err(mem, "Entry point '%s()' not found (or requires arguments) in module '[%.*s]'",
+                        entry_name,
+                        (int)sym_mod_name(tab, L.cur_mod).len,
+                        mem_str_ptr(mem, sym_mod_name(tab, L.cur_mod)));
+            } else {
+                char call_expr[72];
+                int cn = snprintf(call_expr, sizeof(call_expr), "%s()", entry_name);
+                if (cn > 0 && (size_t)cn < sizeof(call_expr)) {
+                    uint16_t saved_ast = mem->ast_count;
+                    Parser EP;
+                    parser_init(&EP, mem, tab, call_expr, (uint16_t)cn, 0, false, false);
+                    EP.is_mod_scope = true;
+                    EP.cur_mod      = L.cur_mod;
+                    lex_next(&EP.lex);
+                    uint16_t eroot = parser_parse_expr(&EP, 0);
+                    if (!mem->has_error && eroot != MEM_NO_IDX) {
+                        uint16_t eframe = 0;
+                        if (EP.local_count > 0) {
+                            eframe = mem_push_frame(mem, EP.local_count);
+                            for (uint8_t i = 0; i < EP.local_count && !mem->has_error; ++i) {
+                                mem_set_slot(mem, eframe, i, val_make_f64(mem, mem->fast_real_type, 0.0));
+                            }
+                        }
+                        if (!mem->has_error) {
+                            mem->eval_steps  = 0;
+                            mem->eval_depth  = 0;
+                            mem->call_depth  = 0;
+                            mem->jump_active = JUMP_NONE;
+                            uint16_t bc_pc = (EP.label_count == 0)
+                                             ? bc_compile_ast(mem, tab, eroot, false)
+                                             : MEM_NO_IDX;
+                            Value eval_res = (bc_pc != MEM_NO_IDX)
+                                             ? bc_exec(mem, tab, bc_pc, eframe, 0)
+                                             : eval_ast(mem, tab, eroot, eframe, 0);
+                            if (mem->jump_active == JUMP_RETURN) {
+                                eval_res         = mem->jump_val;
+                                mem->jump_val    = val_void();
+                                mem->jump_active = JUMP_NONE;
+                            }
+                            if (!mem->has_error) {
+                                last_val = eval_res;
+                            }
+                        }
+                        if (EP.local_count > 0) {
+                            mem_pop_frame(mem, eframe);
+                        }
+                    }
+                    if (mem->perm_ast_count <= saved_ast) {
+                        mem->ast_count = saved_ast;
+                    }
+                }
+            }
+        }
+    }
+
     if (mem->has_error) {
         /* Clean up any uninitialized parse-time placeholder variables on error */
         ModVarDef *vars = sym_vars_mut(tab);
@@ -2011,9 +2181,25 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
     return !mem->has_error;
 }
 
+bool ext_eval_slice(MemArena *mem, SymTable *tab,
+                    const char *default_mod_name, bool allow_redef,
+                    const char *slice_src, uint16_t slice_len,
+                    Value *out_val) {
+    return ext_eval_slice_ex(mem, tab, default_mod_name, allow_redef, false,
+                             slice_src, slice_len, out_val);
+}
+
+bool ext_compile_slice_ex(MemArena *mem, SymTable *tab,
+                          bool is_dep_load,
+                          const char *slice_src, uint16_t slice_len) {
+    return ext_eval_slice_ex(mem, tab, "default", false, is_dep_load,
+                             slice_src, slice_len, NULL);
+}
+
 bool ext_compile_slice(MemArena *mem, SymTable *tab,
                        const char *slice_src, uint16_t slice_len) {
-    return ext_eval_slice(mem, tab, "default", false, slice_src, slice_len, NULL);
+    return ext_eval_slice_ex(mem, tab, "default", false, false,
+                             slice_src, slice_len, NULL);
 }
 
 /* ============================================================================

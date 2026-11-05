@@ -118,12 +118,29 @@ bool ext_eval_slice(MemArena *mem, SymTable *tab,
                     Value *out_val);
 
 /*
+ * Extended module evaluator supporting declaration-only dependency loading
+ * (`is_dep_load = true` skips standalone top-level scratch expressions and
+ * entry points in imported `<[dep]` / `import` modules while still binding all
+ * types, dimensions, functions, operators, and module variables/constants) and
+ * automatic `main()` / `@entry(fn)` entry-point invocation when `is_dep_load = false`.
+ */
+bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
+                       const char *default_mod_name, bool allow_redef,
+                       bool is_dep_load,
+                       const char *slice_src, uint16_t slice_len,
+                       Value *out_val);
+
+/*
  * Compile and execute a single module slice into `mem` + `tab` in strict
  * extension compilation mode (`default_mod_name = "default"`, `allow_redef = false`).
  * Invoked in resolved topological order by the linker (`linker.c`).
  */
 bool ext_compile_slice(MemArena *mem, SymTable *tab,
                        const char *slice_src, uint16_t slice_len);
+
+bool ext_compile_slice_ex(MemArena *mem, SymTable *tab,
+                          bool is_dep_load,
+                          const char *slice_src, uint16_t slice_len);
 
 /*
  * Phase 5: Import a module or external `.math` file into `mem` + `tab`

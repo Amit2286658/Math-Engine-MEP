@@ -4151,7 +4151,7 @@ static uint16_t parse_nud(Parser *P) {
             }
 
             /* Phase 5 & Phase 6 built-in language functions: print, println, assert, clock_ms, bc_steps, typeof */
-            if (container_type_spec == MEM_NO_IDX && !P->in_ext_body) {
+            if (container_type_spec == MEM_NO_IDX && (!P->in_ext_body || sym_id < 0 || !sym_has_visible_func_ov(tab, (uint16_t)sym_id))) {
                 if (id_len == 5 && memcmp(id_str, "print", 5) == 0) {
                     return mem_alloc_ast(mem, AST_INTRINSIC, 246u, argc, head, 0);
                 }

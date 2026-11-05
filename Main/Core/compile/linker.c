@@ -195,10 +195,27 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     uint8_t  saved_const_count    = tab->const_count;
     uint16_t saved_var_count      = tab->var_count;
 
-    /* 4. Compile each module slice in resolved topological order */
+    /* 4. Compile each module slice in resolved topological order.
+     *    In a multi-unit link batch (order_cnt > 1), any unit that is imported via `<[dep]`
+     *    by a downstream unit in the batch is compiled in declaration-only dependency mode
+     *    (`is_dep_load = true`), while root/leaf units run their entry point or top-level code. */
     for (uint16_t k = 0; k < order_cnt; ++k) {
-        const ExtCompiledUnit *u = &units[order[k]];
-        if (!ext_compile_slice(mem, tab, ctx->src_pool + u->src_off, u->src_len)) {
+        uint16_t u_idx = order[k];
+        const ExtCompiledUnit *u = &units[u_idx];
+        bool is_dep_unit = false;
+        if (order_cnt > 1 && !u->is_default_mod) {
+            for (uint16_t w = 0; w < n && !is_dep_unit; ++w) {
+                if (w == u_idx) continue;
+                const char (*wdeps)[32] = ext_unit_deps(&units[w]);
+                for (uint16_t d = 0; d < units[w].dep_count; ++d) {
+                    if (strcmp(wdeps[d], u->mod_name) == 0) {
+                        is_dep_unit = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!ext_compile_slice_ex(mem, tab, is_dep_unit, ctx->src_pool + u->src_off, u->src_len)) {
             break;
         }
     }
