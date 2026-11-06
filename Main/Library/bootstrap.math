@@ -121,6 +121,7 @@ sym_eval(expr_str:str, var_x, val)        = @sym_eval(expr_str, var_x, val)
 #     Scratch Arena Compaction & Plain String Conversion Operators `_`
 raw_val(x)           -> real, none = @raw(x)
 with_unit(val, donor)              = @raw(val, donor)
+with_unit(val:str, donor:T) -> str = val
 type_of(x:T)         -> str        = @type_name(x)
 unit_of(x:T)         -> str        = @unit_name(x)
 unit_dim(x:T, axis)                = @unit_name(x, axis)

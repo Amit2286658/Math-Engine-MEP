@@ -198,14 +198,17 @@ MATH_ENGINE_API bool        eng_sym_integ(Engine *eng, const char *var_name, con
 MATH_ENGINE_API bool        eng_sym_solve(Engine *eng, const char *var_name, const char *eq,
                                           char *out_buf, size_t buf_cap);
 
-/* Phase 5 & Phase 6: Standard I/O Capture, Module/File Imports & Bytecode VM Introspection */
+/* Standard I/O Capture, Module/File Imports & Unified Project Execution API */
 MATH_ENGINE_API const char *eng_get_output(const Engine *eng);
 MATH_ENGINE_API void        eng_clear_output(Engine *eng);
 MATH_ENGINE_API void        eng_set_import_dir(Engine *eng, const char *dir_path);
 MATH_ENGINE_API bool        eng_import_file(Engine *eng, const char *file_path);
-MATH_ENGINE_API uint32_t    eng_bc_steps(const Engine *eng);
-MATH_ENGINE_API uint16_t    eng_bc_inst_count(const Engine *eng);
-MATH_ENGINE_API size_t      eng_bc_disasm(Engine *eng, const char *fn_name, char *out_buf, size_t buf_cap);
+MATH_ENGINE_API bool        eng_has_entry(const Engine *eng);
+MATH_ENGINE_API bool        eng_run_entry(Engine *eng, Value *out_val);
+MATH_ENGINE_API bool        eng_build_and_run(Engine *eng, const char *const *sources,
+                                              size_t unit_count, Value *out_val);
+MATH_ENGINE_API bool        eng_apply_patches(Engine *eng, const char *const *patch_sources,
+                                              size_t patch_count);
 
 #ifdef __cplusplus
 }

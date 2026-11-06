@@ -100,6 +100,18 @@ JNIEXPORT jbyteArray JNICALL
 Java_com_mathengine_MathEngineBridge_nativeCompileExt(JNIEnv *env, jclass clazz,
                                                       jlong handle, jstring mathSource);
 
+JNIEXPORT jbyteArray JNICALL
+Java_com_mathengine_MathEngineBridge_nativeApplyPatch(JNIEnv *env, jclass clazz,
+                                                      jlong handle, jstring patchSource);
+
+JNIEXPORT jboolean JNICALL
+Java_com_mathengine_MathEngineBridge_nativeHasEntry(JNIEnv *env, jclass clazz,
+                                                    jlong handle);
+
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeRunEntry(JNIEnv *env, jclass clazz,
+                                                    jlong handle);
+
 JNIEXPORT jboolean JNICALL
 Java_com_mathengine_MathEngineBridge_nativeLoadMathc(JNIEnv *env, jclass clazz,
                                                      jlong handle, jbyteArray mathcBytes);

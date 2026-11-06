@@ -278,6 +278,45 @@ Java_com_mathengine_MathEngineBridge_nativeCompileExt(JNIEnv *env, jclass clazz,
     return arr;
 }
 
+JNIEXPORT jbyteArray JNICALL
+Java_com_mathengine_MathEngineBridge_nativeApplyPatch(JNIEnv *env, jclass clazz,
+                                                      jlong handle, jstring patchSource) {
+    (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng || !patchSource) return NULL;
+    const char *src = (*env)->GetStringUTFChars(env, patchSource, NULL);
+    if (!src) return NULL;
+    bool ok = eng_apply_patches(eng, &src, 1);
+    (*env)->ReleaseStringUTFChars(env, patchSource, src);
+    if (!ok) return NULL;
+
+    size_t mathc_len = ext_save_mathc_mem(&eng->mem, &eng->sym, eng->mathc_buf, sizeof(eng->mathc_buf));
+    if (mathc_len == 0) return NULL;
+
+    jbyteArray arr = (*env)->NewByteArray(env, (jsize)mathc_len);
+    if (!arr) return NULL;
+    (*env)->SetByteArrayRegion(env, arr, 0, (jsize)mathc_len, (const jbyte *)eng->mathc_buf);
+    return arr;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_mathengine_MathEngineBridge_nativeHasEntry(JNIEnv *env, jclass clazz, jlong handle) {
+    (void)env; (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng) return JNI_FALSE;
+    return eng_has_entry(eng) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeRunEntry(JNIEnv *env, jclass clazz, jlong handle) {
+    (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng) return (*env)->NewStringUTF(env, "ERR|Invalid engine handle");
+    Value out = val_void();
+    bool ok = eng_run_entry(eng, &out);
+    return jni_format_eval_reply(env, eng, ok, out);
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_mathengine_MathEngineBridge_nativeLoadMathc(JNIEnv *env, jclass clazz,
                                                      jlong handle, jbyteArray mathcBytes) {

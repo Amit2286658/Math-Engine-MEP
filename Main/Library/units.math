@@ -8,7 +8,7 @@
 <[complex_ext]
 
 # 0. 7D SI Base Dimensional Exponent Declarations (`@dim(unit_group, m, kg, s, A, K, mol, cd)`)
-@dim(distance,             1,  0,  0,  0,  0,  0,  0)
+@dim(length,               1,  0,  0,  0,  0,  0,  0)
 @dim(area,                 2,  0,  0,  0,  0,  0,  0)
 @dim(volume,               3,  0,  0,  0,  0,  0,  0)
 @dim(mass,                 0,  1,  0,  0,  0,  0,  0)
@@ -54,31 +54,31 @@
 deg2rad(deg) -> real, angle = deg * π / 180
 rad2deg(rad)                = rad * 180 / π
 
-# 2. Distance Unit Group (`distance`, normalized to SI meters `m`)
-(x)      m    :95 -> real, distance = x
-(x:iota) m    :95 -> iota, distance = @raw(x)
-(x)      km   :95 -> real, distance = x * 1000
-(x:iota) km   :95 -> iota, distance = @mul(x, 1000)
-(x)      cm   :95 -> real, distance = x * 0.01
-(x:iota) cm   :95 -> iota, distance = @mul(x, 0.01)
-(x)      mm   :95 -> real, distance = x * 0.001
-(x:iota) mm   :95 -> iota, distance = @mul(x, 0.001)
-(x)      im   :95 -> iota, distance = @raw(x)
-(x)      ikm  :95 -> iota, distance = @mul(x, 1000)
-(x)      icm  :95 -> iota, distance = @mul(x, 0.01)
-(x)      imm  :95 -> iota, distance = @mul(x, 0.001)
-(x)      um   :95 -> real, distance = x * (10 ^ -6)
-(x)      nm   :95 -> real, distance = x * (10 ^ -9)
-(x)      mi   :95 -> real, distance = x * 1609.344
-(x)      nmi  :95 -> real, distance = x * 1852
-(x)      yd   :95 -> real, distance = x * 0.9144
-(x)      ft   :95 -> real, distance = x * 0.3048
-(x)      inch :95 -> real, distance = x * 0.0254
+# 2. Length Unit Group (`length`, normalized to SI meters `m`)
+(x)      m    :95 -> real, length = x
+(x:iota) m    :95 -> iota, length = @raw(x)
+(x)      km   :95 -> real, length = x * 1000
+(x:iota) km   :95 -> iota, length = @mul(x, 1000)
+(x)      cm   :95 -> real, length = x * 0.01
+(x:iota) cm   :95 -> iota, length = @mul(x, 0.01)
+(x)      mm   :95 -> real, length = x * 0.001
+(x:iota) mm   :95 -> iota, length = @mul(x, 0.001)
+(x)      im   :95 -> iota, length = @raw(x)
+(x)      ikm  :95 -> iota, length = @mul(x, 1000)
+(x)      icm  :95 -> iota, length = @mul(x, 0.01)
+(x)      imm  :95 -> iota, length = @mul(x, 0.001)
+(x)      um   :95 -> real, length = x * (10 ^ -6)
+(x)      nm   :95 -> real, length = x * (10 ^ -9)
+(x)      mi   :95 -> real, length = x * 1609.344
+(x)      nmi  :95 -> real, length = x * 1852
+(x)      yd   :95 -> real, length = x * 0.9144
+(x)      ft   :95 -> real, length = x * 0.3048
+(x)      inch :95 -> real, length = x * 0.0254
 
 m_to_km(m)                    = m / 1000
 m_to_ft(m)                    = m / 0.3048
 m_to_mi(m)                    = m / 1609.344
-ft_to_m(ft_v) -> real, distance = ft_v * 0.3048
+ft_to_m(ft_v) -> real, length = ft_v * 0.3048
 in_to_cm(in_v)                = in_v * 2.54
 cm_to_in(cm_v)                = cm_v / 2.54
 

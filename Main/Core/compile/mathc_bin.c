@@ -40,6 +40,15 @@ static void fill_mathc_header(const MemArena *mem, const SymTable *tab, MathcHea
     hdr->field_count    = tab->field_count;
     hdr->overload_count = tab->overload_count;
     hdr->unit_count     = tab->unit_count;
+    uint16_t emod_enc   = (tab->entry_mod_id == MEM_NO_IDX) ? 0u : (uint16_t)(tab->entry_mod_id + 1u);
+    uint16_t eov_enc    = (tab->entry_ov_idx == MEM_NO_IDX) ? 0u : (uint16_t)(tab->entry_ov_idx + 1u);
+    uint16_t base_enc   = tab->base_mod_count;
+    hdr->reserved[0]    = (uint8_t)(emod_enc & 0xFFu);
+    hdr->reserved[1]    = (uint8_t)((emod_enc >> 8u) & 0xFFu);
+    hdr->reserved[2]    = (uint8_t)(eov_enc & 0xFFu);
+    hdr->reserved[3]    = (uint8_t)((eov_enc >> 8u) & 0xFFu);
+    hdr->reserved[4]    = (uint8_t)(base_enc & 0xFFu);
+    hdr->reserved[5]    = (uint8_t)((base_enc >> 8u) & 0xFFu);
     hdr->payload_bytes  = calc_mathc_payload_bytes(hdr);
     hdr->intr_hash      = delegate_intrinsic_table_hash();
     hdr->checksum       = 0;
@@ -119,13 +128,19 @@ size_t ext_save_mathc_mem(MemArena *mem, const SymTable *tab,
 }
 
 static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hdr) {
-    /* 1. Validate special bootstrap type IDs in header */
+    /* 1. Validate special bootstrap type IDs & project entry metadata in header */
     if (hdr->fast_real_type >= hdr->type_count ||
         hdr->str_type_id    >= hdr->type_count ||
         hdr->vec_type_id    >= hdr->type_count ||
         hdr->mat_type_id    >= hdr->type_count) {
         return false;
     }
+    uint16_t emod_enc = (uint16_t)((uint32_t)hdr->reserved[0] | ((uint32_t)hdr->reserved[1] << 8u));
+    uint16_t eov_enc  = (uint16_t)((uint32_t)hdr->reserved[2] | ((uint32_t)hdr->reserved[3] << 8u));
+    uint16_t base_enc = (uint16_t)((uint32_t)hdr->reserved[4] | ((uint32_t)hdr->reserved[5] << 8u));
+    if (emod_enc > 0 && (uint16_t)(emod_enc - 1u) >= hdr->mod_count) return false;
+    if (eov_enc  > 0 && (uint16_t)(eov_enc  - 1u) >= hdr->overload_count) return false;
+    if (base_enc > hdr->mod_count || hdr->reserved[6] != 0) return false;
 
     const uint8_t *cur        = payload;
     const uint8_t *src_ptr    = cur; cur += hdr->perm_src_len;
@@ -161,22 +176,23 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
         if (td.mod_id >= hdr->mod_count) return false;
         if (td.parser_intr >= INTR_COUNT) return false;
         if (td.is_consuming) {
-            if (td.parser_intr == INTR_PARSE_I64 && td.field_count > 0) {
-                if ((uint32_t)td.start_idx + (uint32_t)td.field_count > hdr->field_count) return false;
-            } else {
-                if ((uint32_t)td.start_idx + (uint32_t)td.field_count > hdr->pat_elem_count) return false;
-            }
+            if ((uint32_t)td.start_idx + (uint32_t)td.field_count > hdr->pat_elem_count) return false;
         } else if (td.parser_intr == INTR_NONE || td.parser_intr == INTR_COMPLEX_TYPE) {
             if ((uint32_t)td.start_idx + (uint32_t)td.field_count > hdr->field_count) return false;
             if (td.flat_size == 0 || td.flat_size > 256u) return false;
         }
     }
 
-    /* 4. Validate units */
-    for (uint8_t i = 1; i < hdr->unit_count; ++i) {
-        StrSlice s;
-        memcpy(&s, units_ptr + (size_t)i * sizeof(StrSlice), sizeof(StrSlice));
-        if ((uint32_t)s.off + (uint32_t)s.len > hdr->perm_src_len) return false;
+    /* 4. Validate units & 7D SI dimension descriptors */
+    for (uint8_t i = 0; i < hdr->unit_count; ++i) {
+        if (i > 0) {
+            StrSlice s;
+            memcpy(&s, units_ptr + (size_t)i * sizeof(StrSlice), sizeof(StrSlice));
+            if ((uint32_t)s.off + (uint32_t)s.len > hdr->perm_src_len) return false;
+        }
+        UnitDimDef udim;
+        memcpy(&udim, udims_ptr + (size_t)i * sizeof(UnitDimDef), sizeof(UnitDimDef));
+        if (udim.has_dim > 1u) return false;
     }
 
     /* 5. Validate pattern elements */
@@ -195,9 +211,7 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
         memcpy(&fd, fields_ptr + (size_t)i * sizeof(FieldDef), sizeof(FieldDef));
         if ((uint32_t)fd.name.off + (uint32_t)fd.name.len > hdr->perm_src_len) return false;
         if (fd.type_id == 0 || fd.type_id >= hdr->type_count) return false;
-        TypeDef f_owner;
-        memcpy(&f_owner, types_ptr + (size_t)fd.type_id * sizeof(TypeDef), sizeof(TypeDef));
-        if (f_owner.parser_intr != INTR_PARSE_I64 && fd.flat_offset >= 256u) {
+        if (fd.flat_offset >= 256u) {
             return false;
         }
     }
@@ -239,9 +253,13 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
         if ((ov.meta_tag & SYM_META_LAZY_MASK) == 0 && ov.meta_tag >= INTR_COUNT) return false;
         if (ov.ret_type >= hdr->type_count && ov.ret_type != SYM_TYPE_ANY) return false;
         if (ov.ret_unit < SYM_UNIT_LOCK_NONE && ov.ret_unit >= eff_units) return false;
+        if (ov.prec > 100u || (ov.reserved & ~SYM_OV_PRIVATE) != 0) return false;
         for (uint8_t p = 0; p < ov.param_count; ++p) {
             if (ov.param_types[p] >= hdr->type_count && ov.param_types[p] != SYM_TYPE_ANY) return false;
             if (ov.param_units[p] < SYM_UNIT_LOCK_NONE && ov.param_units[p] >= eff_units) return false;
+        }
+        for (uint8_t p = ov.param_count; p < SYM_MAX_OV_PARAMS; ++p) {
+            if (ov.param_types[p] != 0 || ov.param_units[p] != 0) return false;
         }
         if (ov.fixity != FIX_SYNTAX) {
             if (ov.body_ast >= hdr->perm_ast_count) return false;
@@ -324,7 +342,11 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
                 break;
 
             case AST_INTRINSIC:
-                if (n.sub == INTR_NONE || (n.sub >= INTR_COUNT && n.sub < 238u)) return false;
+                if (n.sub == INTR_NONE || n.sub >= INTR_COUNT) return false;
+                if (n.sub == INTR_IMPORT) {
+                    if ((uint32_t)n.left + (uint32_t)n.right > hdr->perm_src_len) return false;
+                    break;
+                }
                 if (!AST_OPT_OK(n.left) || !AST_OPT_OK(n.right)) return false;
                 if (n.ref != 0 && !AST_OPT_OK(n.ref)) return false;
                 break;
@@ -342,7 +364,7 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
                 break;
 
             case AST_SWITCH_EQ:
-                if (n.sub > 4 || !AST_REQ_OK(n.left) || !AST_OPT_OK(n.right)) return false;
+                if (n.sub > 3 || !AST_REQ_OK(n.left) || !AST_OPT_OK(n.right)) return false;
                 if (n.sub == 0 && !AST_REQ_OK(n.right)) return false;
                 if (n.sub == 1 && (n.ref == 0 || n.ref >= hdr->type_count)) return false;
                 if (n.sub == 2 && n.ref >= PARSER_MAX_LOCALS) return false;
@@ -490,6 +512,7 @@ bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
         return false;
     }
 
+    bool was_blank = (tab->mod_count == 0);
     if (!sym_ensure_mod_cap(tab, mem, hdr.mod_count)) {
         return false;
     }
@@ -555,6 +578,17 @@ bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
         uint8_t  ruid = tab->consts[i].unit_id;
         uint16_t pidx = tab->consts[i].pool_idx;
         tab->const_vals[i] = val_make_f64_at_pool(mem, rtid, ruid, pidx);
+    }
+
+    uint16_t emod_enc = (uint16_t)((uint32_t)hdr.reserved[0] | ((uint32_t)hdr.reserved[1] << 8u));
+    uint16_t eov_enc  = (uint16_t)((uint32_t)hdr.reserved[2] | ((uint32_t)hdr.reserved[3] << 8u));
+    uint16_t base_enc = (uint16_t)((uint32_t)hdr.reserved[4] | ((uint32_t)hdr.reserved[5] << 8u));
+    tab->entry_mod_id = (emod_enc == 0) ? MEM_NO_IDX : (uint16_t)(emod_enc - 1u);
+    tab->entry_ov_idx = (eov_enc  == 0) ? MEM_NO_IDX : (uint16_t)(eov_enc  - 1u);
+    if (base_enc > 0) {
+        tab->base_mod_count = base_enc;
+    } else if (was_blank && tab->entry_ov_idx == MEM_NO_IDX) {
+        tab->base_mod_count = tab->mod_count;
     }
 
     tab->var_count = 0;

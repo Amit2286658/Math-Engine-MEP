@@ -10,7 +10,7 @@
 $complex(re, im) => @complex_type
 
 # Postfix imaginary operator `i` (precedence 95: binds tighter than `^`, `*`, `-`)
-# Preserves any unit tag `T` on `x` (so `(50m)i` has type `iota` and unit `distance`!)
+# Preserves any unit tag `T` on `x` (so `(50m)i` has type `iota` and unit `length`!)
 (x:real, T)    i :95 -> iota, T    = @raw(x)
 (x:iota, T)    i :95 -> real, T    = -@raw(x)
 (z:complex, T) i :95 -> complex, T = complex(-z.im, z.re)

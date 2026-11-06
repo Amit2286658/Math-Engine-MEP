@@ -67,8 +67,11 @@ CORE_SRCS := \
 	$(wildcard Core/Code/*.c) \
 	$(wildcard Core/compile/*.c) \
 	$(wildcard Core/jni/*.c) \
-	Core/lib/delegate/delegate.c \
-	Core/lib/hardcode/hardcode.c
+	$(wildcard Core/lib/delegate/*.c) \
+	$(wildcard Core/lib/hardcode/*.c)
+
+TEST_SRCS := \
+	$(wildcard Test/*.c)
 
 INCLUDES := \
 	-ICore/Headers \
@@ -98,7 +101,7 @@ build:
 	else \
 		mkdir -p $(BUILD_DIR); \
 		$(CC) -std=c11 $(WARN_FLAGS) $(CFLAGS_OPT) $(SAN_FLAGS) \
-			$(INCLUDES) $(CORE_SRCS) Test/main.c -lm -pthread -o $(BIN); \
+			$(INCLUDES) -ITest $(CORE_SRCS) $(TEST_SRCS) -lm -pthread -o $(BIN); \
 	fi
 
 # Direct Android NDK cross-compilation (`make ndk` or `make android` / `make ndk release`)
@@ -131,7 +134,7 @@ ndk android:
 		done; \
 		"$(NDK_AR)" rcs "$(ANDROID_DIR)/libmathengine.a" $(ANDROID_DIR)/obj/*.o; \
 		"$(NDK_CC)" -shared $(ANDROID_DIR)/obj/*.o -lm -o "$(ANDROID_DIR)/libmathengine.so"; \
-		"$(NDK_CC)" -std=c11 $(WARN_FLAGS) -O2 -fPIE -pie $(INCLUDES) Test/main.c "$(ANDROID_DIR)/libmathengine.a" -lm -o "$(ANDROID_DIR)/$(APP_NAME)"; \
+		"$(NDK_CC)" -std=c11 $(WARN_FLAGS) -O2 -fPIE -pie $(INCLUDES) -ITest $(TEST_SRCS) "$(ANDROID_DIR)/libmathengine.a" -lm -o "$(ANDROID_DIR)/$(APP_NAME)"; \
 		echo "[NDK] Built $(ANDROID_DIR)/libmathengine.a, $(ANDROID_DIR)/libmathengine.so, and $(ANDROID_DIR)/$(APP_NAME)"; \
 	fi
 

@@ -111,13 +111,13 @@ molar_mass_nacl()    = @elem_mass("Na")     + @elem_mass("Cl")
 molar_mass_glucose() = 6 * @elem_mass("C")  + 12 * @elem_mass("H") + 6 * @elem_mass("O")
 
 # 8. Unit-Typed Operators & Functions + Generic Unit `T`
-(x:real, distance) "+" (y:real, distance) :<50 -> real, distance = @add(x, y)
-(x:real, distance) "-" (y:real, distance) :<50 -> real, distance = @sub(x, y)
+(x:real, length) "+" (y:real, length) :<50 -> real, length = @add(x, y)
+(x:real, length) "-" (y:real, length) :<50 -> real, length = @sub(x, y)
 
-(d:real, distance) "/" (t:real, time) :<60 -> real, speed    = @div(d, t)
-(v:real, speed)    "*" (t:real, time) :<60 -> real, distance = @mul(v, t)
+(d:real, length) "/" (t:real, time) :<60 -> real, speed    = @div(d, t)
+(v:real, speed)    "*" (t:real, time) :<60 -> real, length = @mul(v, t)
 
-avg_speed(d:real, distance, t:real, time) -> real, speed = d / t
+avg_speed(d:real, length, t:real, time) -> real, speed = d / t
 
 scale_unit(x:real, T, k)      -> real, T = x * k
 unit_span(a:real, T, b:real, T) -> real, T = @abs(a - b)

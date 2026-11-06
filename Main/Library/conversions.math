@@ -7,21 +7,21 @@
 <[trig]
 <[units]
 
-# 1. Universal Same-Unit-Group Infix Conversion Operator `"in"` (`:<42`)
-(val:real, T) in (unit:real, T) :<42 -> real, T = @div(val, unit)
+# 1. Universal Same-Unit-Group Infix Conversion Operator `"into"` (`:>55`)
+(val:real, T) into (unit:real, T) :>55 -> real, T = @div(val, unit)
 
-# 2. Distance Same-Unit Conversions (`distance` group: km, m, cm, mm, um, nm, mi, nmi, yd, ft, inch)
-(x:real, distance) to_km   :90 -> real, none = x / 1000
-(x:real, distance) to_m    :90 -> real, none = x
-(x:real, distance) to_cm   :90 -> real, none = x * 100
-(x:real, distance) to_mm   :90 -> real, none = x * 1000
-(x:real, distance) to_um   :90 -> real, none = x * (10 ^ 6)
-(x:real, distance) to_nm   :90 -> real, none = x * (10 ^ 9)
-(x:real, distance) to_mi   :90 -> real, none = x / 1609.344
-(x:real, distance) to_nmi  :90 -> real, none = x / 1852
-(x:real, distance) to_yd   :90 -> real, none = x / 0.9144
-(x:real, distance) to_ft   :90 -> real, none = x / 0.3048
-(x:real, distance) to_inch :90 -> real, none = x / 0.0254
+# 2. Length Same-Unit Conversions (`length` group: km, m, cm, mm, um, nm, mi, nmi, yd, ft, inch)
+(x:real, length) to_km   :90 -> real, none = x / 1000
+(x:real, length) to_m    :90 -> real, none = x
+(x:real, length) to_cm   :90 -> real, none = x * 100
+(x:real, length) to_mm   :90 -> real, none = x * 1000
+(x:real, length) to_um   :90 -> real, none = x * (10 ^ 6)
+(x:real, length) to_nm   :90 -> real, none = x * (10 ^ 9)
+(x:real, length) to_mi   :90 -> real, none = x / 1609.344
+(x:real, length) to_nmi  :90 -> real, none = x / 1852
+(x:real, length) to_yd   :90 -> real, none = x / 0.9144
+(x:real, length) to_ft   :90 -> real, none = x / 0.3048
+(x:real, length) to_inch :90 -> real, none = x / 0.0254
 
 km_to_m(x)  = x * 1000
 m_to_cm(x)  = x * 100

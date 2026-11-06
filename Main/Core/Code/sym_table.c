@@ -36,10 +36,14 @@ void sym_init(SymTable *tab) {
     if (!tab) return;
     sym_free_heap(tab);
     memset(tab, 0, sizeof(*tab));
-    tab->mod_cap    = SYM_SBO_MODULES;
-    tab->var_cap    = SYM_SBO_VARS;
-    tab->type_count = 1; /* Index 0 reserved for MEM_TYPE_VOID */
-    tab->unit_count = 1; /* Index 0 reserved for MEM_UNIT_NONE */
+    tab->mod_cap           = SYM_SBO_MODULES;
+    tab->var_cap           = SYM_SBO_VARS;
+    tab->type_count        = 1; /* Index 0 reserved for MEM_TYPE_VOID */
+    tab->unit_count        = 1; /* Index 0 reserved for MEM_UNIT_NONE */
+    tab->base_mod_count    = 0;
+    tab->entry_mod_id      = MEM_NO_IDX;
+    tab->entry_ov_idx      = MEM_NO_IDX;
+    tab->ephem_unit_cursor = 0;
     memset(tab->sym_first_ov, 0xFF, sizeof(tab->sym_first_ov));
     memset(tab->sym_last_ov,  0xFF, sizeof(tab->sym_last_ov));
     memset(tab->ov_next,      0xFF, sizeof(tab->ov_next));
@@ -325,22 +329,45 @@ static bool sym_check_var_locks(const SymTable *tab, MemArena *mem,
     return true;
 }
 
-static void sym_sync_var_to_const(SymTable *tab, MemArena *mem, const ModVarDef *mv) {
+static void sym_sync_var_to_const(SymTable *tab, MemArena *mem, ModVarDef *mv) {
+    uint16_t tid = val_get_type(mem, mv->val);
+    if (tid == 0 || tid >= tab->type_count || !tab->types[tid].is_consuming ||
+        tid == mem->str_type_id) {
+        return;
+    }
     for (uint8_t i = 0; i < tab->const_count; ++i) {
         if (tab->consts[i].sym_id == mv->sym_id && tab->consts[i].mod_id == mv->mod_id) {
-            uint16_t tid = val_get_type(mem, mv->val);
-            if (tid != 0 && tid < tab->type_count && tab->types[tid].is_consuming &&
-                tid != mem->str_type_id) {
-                uint8_t uid = val_get_unit(mem, mv->val);
-                double  d   = val_get_f64(mem, mv->val);
-                mem_write_pool(mem, tab->consts[i].pool_idx, d);
-                tab->consts[i].type_id  = (uint8_t)tid;
-                tab->consts[i].unit_id  = uid;
-                tab->consts[i].reserved = mv->flags;
-                tab->const_vals[tab->consts[i].val_idx] =
-                    val_make_f64_at_pool(mem, tid, uid, tab->consts[i].pool_idx);
-            }
+            uint8_t uid = val_get_unit(mem, mv->val);
+            double  d   = val_get_f64(mem, mv->val);
+            mem_write_pool(mem, tab->consts[i].pool_idx, d);
+            tab->consts[i].type_id  = (uint8_t)tid;
+            tab->consts[i].unit_id  = uid;
+            tab->consts[i].reserved = mv->flags;
+            tab->const_vals[tab->consts[i].val_idx] =
+                val_make_f64_at_pool(mem, tid, uid, tab->consts[i].pool_idx);
+            mv->val = tab->const_vals[tab->consts[i].val_idx];
             return;
+        }
+    }
+    if (tab->const_count < SYM_MAX_CONSTS) {
+        uint16_t c_pool_idx = mem_alloc_pool(mem, 1);
+        if (c_pool_idx != MEM_NO_IDX && !mem->has_error) {
+            uint8_t vuid = val_get_unit(mem, mv->val);
+            mem_write_pool(mem, c_pool_idx, val_get_f64(mem, mv->val));
+            if ((uint16_t)(c_pool_idx + 1u) > mem->perm_pool_top) {
+                mem->perm_pool_top = (uint16_t)(c_pool_idx + 1u);
+            }
+            Value cval = val_make_f64_at_pool(mem, tid, vuid, c_pool_idx);
+            mv->val = cval;
+            uint8_t cid = tab->const_count++;
+            tab->consts[cid].sym_id   = mv->sym_id;
+            tab->consts[cid].mod_id   = mv->mod_id;
+            tab->consts[cid].type_id  = (uint8_t)tid;
+            tab->consts[cid].unit_id  = vuid;
+            tab->consts[cid].val_idx  = cid;
+            tab->consts[cid].reserved = mv->flags;
+            tab->consts[cid].pool_idx = c_pool_idx;
+            tab->const_vals[cid]      = cval;
         }
     }
 }
@@ -568,7 +595,6 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
 }
 
 bool sym_reset_module(SymTable *tab, MemArena *mem, const char *mod_name) {
-    if (mem) memset(mem->ov_bc_entry, 0, sizeof(mem->ov_bc_entry));
     if (!tab || !mem) return false;
     const char *eff_name = (mod_name && mod_name[0] != '\0') ? mod_name : "default";
     int mid = sym_find_mod(tab, mem, eff_name);
@@ -808,6 +834,27 @@ const char *sym_unit_name(const SymTable *tab, const MemArena *mem, uint8_t unit
             }
         }
         snprintf(buf, cap, "none");
+        return buf;
+    }
+    if (unit_id >= SYM_EPHEM_UNIT_BASE && unit_id < SYM_MAX_UNITS &&
+        tab->unit_dims[unit_id].has_dim) {
+        static const char *const k_si_names[7] = { "m", "kg", "s", "A", "K", "mol", "cd" };
+        size_t used = 0;
+        if (cap > 0) buf[0] = '\0';
+        for (int d = 0; d < 7; ++d) {
+            int e = (int)tab->unit_dims[unit_id].exp[d];
+            if (e == 0) continue;
+            int n = (e == 1)
+                    ? snprintf(buf + used, (used < cap) ? (cap - used) : 0,
+                               "%s%s", (used > 0 ? "*" : ""), k_si_names[d])
+                    : snprintf(buf + used, (used < cap) ? (cap - used) : 0,
+                               "%s%s^%d", (used > 0 ? "*" : ""), k_si_names[d], e);
+            if (n > 0) {
+                used += (size_t)n;
+                if (used >= cap) { used = cap - 1; break; }
+            }
+        }
+        if (used == 0) snprintf(buf, cap, "none");
         return buf;
     }
     if (unit_id == 0 || unit_id == SYM_UNIT_OMITTED || unit_id == SYM_UNIT_LOCK_NONE ||

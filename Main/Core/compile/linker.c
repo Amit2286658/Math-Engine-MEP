@@ -32,11 +32,13 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
 
     uint8_t  *adj       = (uint8_t *)calloc((size_t)n * (size_t)n, sizeof(uint8_t));
     uint16_t *in_deg    = (uint16_t *)calloc(n, sizeof(uint16_t));
+    uint16_t *out_deg   = (uint16_t *)calloc(n, sizeof(uint16_t));
     bool     *scheduled = (bool *)calloc(n, sizeof(bool));
     uint16_t *order     = (uint16_t *)calloc(n, sizeof(uint16_t));
-    if (!adj || !in_deg || !scheduled || !order) {
+    if (!adj || !in_deg || !out_deg || !scheduled || !order) {
         free(adj);
         free(in_deg);
+        free(out_deg);
         free(scheduled);
         free(order);
         mem_err(mem, "Out of memory allocating module linker graph");
@@ -46,6 +48,7 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     #define FREE_GRAPH() do { \
         free(adj); \
         free(in_deg); \
+        free(out_deg); \
         free(scheduled); \
         free(order); \
     } while (0)
@@ -58,8 +61,8 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     for (uint16_t u = 0; u < n; ++u) {
         const ExtCompiledUnit *unit = &units[u];
 
-        /* Ensure named module has not been loaded into `tab` since compilation */
-        if (!unit->is_default_mod) {
+        /* Ensure named module has not been loaded into `tab` since compilation (unless in patch mode) */
+        if (!unit->is_default_mod && !ctx->allow_redef) {
             for (uint16_t m = 0; m < tab->mod_count; ++m) {
                 if (mem_slice_eq_cstr(mem, mod_names[m], unit->mod_name)) {
                     mem_err(mem, "Module '[%s]' is already loaded", unit->mod_name);
@@ -108,6 +111,7 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
             if (provider >= 0 && !ADJ(provider, u)) {
                 ADJ(provider, u) = 1u;
                 in_deg[u]++;
+                out_deg[provider]++;
             }
         }
     }
@@ -120,6 +124,7 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
             if (!ADJ(v, u) && !ADJ(u, v)) {
                 ADJ(v, u) = 1u;
                 in_deg[u]++;
+                out_deg[v]++;
             }
         }
     }
@@ -195,27 +200,109 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     uint8_t  saved_const_count    = tab->const_count;
     uint16_t saved_var_count      = tab->var_count;
 
-    /* 4. Compile each module slice in resolved topological order.
-     *    In a multi-unit link batch (order_cnt > 1), any unit that is imported via `<[dep]`
-     *    by a downstream unit in the batch is compiled in declaration-only dependency mode
-     *    (`is_dep_load = true`), while root/leaf units run their entry point or top-level code. */
-    for (uint16_t k = 0; k < order_cnt; ++k) {
-        uint16_t u_idx = order[k];
-        const ExtCompiledUnit *u = &units[u_idx];
-        bool is_dep_unit = false;
-        if (order_cnt > 1 && !u->is_default_mod) {
-            for (uint16_t w = 0; w < n && !is_dep_unit; ++w) {
-                if (w == u_idx) continue;
-                const char (*wdeps)[32] = ext_unit_deps(&units[w]);
-                for (uint16_t d = 0; d < units[w].dep_count; ++d) {
-                    if (strcmp(wdeps[d], u->mod_name) == 0) {
-                        is_dep_unit = true;
+    /* 3b. Differentiate Standalone Script vs. Library Bundle vs. Multi-File Project:
+     *     - Single unit (`order_cnt == 1`): Standalone script or module (`entry_unit = order[0]`).
+     *     - Multi-unit (`order_cnt > 1`):
+     *         (a) Enforce at most one `@entry(fn)` across all project units.
+     *         (b) If no `@entry(fn)`, enforce at most one `main()` across all project units.
+     *         (c) Otherwise, if a unique User-DAG sink (`out_deg[u] == 0`) has top-level
+     *             script statements (`has_top_expr`), select that sink as `entry_unit`.
+     *         (d) If 0 units have `@entry`, `main()`, or sink expressions, it is a
+     *             Pure Library Bundle (`entry_unit = -1`, all units load in declaration+init mode). */
+    int entry_unit = -1;
+    if (order_cnt == 1) {
+        entry_unit = (int)order[0];
+    } else if (order_cnt > 1) {
+        int exp_entry_u  = -1;
+        int main_entry_u = -1;
+        int sink_expr_u  = -1;
+        for (uint16_t k = 0; k < order_cnt; ++k) {
+            uint16_t u_idx = order[k];
+            const ExtCompiledUnit *u = &units[u_idx];
+            if (u->explicit_entry[0] != '\0') {
+                if (exp_entry_u >= 0) {
+                    mem_err(mem, "Multiple '@entry' declarations in project ('[%s]' and '[%s]'); only one entry point is allowed",
+                            units[exp_entry_u].mod_name, u->mod_name);
+                    FREE_GRAPH();
+                    free(saved_mod_active);
+                    return false;
+                }
+                exp_entry_u = (int)u_idx;
+            }
+            if (u->has_main_fn) {
+                if (main_entry_u >= 0 && exp_entry_u < 0) {
+                    /* Check after loop in case @entry disambiguates */
+                }
+                if (main_entry_u < 0) main_entry_u = (int)u_idx;
+                else                  main_entry_u = -2 - main_entry_u; /* mark duplicate */
+            }
+            if (out_deg[u_idx] == 0 && u->has_top_expr) {
+                if (sink_expr_u < 0) sink_expr_u = (int)u_idx;
+                else                 sink_expr_u = -2 - sink_expr_u;
+            }
+        }
+        if (exp_entry_u >= 0) {
+            entry_unit = exp_entry_u;
+        } else if (main_entry_u != -1) {
+            if (main_entry_u < -1) {
+                int first_u = -(main_entry_u + 2);
+                const char *sec_name = "unknown";
+                for (uint16_t k = 0; k < order_cnt; ++k) {
+                    if ((int)order[k] != first_u && units[order[k]].has_main_fn) {
+                        sec_name = units[order[k]].mod_name;
                         break;
                     }
                 }
+                mem_err(mem, "Multiple 'main()' entry points in project ('[%s]' and '[%s]'); use '@entry(fn)' or keep a single 'main()'",
+                        units[first_u].mod_name, sec_name);
+                FREE_GRAPH();
+                free(saved_mod_active);
+                return false;
+            }
+            entry_unit = main_entry_u;
+        } else if (sink_expr_u >= 0) {
+            entry_unit = sink_expr_u;
+        } else if (sink_expr_u < -1) {
+            int first_u = -(sink_expr_u + 2);
+            const char *sec_name = "unknown";
+            for (uint16_t k = 0; k < order_cnt; ++k) {
+                uint16_t ui = order[k];
+                if ((int)ui != first_u && out_deg[ui] == 0 && units[ui].has_top_expr) {
+                    sec_name = units[ui].mod_name;
+                    break;
+                }
+            }
+            mem_err(mem, "Ambiguous project entry: multiple root modules ('[%s]' and '[%s]') contain top-level script statements; define '@entry' or 'main()'",
+                    units[first_u].mod_name, sec_name);
+            FREE_GRAPH();
+            free(saved_mod_active);
+            return false;
+        }
+
+        /* Ensure `entry_unit` (when it is a DAG sink) runs last after all project modules initialize */
+        if (entry_unit >= 0 && out_deg[entry_unit] == 0) {
+            for (uint16_t k = 0; k + 1 < order_cnt; ++k) {
+                if ((int)order[k] == entry_unit) {
+                    uint16_t tmp = order[k];
+                    memmove(&order[k], &order[k + 1], (size_t)(order_cnt - 1u - k) * sizeof(uint16_t));
+                    order[order_cnt - 1u] = tmp;
+                    break;
+                }
             }
         }
-        if (!ext_compile_slice_ex(mem, tab, is_dep_unit, ctx->src_pool + u->src_off, u->src_len)) {
+    }
+
+    /* 4. Compile each module slice in resolved topological order:
+     *    - Dependency/library units (`u_idx != entry_unit`) run with `is_dep_unit = true`
+     *      (registering types, units, functions, operators, and module variable initializers).
+     *    - The single `entry_unit` (if any) runs with `is_dep_unit = false` at the end. */
+    for (uint16_t k = 0; k < order_cnt; ++k) {
+        uint16_t u_idx = order[k];
+        const ExtCompiledUnit *u = &units[u_idx];
+        bool is_dep_unit = ctx->allow_redef ? true
+                                            : ((order_cnt > 1) ? ((int)u_idx != entry_unit) : false);
+        if (!ext_eval_slice_ex(mem, tab, "default", ctx->allow_redef, is_dep_unit,
+                               ctx->src_pool + u->src_off, u->src_len, NULL)) {
             break;
         }
     }
@@ -258,6 +345,10 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     }
 
     free(saved_mod_active);
+    if (ctx->allow_redef) {
+        /* Promoted patches become part of the Base Layer for downstream scripts/projects */
+        tab->base_mod_count = tab->mod_count;
+    }
     mem_snapshot_perm(mem);
     return true;
 }

@@ -14,6 +14,7 @@
  */
 
 #include "math_engine.h"
+#include "../lib/delegate/delegate.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -101,16 +102,9 @@ bool eng_eval(Engine *eng, const char *expr, Value *out_val) {
         return false;
     }
 
-    /* Delegate scripts containing top-level $type / $enum / $struct / import declarations to ext_eval_slice */
-    {
-        size_t p = 0;
-        while (p < raw_len && (expr[p] == ' ' || expr[p] == '\t' || expr[p] == '\r' || expr[p] == '\n')) p++;
-        if (p < raw_len && (expr[p] == '$' ||
-            (p + 5 <= raw_len && memcmp(expr + p, "enum ", 5) == 0) ||
-            (p + 7 <= raw_len && memcmp(expr + p, "struct ", 7) == 0) ||
-            (p + 7 <= raw_len && memcmp(expr + p, "import ", 7) == 0))) {
-            return ext_eval_slice(&eng->mem, &eng->sym, "default", true, expr, (uint16_t)raw_len, out_val);
-        }
+    /* Route scripts containing module headers, `<[dep]`, `import`, `@dim`, `@entry`, `$type`/`struct`, or `pub`/`priv` through the unified module pipeline */
+    if (ext_src_has_module_constructs(&eng->mem, &eng->sym, expr, (uint16_t)raw_len)) {
+        return eng_build_and_run(eng, &expr, 1, out_val);
     }
 
     Parser P;
@@ -144,13 +138,7 @@ bool eng_eval(Engine *eng, const char *expr, Value *out_val) {
         }
     }
 
-    Value res;
-    uint16_t bc_pc = (P.label_count == 0) ? bc_compile_ast(&eng->mem, &eng->sym, root, false) : MEM_NO_IDX;
-    if (bc_pc != MEM_NO_IDX) {
-        res = bc_exec(&eng->mem, &eng->sym, bc_pc, frame_base, 0);
-    } else {
-        res = eval_ast(&eng->mem, &eng->sym, root, frame_base, 0);
-    }
+    Value res = eval_ast(&eng->mem, &eng->sym, root, frame_base, 0);
     if (eng->mem.jump_active == JUMP_RETURN) {
         res = eng->mem.jump_val;
         eng->mem.jump_active = JUMP_NONE;
@@ -465,264 +453,15 @@ static void eng_buf_append(char *buf, size_t cap, size_t *used, const char *fmt,
     }
 }
 
-static void format_struct_at(const Engine *eng, uint16_t type_id, uint16_t pool_idx,
-                             uint8_t depth, char *buf, size_t cap);
-
-static void format_mat_slice(const Engine *eng, uint16_t data_idx, uint32_t base_off,
-                             const uint16_t *dims, uint8_t rank, uint8_t axis,
-                             bool high_prec, char *buf, size_t cap, size_t *used) {
-    eng_buf_append(buf, cap, used, "[");
-    if (axis + 1 >= rank) {
-        uint16_t n = dims[axis];
-        for (uint16_t i = 0; i < n && *used + 1 < cap; ++i) {
-            double v = mem_data_read(&eng->mem, data_idx, base_off + i);
-            if (v == 0.0) v = 0.0; /* normalize -0.0 */
-            eng_buf_append(buf, cap, used,
-                           high_prec ? "%s%.17g" : "%s%.6g",
-                           (i > 0 ? ", " : ""), v);
-        }
-    } else {
-        uint32_t stride = 1;
-        for (uint8_t a = (uint8_t)(axis + 1); a < rank; ++a) {
-            stride *= (uint32_t)dims[a];
-        }
-        uint16_t n = dims[axis];
-        for (uint16_t i = 0; i < n && *used + 1 < cap; ++i) {
-            if (i > 0) {
-                eng_buf_append(buf, cap, used, ", ");
-            }
-            format_mat_slice(eng, data_idx, base_off + (uint32_t)i * stride,
-                             dims, rank, (uint8_t)(axis + 1), high_prec, buf, cap, used);
-        }
-    }
-    eng_buf_append(buf, cap, used, "]");
-}
-
 void eng_format_mat_at(const Engine *eng, uint16_t hdr_idx, bool high_prec,
                        char *buf, size_t cap) {
-    uint8_t  rank     = (uint8_t)mem_read_pool(&eng->mem, (uint16_t)(hdr_idx + 0));
-    uint16_t data_idx = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(hdr_idx + 2));
-    uint16_t dims[4]  = { 0, 0, 0, 0 };
-    for (uint8_t i = 0; i < 4; ++i) {
-        dims[i] = (i < rank) ? (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(hdr_idx + 4u + i)) : 0;
-    }
-    if (rank == 0) {
-        snprintf(buf, cap, "[]");
-        return;
-    }
-    size_t used = 0;
-    format_mat_slice(eng, data_idx, 0, dims, rank, 0, high_prec, buf, cap, &used);
-}
-
-static void format_vec_at(const Engine *eng, uint16_t hdr_idx, uint8_t depth,
-                          char *buf, size_t cap) {
-    if (depth > 16) {
-        snprintf(buf, cap, "[...]");
-        return;
-    }
-    uint16_t raw_hdr0 = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(hdr_idx + 0));
-    uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
-    uint32_t len      = (uint32_t)mem_read_pool(&eng->mem, (uint16_t)(hdr_idx + 1));
-    uint16_t data_idx = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(hdr_idx + 3));
-    uint16_t stride   = (elem_tid > 0 && elem_tid < eng->sym.type_count)
-                        ? eng->sym.types[elem_tid].flat_size : 1;
-
-    size_t used = 0;
-    if (cap > 0) buf[0] = '\0';
-    eng_buf_append(buf, cap, &used, "[");
-    for (uint32_t i = 0; i < len && used + 1 < cap; ++i) {
-        uint32_t off = i * (uint32_t)stride;
-        char elem_str[96];
-        if (elem_tid == eng->mem.str_type_id && elem_tid != 0) {
-            uint32_t packed = (uint32_t)mem_data_read(&eng->mem, data_idx, off);
-            StrSlice s = { (uint16_t)(packed >> 16), (uint16_t)(packed & 0xFFFFu) };
-            snprintf(elem_str, sizeof(elem_str), "\"%.*s\"",
-                     (int)s.len, mem_str_ptr(&eng->mem, s));
-        } else if (elem_tid == eng->mem.vec_type_id && elem_tid != 0) {
-            format_vec_at(eng, (uint16_t)(data_idx + off), (uint8_t)(depth + 1), elem_str, sizeof(elem_str));
-        } else if (elem_tid > 0 && elem_tid < eng->sym.type_count &&
-                   !eng->sym.types[elem_tid].is_consuming) {
-            format_struct_at(eng, elem_tid, (uint16_t)(data_idx + off), (uint8_t)(depth + 1), elem_str, sizeof(elem_str));
-        } else {
-            snprintf(elem_str, sizeof(elem_str), "%.6g", mem_data_read(&eng->mem, data_idx, off));
-        }
-        eng_buf_append(buf, cap, &used, "%s%s", (i > 0 ? ", " : ""), elem_str);
-    }
-    eng_buf_append(buf, cap, &used, "]");
-}
-
-static void format_struct_at(const Engine *eng, uint16_t type_id, uint16_t pool_idx,
-                             uint8_t depth, char *buf, size_t cap) {
-    if (depth > 16) {
-        snprintf(buf, cap, "<...> ");
-        return;
-    }
-    if (type_id == eng->mem.vec_type_id && type_id != 0) {
-        format_vec_at(eng, pool_idx, depth, buf, cap);
-        return;
-    }
-    if (type_id == eng->mem.mat_type_id && type_id != 0) {
-        eng_format_mat_at(eng, pool_idx, false, buf, cap);
-        return;
-    }
-    if (type_id == eng->mem.fn_type_id && type_id != 0) {
-        unsigned pcnt = (unsigned)mem_read_pool(&eng->mem, (uint16_t)(pool_idx + 1)) & 0x3Fu;
-        snprintf(buf, cap, "<fn/%u>", pcnt);
-        return;
-    }
-    if (type_id == eng->mem.map_type_id && type_id != 0) {
-        uint16_t len      = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pool_idx + 1));
-        uint16_t data_idx = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pool_idx + 3));
-        size_t used = 0;
-        if (cap > 0) buf[0] = '\0';
-        eng_buf_append(buf, cap, &used, "{");
-        for (uint16_t i = 0; i < len && used + 1 < cap; ++i) {
-            StrSlice kslice = mem_map_entry_key(&eng->mem, data_idx, i);
-            Value    vval   = mem_map_entry_val(&eng->mem, data_idx, i);
-            char vstr[96];
-            eng_format_value(eng, vval, vstr, sizeof(vstr));
-            eng_buf_append(buf, cap, &used, "%s\"%.*s\": %s",
-                           (i > 0 ? ", " : ""),
-                           (int)kslice.len, mem_str_ptr(&eng->mem, kslice),
-                           vstr);
-        }
-        eng_buf_append(buf, cap, &used, "}");
-        return;
-    }
-
-    const TypeDef *td = &eng->sym.types[type_id];
-    char tname[32];
-    eng_type_name(eng, type_id, tname, sizeof(tname));
-
-    if (!td->is_consuming && td->parser_intr == INTR_PARSE_I64 && td->field_count > 0) {
-        int v_tag = (int)llround(mem_read_pool(&eng->mem, pool_idx));
-        uint8_t i = 0;
-        while (i < td->field_count) {
-            uint16_t vfd_i = (uint16_t)(td->start_idx + i);
-            const FieldDef *vfd = &eng->sym.fields[vfd_i];
-            if (vfd->type_id == type_id) {
-                int cur_tag  = (int)(vfd->flat_offset & 0xFFu);
-                uint8_t pcnt = (uint8_t)(vfd->flat_offset >> 8u);
-                if (cur_tag == v_tag) {
-                    size_t used = 0;
-                    if (cap > 0) buf[0] = '\0';
-                    eng_buf_append(buf, cap, &used, "%s.%.*s",
-                                   tname, (int)vfd->name.len, mem_str_ptr(&eng->mem, vfd->name));
-                    if (pcnt > 0) {
-                        eng_buf_append(buf, cap, &used, "(");
-                        for (uint8_t pi = 0; pi < pcnt && used + 1 < cap; ++pi) {
-                            const FieldDef *pfd = &eng->sym.fields[vfd_i + 1u + pi];
-                            char p_str[64];
-                            if (!eng->sym.types[pfd->type_id].is_consuming) {
-                                format_struct_at(eng, pfd->type_id,
-                                                 (uint16_t)(pool_idx + pfd->flat_offset),
-                                                 (uint8_t)(depth + 1), p_str, sizeof(p_str));
-                            } else if (pfd->type_id == eng->mem.str_type_id && eng->mem.str_type_id != 0) {
-                                uint32_t pk = (uint32_t)mem_read_pool(&eng->mem, (uint16_t)(pool_idx + pfd->flat_offset));
-                                StrSlice s = { (uint16_t)(pk >> 16u), (uint16_t)(pk & 0xFFFFu) };
-                                snprintf(p_str, sizeof(p_str), "\"%.*s\"", (int)s.len, mem_str_ptr(&eng->mem, s));
-                            } else {
-                                snprintf(p_str, sizeof(p_str), "%.6g",
-                                         mem_read_pool(&eng->mem, (uint16_t)(pool_idx + pfd->flat_offset)));
-                            }
-                            eng_buf_append(buf, cap, &used, "%s%s", (pi > 0 ? ", " : ""), p_str);
-                        }
-                        eng_buf_append(buf, cap, &used, ")");
-                    }
-                    return;
-                }
-                i = (uint8_t)(i + 1u + pcnt);
-            } else {
-                i++;
-            }
-        }
-    }
-
-    if (td->parser_intr == INTR_COMPLEX_TYPE && td->flat_size == 2) {
-        double re = mem_read_pool(&eng->mem, pool_idx);
-        double im = mem_read_pool(&eng->mem, (uint16_t)(pool_idx + 1));
-        if (im >= 0.0) {
-            snprintf(buf, cap, "%.6g + %.6gi", re, im);
-        } else {
-            snprintf(buf, cap, "%.6g - %.6gi", re, -im);
-        }
-        return;
-    }
-
-    size_t used = 0;
-    if (cap > 0) buf[0] = '\0';
-    eng_buf_append(buf, cap, &used, "%s(", tname);
-    for (uint8_t i = 0; i < td->field_count && used + 1 < cap; ++i) {
-        const FieldDef *fd = &eng->sym.fields[td->start_idx + i];
-        char f_str[64];
-        if (!eng->sym.types[fd->type_id].is_consuming) {
-            format_struct_at(eng, fd->type_id, (uint16_t)(pool_idx + fd->flat_offset),
-                             (uint8_t)(depth + 1), f_str, sizeof(f_str));
-        } else if (fd->type_id == eng->mem.str_type_id && eng->mem.str_type_id != 0) {
-            uint32_t packed = (uint32_t)mem_read_pool(&eng->mem, (uint16_t)(pool_idx + fd->flat_offset));
-            StrSlice s = { (uint16_t)(packed >> 16u), (uint16_t)(packed & 0xFFFFu) };
-            snprintf(f_str, sizeof(f_str), "\"%.*s\"", (int)s.len, mem_str_ptr(&eng->mem, s));
-        } else if (eng->sym.types[fd->type_id].parser_intr == INTR_PARSE_I64 &&
-                   eng->sym.types[fd->type_id].field_count > 0) {
-            const TypeDef *etd = &eng->sym.types[fd->type_id];
-            int ev = (int)llround(mem_read_pool(&eng->mem, (uint16_t)(pool_idx + fd->flat_offset)));
-            bool found_ev = false;
-            for (uint8_t vi = 0; vi < etd->field_count; ++vi) {
-                const FieldDef *vfd = &eng->sym.fields[etd->start_idx + vi];
-                if ((int)(int16_t)vfd->flat_offset == ev) {
-                    snprintf(f_str, sizeof(f_str), "%.*s.%.*s",
-                             (int)etd->name.len, mem_str_ptr(&eng->mem, etd->name),
-                             (int)vfd->name.len, mem_str_ptr(&eng->mem, vfd->name));
-                    found_ev = true;
-                    break;
-                }
-            }
-            if (!found_ev) snprintf(f_str, sizeof(f_str), "%d", ev);
-        } else {
-            snprintf(f_str, sizeof(f_str), "%.6g", mem_read_pool(&eng->mem, (uint16_t)(pool_idx + fd->flat_offset)));
-        }
-        eng_buf_append(buf, cap, &used, "%s%.*s=%s",
-                       (i > 0 ? ", " : ""),
-                       (int)fd->name.len, mem_str_ptr(&eng->mem, fd->name),
-                       f_str);
-    }
-    eng_buf_append(buf, cap, &used, ")");
+    if (!eng || !buf || cap == 0) return;
+    delegate_format_mat_at(&eng->mem, hdr_idx, high_prec, buf, cap);
 }
 
 void eng_format_value(const Engine *eng, Value val, char *buf, size_t buf_cap) {
     if (!eng || !buf || buf_cap == 0) return;
-    uint16_t tid = eng_val_type(eng, val);
-    if (tid == 0 || tid >= eng->sym.type_count) {
-        snprintf(buf, buf_cap, "<void>");
-        return;
-    }
-    const TypeDef *td = &eng->sym.types[tid];
-    if (td->is_consuming) {
-        if (td->parser_intr == INTR_PARSE_STR_SLICE) {
-            StrSlice s = val_get_str(&eng->mem, val);
-            snprintf(buf, buf_cap, "\"%.*s\"", (int)s.len, mem_str_ptr(&eng->mem, s));
-        } else if (td->parser_intr == INTR_PARSE_F64_TRIM1) {
-            snprintf(buf, buf_cap, "%.6gi", val_get_f64(&eng->mem, val));
-        } else if (td->parser_intr == INTR_PARSE_I64 && td->field_count > 0) {
-            int ev = (int)llround(val_get_f64(&eng->mem, val));
-            bool found_ev = false;
-            for (uint8_t vi = 0; vi < td->field_count; ++vi) {
-                const FieldDef *vfd = &eng->sym.fields[td->start_idx + vi];
-                if ((int)(int16_t)vfd->flat_offset == ev) {
-                    snprintf(buf, buf_cap, "%.*s.%.*s",
-                             (int)td->name.len, mem_str_ptr(&eng->mem, td->name),
-                             (int)vfd->name.len, mem_str_ptr(&eng->mem, vfd->name));
-                    found_ev = true;
-                    break;
-                }
-            }
-            if (!found_ev) snprintf(buf, buf_cap, "%d", ev);
-        } else {
-            snprintf(buf, buf_cap, "%.10g", val_get_f64(&eng->mem, val));
-        }
-    } else {
-        format_struct_at(eng, tid, val_get_pool_idx(val), 0, buf, buf_cap);
-    }
+    delegate_format_value(&eng->mem, &eng->sym, val, buf, buf_cap);
 }
 
 size_t eng_mod_format_vars(const Engine *eng, const char *mod_name,
@@ -1059,17 +798,78 @@ bool eng_import_file(Engine *eng, const char *file_path) {
                                      true, NULL);
 }
 
-uint32_t eng_bc_steps(const Engine *eng) {
-    return eng ? eng->mem.bc_exec_steps : 0u;
+bool eng_has_entry(const Engine *eng) {
+    return eng && eng->sym.entry_ov_idx != MEM_NO_IDX &&
+           eng->sym.entry_ov_idx < eng->sym.overload_count;
 }
 
-uint16_t eng_bc_inst_count(const Engine *eng) {
-    return eng ? eng->mem.bc_count : 0u;
+bool eng_run_entry(Engine *eng, Value *out_val) {
+    if (out_val) *out_val = val_void();
+    if (!eng) return false;
+    eng->mem.sym_tab = &eng->sym;
+    mem_clear_err(&eng->mem);
+    mem_rewind_scratch(&eng->mem);
+    if (eng->sym.entry_ov_idx == MEM_NO_IDX ||
+        eng->sym.entry_ov_idx >= eng->sym.overload_count) {
+        mem_err(&eng->mem, "No project entry point ('@entry' or 'main()') is defined");
+        return false;
+    }
+    const OpOverload *ov = &eng->sym.overloads[eng->sym.entry_ov_idx];
+    uint16_t prev_mem_mod = eng->mem.cur_mod;
+    uint16_t prev_tab_mod = eng->sym.cur_mod;
+    eng->mem.cur_mod = ov->mod_id;
+    eng->sym.cur_mod = ov->mod_id;
+    Value res = eval_dispatch_overload(&eng->mem, &eng->sym, ov->sym_id, FIX_FUNC, 0, NULL);
+    eng->mem.cur_mod = prev_mem_mod;
+    eng->sym.cur_mod = prev_tab_mod;
+    if (eng->mem.has_error) return false;
+    eng->mem.last_mod_val = res;
+    if (out_val) *out_val = res;
+    return true;
 }
 
-size_t eng_bc_disasm(Engine *eng, const char *fn_name, char *out_buf, size_t buf_cap) {
-    if (!out_buf || buf_cap == 0) return 0;
-    out_buf[0] = '\0';
-    if (!eng || !fn_name || fn_name[0] == '\0') return 0;
-    return bc_disasm_func(&eng->mem, &eng->sym, fn_name, (uint16_t)strlen(fn_name), out_buf, buf_cap);
+bool eng_build_and_run(Engine *eng, const char *const *sources,
+                       size_t unit_count, Value *out_val) {
+    if (out_val) *out_val = val_void();
+    if (!eng) return false;
+    eng->mem.sym_tab = &eng->sym;
+    mem_clear_err(&eng->mem);
+    mem_rewind_scratch(&eng->mem);
+    if (!sources || unit_count == 0) {
+        mem_err(&eng->mem, "Null or empty source unit list");
+        return false;
+    }
+    if (!ext_compile_and_link(&eng->mem, &eng->sym, sources, unit_count)) {
+        return false;
+    }
+    if (out_val) *out_val = eng->mem.last_mod_val;
+    return !eng->mem.has_error;
+}
+
+bool eng_apply_patches(Engine *eng, const char *const *patch_sources,
+                       size_t patch_count) {
+    if (!eng) return false;
+    eng->mem.sym_tab = &eng->sym;
+    mem_clear_err(&eng->mem);
+    mem_rewind_scratch(&eng->mem);
+    if (!patch_sources && patch_count > 0) {
+        mem_err(&eng->mem, "Null patch source array");
+        return false;
+    }
+    if (patch_count == 0) return true;
+    ExtBuildCtx *ctx = ext_build_create();
+    if (!ctx) {
+        mem_err(&eng->mem, "Out of memory allocating patch build context");
+        return false;
+    }
+    ctx->allow_redef = true;
+    for (size_t i = 0; i < patch_count; ++i) {
+        if (!ext_compile_unit(&eng->mem, &eng->sym, ctx, patch_sources[i])) {
+            ext_build_destroy(ctx);
+            return false;
+        }
+    }
+    bool ok = ext_link_units(&eng->mem, &eng->sym, ctx);
+    ext_build_destroy(ctx);
+    return ok;
 }

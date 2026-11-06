@@ -31,6 +31,7 @@ extern "C" {
 #define SYM_HEAP_VAR_MAGIC 0x56415248u /* "VARH" magic for heap-spilled vars     */
 #define SYM_MAX_TYPES          64
 #define SYM_MAX_UNITS          64
+#define SYM_EPHEM_UNIT_BASE    48u  /* Slots 48..63: ephemeral 7D SI compound units */
 #define SYM_MAX_PAT_ELEMS     256
 #define SYM_MAX_FIELDS        256
 #define SYM_MAX_SYMS         2048
@@ -203,9 +204,20 @@ typedef enum {
     INTR_REGEX_FINDALL, /* @regex_find_all(s, pat)                */
     INTR_REGEX_REPLACE, /* @regex_replace(s, pat, repl)           */
     INTR_REGEX_SPLIT,   /* @regex_split(s, pat)                   */
-    INTR_GC_COMPACT,    /* @gc_compact()                          */
-    INTR_POOL_USED,     /* @pool_used()                           */
-    INTR_ERR,       /* @err(msg:str) -> raises custom error       */
+    INTR_GC_COMPACT,     /* @gc_compact()                          */
+    INTR_POOL_USED,      /* @pool_used()                           */
+    INTR_ERR,            /* @err(msg:str) -> raises custom error   */
+    INTR_PRINT,          /* @print(args...)                        */
+    INTR_PRINTLN,        /* @println(args...)                      */
+    INTR_ASSERT,         /* @assert(cond[, msg])                   */
+    INTR_CLOCK_MS,       /* @clock_ms()                            */
+    INTR_FILE_READ,      /* @file_read(path)                       */
+    INTR_FILE_WRITE,     /* @file_write(path, content)             */
+    INTR_FILE_APPEND,    /* @file_append(path, content)            */
+    INTR_FILE_EXISTS,    /* @file_exists(path)                     */
+    INTR_JSON_PARSE,     /* @json_parse(s)                         */
+    INTR_JSON_STRINGIFY, /* @json_stringify(v, indent)             */
+    INTR_IMPORT,         /* @import(spec)                          */
     INTR_COUNT
 } IntrinsicId;
 
@@ -406,6 +418,12 @@ typedef struct SymTable {
     uint32_t    heap_var_magic;
     uint16_t    var_cap;
     uint16_t    var_count;
+
+    /* Base-Layer (`stdlib`) module watermark & Linked Project Entry Point */
+    uint16_t    base_mod_count;
+    uint16_t    entry_mod_id;
+    uint16_t    entry_ov_idx;
+    uint8_t     ephem_unit_cursor;
 
     /* Host-registered runtime callbacks (not serialized into binary images) */
     ExternDef   externs[SYM_MAX_EXTERNS];

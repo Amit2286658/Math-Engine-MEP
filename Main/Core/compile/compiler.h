@@ -39,6 +39,9 @@ extern "C" {
 typedef struct {
     char     mod_name[32];                  /* Module name (or "default")     */
     bool     is_default_mod;                /* True if headerless [default]   */
+    char     explicit_entry[32];            /* `@entry(fn)` function name     */
+    bool     has_main_fn;                   /* True if 0-arg `main()` defined */
+    bool     has_top_expr;                  /* True if standalone exprs exist */
     char     sbo_deps[EXT_SBO_UNIT_DEPS][32]; /* Inline `<[dep_name]` SBO     */
     char   (*heap_deps)[32];                /* Heap-spilled dependencies      */
     uint16_t dep_cap;                       /* Allocated dependency capacity  */
@@ -54,6 +57,7 @@ typedef struct {
     uint16_t         unit_cap;
     uint16_t         unit_count;
     uint32_t         pool_used;
+    bool             allow_redef;           /* True in Patch Mode (`eng_apply_patches`) */
     bool             has_error;
     char             err_msg[128];
     char             src_pool[EXT_STAGE_POOL_CAP];
@@ -149,6 +153,9 @@ bool ext_compile_slice_ex(MemArena *mem, SymTable *tab,
 bool ext_import_module_or_file(MemArena *mem, SymTable *tab,
                                const char *spec, uint16_t spec_len,
                                bool is_quoted_path, Value *out_val);
+
+bool ext_src_has_module_constructs(const MemArena *mem, const SymTable *tab,
+                                   const char *src, uint16_t len);
 
 #ifdef __cplusplus
 }

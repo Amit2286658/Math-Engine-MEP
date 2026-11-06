@@ -86,6 +86,10 @@ Value delegate_eval_mat_intrinsic(MemArena *mem, const SymTable *tab,
 
 /*Below section is the C's native top-level dispatcher for operator/function delegates @add..@err, @tostr, @fromstr*/
 /*Construct +, -, *, /, %, ^, √, sin..tanh, ==..~, &&..nand, type_of, unit_of, x_, _s, error*/
+void  delegate_format_mat_at(const MemArena *mem, uint16_t hdr_idx, bool high_prec,
+                             char *buf, size_t cap);
+void  delegate_format_value(const MemArena *mem, const SymTable *tab,
+                            Value val, char *buf, size_t buf_cap);
 Value delegate_eval_intrinsic(MemArena *mem, SymTable *tab,
                               IntrinsicId intr, Value a, Value b, Value c, uint8_t ret_type);
 

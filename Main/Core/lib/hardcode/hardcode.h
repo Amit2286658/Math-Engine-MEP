@@ -76,6 +76,7 @@ bool     hardcode_is_additive_or_rel_sym(const MemArena *mem, const SymTable *ta
                                          uint16_t sym_id, OpFixity fixity, bool *out_is_rel);
 bool     hardcode_sym_is_postfix_unit(const SymTable *tab, uint16_t sym_id);
 bool     hardcode_is_in_op_sym(const MemArena *mem, const SymTable *tab, uint16_t sym_id);
+bool     hardcode_is_into_op_sym(const MemArena *mem, const SymTable *tab, uint16_t sym_id);
 bool     hardcode_ast_is_bare_unit_rhs(const MemArena *mem, uint16_t ast_idx);
 bool     hardcode_check_undef_in_lhs(MemArena *mem, const SymTable *tab, uint16_t in_ast_idx);
 bool     hardcode_should_use_unit_for_in_rhs(const MemArena *mem, const SymTable *tab,

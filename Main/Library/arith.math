@@ -9,7 +9,7 @@
 # 1. Basic Left-Associative Infix Arithmetic (:<prec) & Likewise `into` Sum
 (a:real, T) "+"    (b:real, T) :<50 -> real, T = @add(a, b)
 (a:real, T) "-"    (b:real, T) :<50 -> real, T = @sub(a, b)
-(a:real, T) into   (b:real, T) :>55 -> real, T = @add(a, b)
+(a:real, none) into (b:real, none) :>55 -> real, none = @add(a, b)
 (a)         "*"    (b)         :<60            = @mul(a, b)
 (a)         "/"    (b)         :<60            = @div(a, b)
 (a)         "%"    (b)         :<60            = @mod(a, b)
