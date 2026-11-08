@@ -35,7 +35,9 @@ extern "C" {
 #define SYM_MAX_PAT_ELEMS     256
 #define SYM_MAX_FIELDS        256
 #define SYM_MAX_SYMS         2048
-#define SYM_MAX_OVERLOADS    2048
+#define SYM_SBO_OVERLOADS    2048   /* Inline SBO overload slots before heap growth */
+#define SYM_MAX_OVERLOADS   65534   /* Max 16-bit overload slots (SBO + heap)       */
+#define SYM_HEAP_OV_MAGIC 0x4F564C48u /* "OVLH" magic for heap-spilled overloads   */
 #define SYM_MAX_CONSTS        128
 #define SYM_MAX_EXTERNS        32
 #define SYM_MAX_OV_PARAMS      16
@@ -400,13 +402,18 @@ typedef struct SymTable {
     StrSlice    syms[SYM_MAX_SYMS];
     uint16_t    sym_count;
 
-    OpOverload  overloads[SYM_MAX_OVERLOADS];
+    /* Unbounded SBO + Heap Operator & Function Overload Table */
+    OpOverload  sbo_overloads[SYM_SBO_OVERLOADS];
+    uint16_t    sbo_ov_next[SYM_SBO_OVERLOADS];
+    OpOverload *heap_overloads;
+    uint16_t   *heap_ov_next;
+    uint32_t    heap_ov_magic;
+    uint16_t    ov_cap;
     uint16_t    overload_count;
 
     /* Per-symbol overload chains for O(1) symbol dispatch (rebuilt in-memory) */
     uint16_t    sym_first_ov[SYM_MAX_SYMS];
     uint16_t    sym_last_ov[SYM_MAX_SYMS];
-    uint16_t    ov_next[SYM_MAX_OVERLOADS];
 
     ConstDef    consts[SYM_MAX_CONSTS];
     Value       const_vals[SYM_MAX_CONSTS];
@@ -419,8 +426,17 @@ typedef struct SymTable {
     uint16_t    var_cap;
     uint16_t    var_count;
 
-    /* Base-Layer (`stdlib`) module watermark & Linked Project Entry Point */
+    /* Base-Layer (`stdlib + patches`) watermarks & Linked Project Entry Point */
     uint16_t    base_mod_count;
+    uint8_t     base_type_count;
+    uint8_t     base_unit_count;
+    UnitDimDef  base_unit_dims[SYM_MAX_UNITS];
+    uint16_t    base_pat_elem_count;
+    uint16_t    base_field_count;
+    uint16_t    base_sym_count;
+    uint16_t    base_overload_count;
+    uint8_t     base_const_count;
+    double      base_const_f64[SYM_MAX_CONSTS];
     uint16_t    entry_mod_id;
     uint16_t    entry_ov_idx;
     uint8_t     ephem_unit_cursor;
@@ -474,6 +490,30 @@ static inline ModVarDef *sym_vars_mut(SymTable *tab) {
            : tab->sbo_vars;
 }
 
+static inline const OpOverload *sym_overloads(const SymTable *tab) {
+    return (tab->heap_ov_magic == SYM_HEAP_OV_MAGIC && tab->heap_overloads != NULL)
+           ? tab->heap_overloads
+           : tab->sbo_overloads;
+}
+
+static inline OpOverload *sym_overloads_mut(SymTable *tab) {
+    return (tab->heap_ov_magic == SYM_HEAP_OV_MAGIC && tab->heap_overloads != NULL)
+           ? tab->heap_overloads
+           : tab->sbo_overloads;
+}
+
+static inline const uint16_t *sym_ov_next(const SymTable *tab) {
+    return (tab->heap_ov_magic == SYM_HEAP_OV_MAGIC && tab->heap_ov_next != NULL)
+           ? tab->heap_ov_next
+           : tab->sbo_ov_next;
+}
+
+static inline uint16_t *sym_ov_next_mut(SymTable *tab) {
+    return (tab->heap_ov_magic == SYM_HEAP_OV_MAGIC && tab->heap_ov_next != NULL)
+           ? tab->heap_ov_next
+           : tab->sbo_ov_next;
+}
+
 static inline bool sym_mod_enabled(const SymTable *tab, uint16_t mod_id) {
     if (!tab || mod_id >= tab->mod_count) {
         return false;
@@ -491,6 +531,7 @@ void        sym_init(SymTable *tab);
 void        sym_free_heap(SymTable *tab);
 bool        sym_ensure_mod_cap(SymTable *tab, MemArena *mem, uint16_t needed_cap);
 bool        sym_ensure_var_cap(SymTable *tab, MemArena *mem, uint16_t needed_cap);
+bool        sym_ensure_ov_cap(SymTable *tab, MemArena *mem, uint16_t needed_cap);
 void        sym_rebuild_index(SymTable *tab);
 void        sym_link_overload(SymTable *tab, uint16_t ov_idx);
 
@@ -501,6 +542,8 @@ int         sym_find_mod_slice(const SymTable *tab, const MemArena *mem, const c
 bool        sym_set_module(SymTable *tab, const MemArena *mem, const char *mod_name, bool enabled);
 bool        sym_is_module_active(const SymTable *tab, const MemArena *mem, const char *mod_name);
 bool        sym_reset_module(SymTable *tab, MemArena *mem, const char *mod_name);
+void        sym_snapshot_base(SymTable *tab, MemArena *mem);
+bool        sym_flush_user_modules(SymTable *tab, MemArena *mem);
 
 /* Module-Scoped Variable & Constant Lookup, Privacy & Mutability API */
 void        sym_sync_consts_to_vars(SymTable *tab, MemArena *mem);

@@ -132,6 +132,14 @@ MATH_ENGINE_API bool        eng_mod_eval(Engine *eng, const char *mod_name,
  * (without affecting other loaded modules) and reclaim unreferenced scratch memory.
  */
 MATH_ENGINE_API bool        eng_mod_reset(Engine *eng, const char *mod_name);
+MATH_ENGINE_API void        eng_snapshot_base(Engine *eng);
+MATH_ENGINE_API bool        eng_flush_user_modules(Engine *eng);
+MATH_ENGINE_API uint16_t    eng_sample_plot(Engine *eng, const char *mod_name,
+                                            const char *expr, double x_min,
+                                            double x_max, uint16_t steps,
+                                            double *out_xy, uint16_t max_pairs);
+MATH_ENGINE_API size_t      eng_export_catalog(const Engine *eng, char *out_buf,
+                                               size_t buf_cap);
 
 /*
  * Inspect and manipulate module-scoped variables and constants owned by `mod_name`:

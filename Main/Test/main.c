@@ -1166,28 +1166,123 @@ int main(int argc, char **argv) {
             bool p_fallback = eng_eval(proj_eng, "5$ into Rs", &pv1) &&
                               val_as_cstr(&proj_eng->mem, pv1, sbuf, sizeof(sbuf)) &&
                               (strstr(sbuf, "unavailable: host extern") != NULL);
-            /* 2) Hot-reload updated [currency] patch + patched [physics] helper + base_mod_count promotion */
+            /* 2) Verify plain-quote "{25$ into RS}" / "{2km into m}" interpolation and `printl` / `println` */
             const char *ccy_v2 =
                 "[currency]\n"
+                "(x: real, usd) \"into\" (y: real, inr) :>55 = with_unit(x * 85, y)\n"
                 "convert(amount: real, from: str, to: str) = amount * 85\n";
+            Value pv3 = val_void();
+            eng_clear_output(proj_eng);
             bool p_hotreload = eng_apply_patches(proj_eng, &ccy_v2, 1) &&
                                (proj_eng->sym.base_mod_count >= 19u) &&
                                eng_eval(proj_eng, "convert(2, \"USD\", \"INR\") + (patch_bonus_energy(50 J) to_J)", &pv2) &&
-                               (val_get_f64(&proj_eng->mem, pv2) == 230.0);
-            sec17_patches_ok = p_fallback && p_hotreload;
+                               (val_get_f64(&proj_eng->mem, pv2) == 230.0) &&
+                               eng_eval(proj_eng, "printl(\"{25$ into RS}\")", &pv3) &&
+                               (strstr(eng_get_output(proj_eng), "2125") != NULL);
+            /* 3) Recycle the SAME `proj_eng` across two multi-file projects (redefining `$item_cfg` & `[app_mod]`) and flush back to standalone mode while preserving `[currency]` patch! */
+            const char *projA_units[2] = {
+                "[lib_a]\n<[arith]\n$item_cfg(a:real, b:real)\npub calc_a(c:item_cfg) = c.a + c.b\n",
+                "[app_mod]\n<[lib_a]\npub main() = calc_a(item_cfg(10, 25))\n"
+            };
+            const char *projB_units[2] = {
+                "[lib_b]\n<[arith]\n$item_cfg(x:real, y:real, z:real)\npub calc_b(c:item_cfg) = c.x * c.y + c.z\n",
+                "[app_mod]\n<[lib_b]\npub main() = calc_b(item_cfg(6, 7, 8))\n"
+            };
+            Value pva = val_void(), pvb = val_void(), pvc = val_void();
+            uint16_t base_mods = proj_eng->sym.base_mod_count;
+            bool recycle_ok = eng_build_and_run(proj_eng, projA_units, 2, &pva) &&
+                              (val_get_f64(&proj_eng->mem, pva) == 35.0) &&
+                              eng_build_and_run(proj_eng, projB_units, 2, &pvb) &&
+                              (val_get_f64(&proj_eng->mem, pvb) == 50.0) &&
+                              (sym_find_mod(&proj_eng->sym, &proj_eng->mem, "lib_a") < 0) &&
+                              eng_flush_user_modules(proj_eng) &&
+                              (proj_eng->sym.mod_count == base_mods) &&
+                              (sym_find_mod(&proj_eng->sym, &proj_eng->mem, "lib_b") < 0) &&
+                              (sym_find_mod(&proj_eng->sym, &proj_eng->mem, "app_mod") < 0) &&
+                              !eng_has_entry(proj_eng) &&
+                              eng_eval(proj_eng, "convert(2, \"USD\", \"INR\")", &pvc) &&
+                              (val_get_f64(&proj_eng->mem, pvc) == 170.0);
+            sec17_patches_ok = p_fallback && p_hotreload && recycle_ok;
         }
         free(ccy_patch);
     }
-    if (proj_eng) eng_destroy(proj_eng);
     printf("    - [OTA Patches] `eng_apply_patches`, `currency.math` & stdlib hotfix : %s\n\n",
            sec17_patches_ok ? "PASS" : "FAIL");
 
+    /* ----------------------------------------------------------------------
+     * 18. Native Batch Plotter, SBO->Heap AST/Overloads & Live Catalog Export
+     * ---------------------------------------------------------------------- */
+    printf("[18] Native Batch Plotter, SBO->Heap AST/Overloads & Live Catalog Export:\n");
+    bool sec18_plot_ok = false;
+    bool sec18_heap_ast_ov_ok = false;
+    bool sec18_catalog_ok = false;
+    if (proj_eng) {
+        /* 18a. Native Batch Plotter (`eng_sample_plot`) */
+        double xy[22];
+        uint16_t pts = eng_sample_plot(proj_eng, "default", "x^2 + 2 * x + 1", -2.0, 2.0, 5, xy, 11);
+        bool plot_quad_ok = (pts == 5) &&
+                            (xy[0] == -2.0 && xy[1] == 1.0) &&
+                            (xy[2] == -1.0 && xy[3] == 0.0) &&
+                            (xy[4] ==  0.0 && xy[5] == 1.0) &&
+                            (xy[6] ==  1.0 && xy[7] == 4.0) &&
+                            (xy[8] ==  2.0 && xy[9] == 9.0);
+        /* Vector-returning expression `[10, 25, 40]` inside `eng_sample_plot` */
+        uint16_t vpts = eng_sample_plot(proj_eng, "default", "vec(10, 25, 40)", 0.0, 10.0, 5, xy, 11);
+        bool plot_vec_ok = (vpts == 3) &&
+                           (xy[0] == 0.0 && xy[1] == 10.0) &&
+                           (xy[2] == 1.0 && xy[3] == 25.0) &&
+                           (xy[4] == 2.0 && xy[5] == 40.0);
+        sec18_plot_ok = plot_quad_ok && plot_vec_ok;
+
+        /* 18b. SBO -> Heap growth for Overloads (> 2,048) & AST (> 24,576) + O(1) Flush Cleanup */
+        bool ov_grow = sym_ensure_ov_cap(&proj_eng->sym, &proj_eng->mem, 3200u) &&
+                       (proj_eng->sym.heap_overloads != NULL) &&
+                       (proj_eng->sym.ov_cap >= 3200u);
+        bool ast_grow = mem_ensure_ast_cap(&proj_eng->mem, 30000u) &&
+                        (proj_eng->mem.heap_ast != NULL) &&
+                        (proj_eng->mem.ast_cap >= 30000u);
+        /* Verify stdlib functions still evaluate identically after SBO->Heap migration */
+        Value hv = val_void();
+        bool eval_on_heap_ok = eng_eval(proj_eng, "sin(π / 2) + ((2.5 km) to_m)", &hv) &&
+                               (val_get_f64(&proj_eng->mem, hv) == 2501.0);
+        /* Flush user modules should release heap_overloads and heap_ast back to SBO when base fits in SBO */
+        bool flush_reclaim_ok = eng_flush_user_modules(proj_eng) &&
+                                (proj_eng->sym.heap_overloads == NULL) &&
+                                (proj_eng->mem.heap_ast == NULL) &&
+                                eng_eval(proj_eng, "cos(0) + ((100 cm) to_m)", &hv) &&
+                                (val_get_f64(&proj_eng->mem, hv) == 2.0);
+        sec18_heap_ast_ov_ok = ov_grow && ast_grow && eval_on_heap_ok && flush_reclaim_ok;
+
+        /* 18c. Live SymTable-Driven Autocomplete Catalog Export (`eng_export_catalog`) */
+        char *cat_buf = (char *)malloc(262144u);
+        if (cat_buf) {
+            size_t cat_len = eng_export_catalog(proj_eng, cat_buf, 262144u);
+            sec18_catalog_ok = (cat_len > 4000u) &&
+                               (strstr(cat_buf, "fn|sin|") != NULL) &&
+                               (strstr(cat_buf, "op|into|") != NULL) &&
+                               (strstr(cat_buf, "unit|km|") != NULL) &&
+                               (strstr(cat_buf, "fn|convert|") != NULL) &&
+                               (strstr(cat_buf, "mod|currency|") != NULL);
+            free(cat_buf);
+        }
+        eng_destroy(proj_eng);
+    }
+    printf("    - [Batch Plotter] `eng_sample_plot` scalar & vector sampling        : %s\n",
+           sec18_plot_ok ? "PASS" : "FAIL");
+    printf("    - [Unbounded SBO/Heap] `heap_ast` (>24k) & `heap_overloads` (>2k)   : %s\n",
+           sec18_heap_ast_ov_ok ? "PASS" : "FAIL");
+    printf("    - [Live Catalog] `eng_export_catalog` stdlib + OTA patch symbols    : %s\n\n",
+           sec18_catalog_ok ? "PASS" : "FAIL");
+
     ext_build_free_heap(&ubuild);
     sym_free_heap(&s_fuzz_eng.sym);
+    mem_free_all_heap(&s_fuzz_eng.mem);
     sym_free_heap(&g_eng.sym);
+    mem_free_all_heap(&g_eng.mem);
     return (passed == total && blank_ok && load_mathc_ok && vec_type_guard && multi_eng_ok && jni_all_ok &&
             sec16_routing_ok && sec16_mig_ok && sec16_gc_ok &&
             sec17_standalone_ok && sec17_multifile_ok && sec17_import_and_si_ok && sec17_patches_ok &&
+            sec18_plot_ok && sec18_heap_ast_ov_ok && sec18_catalog_ok &&
             audit_g1_ok && audit_g2_ok && audit_g3_ok && audit_g4_ok &&
             audit2_b1_ok && audit2_b2_b3_ok && audit2_b5_ok &&
             sec1_sym_ok && sec3_sym_ok && sec3_mt_ok &&

@@ -131,8 +131,8 @@ Value eval_dispatch_overload_in_mod(MemArena *mem, SymTable *tab,
     uint16_t priv_mod          = MEM_NO_IDX;
 
     uint16_t first_ov = (sym_id < tab->sym_count) ? tab->sym_first_ov[sym_id] : MEM_NO_IDX;
-    for (uint16_t i = first_ov; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = first_ov; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity != (uint8_t)fixity) continue;
         if (ov->param_count != argc) continue;
         if (filter_mod != MEM_NO_IDX && ov->mod_id != filter_mod) continue;
@@ -204,8 +204,8 @@ Value eval_dispatch_overload_in_mod(MemArena *mem, SymTable *tab,
         arg_types[0] > 0 && arg_types[0] < tab->type_count &&
         arg_types[1] > 0 && arg_types[1] < tab->type_count) {
         uint8_t eq_intr = 0;
-        for (uint16_t i = first_ov; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-            const OpOverload *ov = &tab->overloads[i];
+        for (uint16_t i = first_ov; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+            const OpOverload *ov = &sym_overloads(tab)[i];
             if (ov->fixity == FIX_INFIX_LEFT && ov->param_count == 2 &&
                 sym_mod_enabled(tab, ov->mod_id) && ov->body_ast != MEM_NO_IDX) {
                 const AstNode *rn = mem_get_ast(mem, ov->body_ast);

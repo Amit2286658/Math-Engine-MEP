@@ -38,7 +38,9 @@ static uint16_t parse_interpolated_string(Parser *P, StrSlice s, bool force_inte
             while (j < s.len && (raw[j] == ' ' || raw[j] == '\t')) j++;
             if (j < s.len && raw[j] != '}' && raw[j] != ':') {
                 unsigned char fc = (unsigned char)raw[j];
-                bool starts_expr = force_interp || lex_is_ident_start(fc) || fc == '(';
+                bool starts_expr = force_interp || lex_is_ident_start(fc) ||
+                                   (fc >= '0' && fc <= '9') ||
+                                   fc == '(' || fc == '[' || fc == '-' || fc == '+' || fc == '$';
                 if (starts_expr) {
                     int depth = 1;
                     uint16_t k = j;
@@ -115,7 +117,9 @@ static uint16_t parse_interpolated_string(Parser *P, StrSlice s, bool force_inte
             while (ws < b_end && (raw[ws] == ' ' || raw[ws] == '\t')) ws++;
             unsigned char fc = (ws < b_end) ? (unsigned char)raw[ws] : 0;
             bool is_interp = (ws < b_end && fc != '}' && fc != ':' &&
-                              (force_interp || lex_is_ident_start(fc) || fc == '('));
+                              (force_interp || lex_is_ident_start(fc) ||
+                               (fc >= '0' && fc <= '9') ||
+                               fc == '(' || fc == '[' || fc == '-' || fc == '+' || fc == '$'));
             if (!is_interp) {
                 while (pos <= b_end) lit_buf[lit_len++] = raw[pos++];
                 continue;
@@ -1230,7 +1234,7 @@ uint16_t parse_nud(Parser *P) {
                 if (id_len == 5 && memcmp(id_str, "print", 5) == 0) {
                     return mem_alloc_ast(mem, AST_INTRINSIC, (uint8_t)INTR_PRINT, argc, head, 0);
                 }
-                if (id_len == 7 && memcmp(id_str, "println", 7) == 0) {
+                if ((id_len == 7 && memcmp(id_str, "println", 7) == 0) || (id_len == 6 && memcmp(id_str, "printl", 6) == 0)) {
                     return mem_alloc_ast(mem, AST_INTRINSIC, (uint8_t)INTR_PRINTLN, argc, head, 1);
                 }
                 if (id_len == 6 && memcmp(id_str, "assert", 6) == 0 && (argc == 1 || argc == 2)) {

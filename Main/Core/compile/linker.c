@@ -347,7 +347,7 @@ bool ext_link_units(MemArena *mem, SymTable *tab, const ExtBuildCtx *ctx) {
     free(saved_mod_active);
     if (ctx->allow_redef) {
         /* Promoted patches become part of the Base Layer for downstream scripts/projects */
-        tab->base_mod_count = tab->mod_count;
+        sym_snapshot_base(tab, mem);
     }
     mem_snapshot_perm(mem);
     return true;

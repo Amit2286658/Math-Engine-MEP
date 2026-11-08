@@ -74,7 +74,7 @@ uint16_t hardcode_default_real_type(const MemArena *mem) {
 /*Construct fn(x, param = default_expr)*/
 static int find_active_meta_sym_hc(const SymTable *tab, uint8_t target_meta) {
     for (uint16_t i = 0; i < tab->overload_count; ++i) {
-        const OpOverload *ov = &tab->overloads[i];
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->meta_tag == target_meta && sym_mod_enabled(tab, ov->mod_id)) {
             return (int)ov->sym_id;
         }
@@ -99,9 +99,11 @@ void hardcode_synthesize_default_overloads(MemArena *mem, SymTable *tab,
         return;
     }
 
-    OpOverload *base_ov  = &tab->overloads[base_ov_idx];
-    uint16_t full_body   = base_ov->body_ast;
-    uint8_t  full_locals = base_ov->local_count;
+    OpOverload *base_ov   = &sym_overloads_mut(tab)[base_ov_idx];
+    uint16_t full_body    = base_ov->body_ast;
+    uint8_t  full_locals  = base_ov->local_count;
+    uint8_t  base_mtag    = base_ov->meta_tag;
+    uint8_t  base_res     = base_ov->reserved;
     uint16_t def_asts[SYM_MAX_OV_PARAMS];
     memset(def_asts, 0xFF, sizeof(def_asts));
 
@@ -137,8 +139,8 @@ void hardcode_synthesize_default_overloads(MemArena *mem, SymTable *tab,
 
         int existing_dov = -1;
         if (sym_id < tab->sym_count) {
-            for (uint16_t oi = tab->sym_first_ov[sym_id]; oi != MEM_NO_IDX; oi = tab->ov_next[oi]) {
-                const OpOverload *cand = &tab->overloads[oi];
+            for (uint16_t oi = tab->sym_first_ov[sym_id]; oi != MEM_NO_IDX; oi = sym_ov_next(tab)[oi]) {
+                const OpOverload *cand = &sym_overloads(tab)[oi];
                 if (cand->mod_id != cur_mod || cand->fixity != FIX_FUNC || cand->param_count != m) continue;
                 bool same = true;
                 for (uint8_t pi = 0; pi < m; ++pi) {
@@ -155,13 +157,13 @@ void hardcode_synthesize_default_overloads(MemArena *mem, SymTable *tab,
         if (existing_dov >= 0) {
             dov_idx = (uint16_t)existing_dov;
         } else {
-            if (tab->overload_count >= SYM_MAX_OVERLOADS) {
-                mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
+            if (tab->overload_count >= SYM_MAX_OVERLOADS ||
+                !sym_ensure_ov_cap(tab, mem, (uint16_t)(tab->overload_count + 1u))) {
                 return;
             }
             dov_idx = tab->overload_count++;
         }
-        OpOverload *dov  = &tab->overloads[dov_idx];
+        OpOverload *dov  = &sym_overloads_mut(tab)[dov_idx];
         memset(dov, 0, sizeof(*dov));
         dov->sym_id      = sym_id;
         dov->mod_id      = cur_mod;
@@ -171,8 +173,8 @@ void hardcode_synthesize_default_overloads(MemArena *mem, SymTable *tab,
         dov->local_count = full_locals;
         dov->ret_type    = (uint8_t)rtid;
         dov->ret_unit    = ruid;
-        dov->meta_tag    = base_ov->meta_tag;
-        dov->reserved    = base_ov->reserved;
+        dov->meta_tag    = base_mtag;
+        dov->reserved    = base_res;
         for (uint8_t i = 0; i < m; ++i) {
             dov->param_types[i] = (uint8_t)ptypes[i];
             dov->param_units[i] = punits[i];
@@ -267,8 +269,8 @@ bool hardcode_can_start_newline_stmt(const Parser *P) {
 /*Construct <expr> <unit> (e.g. 25km, 50m, 90deg)*/
 bool hardcode_sym_is_postfix_unit(const SymTable *tab, uint16_t sym_id) {
     if (!tab || sym_id >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity == FIX_POSTFIX && sym_mod_enabled(tab, ov->mod_id) &&
             ov->ret_unit != 0 && ov->ret_unit < SYM_UNIT_LOCK_NONE) {
             return true;
@@ -289,8 +291,8 @@ bool hardcode_is_for_kw(const MemArena *mem, const SymTable *tab,
 
 bool hardcode_is_in_op_sym(const MemArena *mem, const SymTable *tab, uint16_t sym_id) {
     if (!mem || !tab || sym_id >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if ((ov->fixity == FIX_INFIX_LEFT || ov->fixity == FIX_INFIX_RIGHT) &&
             sym_mod_enabled(tab, ov->mod_id) && ov->body_ast != MEM_NO_IDX) {
             const AstNode *b = mem_get_ast(mem, ov->body_ast);
@@ -370,8 +372,8 @@ bool hardcode_should_use_unit_for_in_rhs(const MemArena *mem, const SymTable *ta
     if (unit_sym >= tab->sym_count) return false;
 
     uint8_t unit_uid = MEM_UNIT_NONE;
-    for (uint16_t i = tab->sym_first_ov[unit_sym]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[unit_sym]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity == FIX_POSTFIX && sym_mod_enabled(tab, ov->mod_id) &&
             ov->ret_unit != 0 && ov->ret_unit < SYM_UNIT_LOCK_NONE) {
             unit_uid = ov->ret_unit;
@@ -677,8 +679,8 @@ bool hardcode_is_plain_store_sym(const MemArena *mem, const SymTable *tab,
                                  uint16_t sym_id, bool *out_is_colon_eq) {
     if (out_is_colon_eq) *out_is_colon_eq = false;
     if (!mem || !tab || sym_id >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity != FIX_INFIX_RIGHT || !sym_mod_enabled(tab, ov->mod_id) ||
             ov->body_ast == MEM_NO_IDX) continue;
         const AstNode *root = mem_get_ast(mem, ov->body_ast);
@@ -696,8 +698,8 @@ bool hardcode_is_plain_store_sym(const MemArena *mem, const SymTable *tab,
 static bool sym_has_direct_intr_hc(const MemArena *mem, const SymTable *tab,
                                    uint16_t sym_id, bool want_rel) {
     if (sym_id >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->param_count != 2 || !sym_mod_enabled(tab, ov->mod_id) ||
             ov->body_ast == MEM_NO_IDX) continue;
         const AstNode *root = mem_get_ast(mem, ov->body_ast);
@@ -733,8 +735,8 @@ bool hardcode_is_additive_or_rel_sym(const MemArena *mem, const SymTable *tab,
         return true;
     }
 
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity != (uint8_t)fixity || ov->param_count != 2 ||
             !sym_mod_enabled(tab, ov->mod_id) || ov->body_ast == MEM_NO_IDX) continue;
         const AstNode *root = mem_get_ast(mem, ov->body_ast);
@@ -768,8 +770,8 @@ int container_kind_from_sym_hc(const MemArena *mem, const SymTable *tab, uint16_
     bool has_vfill2  = false;
     bool has_map_new = false;
     bool has_hof_map = false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity != FIX_FUNC || !sym_mod_enabled(tab, ov->mod_id) ||
             ov->body_ast == MEM_NO_IDX) continue;
         const AstNode *root = mem_get_ast(mem, ov->body_ast);

@@ -218,6 +218,77 @@ Java_com_mathengine_MathEngineBridge_nativeModuleReset(JNIEnv *env, jclass clazz
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_mathengine_MathEngineBridge_nativeFlushUserModules(JNIEnv *env, jclass clazz,
+                                                            jlong handle) {
+    (void)env; (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng) return JNI_FALSE;
+    return eng_flush_user_modules(eng) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeBuildAndRun(JNIEnv *env, jclass clazz,
+                                                       jlong handle, jobjectArray sources) {
+    (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng || !sources) {
+        return (*env)->NewStringUTF(env, "ERR|Invalid engine handle or null source unit list");
+    }
+#if defined(__has_include) && __has_include(<jni.h>)
+    jsize count = (*env)->GetArrayLength(env, sources);
+    if (count <= 0) {
+        return (*env)->NewStringUTF(env, "ERR|Empty source unit list");
+    }
+    jstring *j_strs = (jstring *)calloc((size_t)count, sizeof(jstring));
+    const char **c_srcs = (const char **)calloc((size_t)count, sizeof(const char *));
+    if (!j_strs || !c_srcs) {
+        free(j_strs);
+        free(c_srcs);
+        return (*env)->NewStringUTF(env, "ERR|Out of memory marshaling source units");
+    }
+    bool marshal_ok = true;
+    for (jsize i = 0; i < count; ++i) {
+        j_strs[i] = (jstring)(*env)->GetObjectArrayElement(env, sources, i);
+        if (!j_strs[i]) {
+            marshal_ok = false;
+            break;
+        }
+        c_srcs[i] = (*env)->GetStringUTFChars(env, j_strs[i], NULL);
+        if (!c_srcs[i]) {
+            marshal_ok = false;
+            break;
+        }
+    }
+    Value out = val_void();
+    bool ok = false;
+    if (marshal_ok) {
+        ok = eng_build_and_run(eng, c_srcs, (size_t)count, &out);
+    } else {
+        mem_err(&eng->mem, "Null or invalid UTF-8 string in source unit array");
+    }
+    for (jsize i = 0; i < count; ++i) {
+        if (j_strs[i] && c_srcs[i]) {
+            (*env)->ReleaseStringUTFChars(env, j_strs[i], c_srcs[i]);
+        }
+        if (j_strs[i]) {
+            (*env)->DeleteLocalRef(env, j_strs[i]);
+        }
+    }
+    free(j_strs);
+    free(c_srcs);
+    return jni_format_eval_reply(env, eng, ok, out);
+#else
+    jsize count = sources->len;
+    if (count <= 0 || !sources->items) {
+        return (*env)->NewStringUTF(env, "ERR|Empty source unit list");
+    }
+    Value out = val_void();
+    bool ok = eng_build_and_run(eng, (const char *const *)sources->items, (size_t)count, &out);
+    return jni_format_eval_reply(env, eng, ok, out);
+#endif
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_mathengine_MathEngineBridge_nativeModuleFormatVars(JNIEnv *env, jclass clazz,
                                                             jlong handle, jstring modName) {
@@ -713,4 +784,67 @@ Java_com_mathengine_MathEngineBridge_nativeRegisterExtern(JNIEnv *env, jclass cl
     (void)eng; (void)env; (void)name; (void)callback;
     return JNI_FALSE;
 #endif
+}
+
+JNIEXPORT jdoubleArray JNICALL
+Java_com_mathengine_MathEngineBridge_nativeSamplePlot(JNIEnv *env, jclass clazz,
+                                                      jlong handle, jstring modName,
+                                                      jstring expr, jdouble xMin,
+                                                      jdouble xMax, jint samples) {
+    (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng || !expr || samples <= 0) return NULL;
+    uint16_t max_pts = (samples > 1000) ? 1000u : (uint16_t)samples;
+    double *xy_buf = (double *)malloc((size_t)max_pts * 2u * sizeof(double));
+    if (!xy_buf) return NULL;
+
+    const char *c_mod  = modName ? (*env)->GetStringUTFChars(env, modName, NULL) : NULL;
+    const char *c_expr = (*env)->GetStringUTFChars(env, expr, NULL);
+    uint16_t count = 0;
+    if (c_expr) {
+        count = eng_sample_plot(eng, c_mod ? c_mod : "default", c_expr,
+                                (double)xMin, (double)xMax, max_pts, xy_buf, max_pts);
+        (*env)->ReleaseStringUTFChars(env, expr, c_expr);
+    }
+    if (c_mod && modName) {
+        (*env)->ReleaseStringUTFChars(env, modName, c_mod);
+    }
+    if (count == 0) {
+        free(xy_buf);
+        return NULL;
+    }
+#if defined(__has_include) && __has_include(<jni.h>)
+    jsize flat_len = (jsize)(count * 2u);
+    jdoubleArray arr = (*env)->NewDoubleArray(env, flat_len);
+    if (arr) {
+        (*env)->SetDoubleArrayRegion(env, arr, 0, flat_len, (const jdouble *)xy_buf);
+    }
+    free(xy_buf);
+    return arr;
+#else
+    (void)env;
+    JniMockDoubleArray *arr = (JniMockDoubleArray *)malloc(sizeof(JniMockDoubleArray));
+    if (!arr) {
+        free(xy_buf);
+        return NULL;
+    }
+    arr->len  = (jsize)(count * 2u);
+    arr->data = xy_buf;
+    return arr;
+#endif
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeExportCatalog(JNIEnv *env, jclass clazz,
+                                                         jlong handle) {
+    (void)clazz;
+    Engine *eng = (Engine *)(intptr_t)handle;
+    if (!eng) return NULL;
+    size_t cap = 131072u;
+    char *buf = (char *)malloc(cap);
+    if (!buf) return NULL;
+    (void)eng_export_catalog(eng, buf, cap);
+    jstring jres = jni_new_safe_utf(env, buf);
+    free(buf);
+    return jres;
 }

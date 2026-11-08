@@ -23,8 +23,53 @@ void mem_free_all_heap(MemArena *mem) {
     mem->heap_total_slots  = 0;
 }
 
+void mem_free_ast_heap(MemArena *mem) {
+    if (!mem) return;
+    if (mem->heap_ast_magic == MEM_HEAP_AST_MAGIC) {
+        free(mem->heap_ast);
+    }
+    mem->heap_ast       = NULL;
+    mem->heap_ast_magic = 0;
+    mem->ast_cap        = MEM_SBO_AST_NODES;
+}
+
+bool mem_ensure_ast_cap(MemArena *mem, uint16_t needed_cap) {
+    if (!mem) return false;
+    if (mem->ast_cap == 0) mem->ast_cap = MEM_SBO_AST_NODES;
+    if (needed_cap <= mem->ast_cap) return true;
+    if (needed_cap > MEM_MAX_AST_NODES) {
+        mem_err(mem, "AST node pool overflow");
+        return false;
+    }
+    uint32_t new_cap = (uint32_t)mem->ast_cap;
+    while (new_cap < (uint32_t)needed_cap) {
+        new_cap *= 2u;
+        if (new_cap > MEM_MAX_AST_NODES) {
+            new_cap = MEM_MAX_AST_NODES;
+            break;
+        }
+    }
+    AstNode *new_ast = (AstNode *)calloc(new_cap, sizeof(AstNode));
+    if (!new_ast) {
+        mem_err(mem, "Out of memory expanding AST node pool");
+        return false;
+    }
+    if (mem->ast_count > 0) {
+        memcpy(new_ast, mem_ast_base(mem), (size_t)mem->ast_count * sizeof(AstNode));
+    }
+    if (mem->heap_ast_magic == MEM_HEAP_AST_MAGIC) {
+        free(mem->heap_ast);
+    }
+    mem->heap_ast       = new_ast;
+    mem->heap_ast_magic = MEM_HEAP_AST_MAGIC;
+    mem->ast_cap        = (uint16_t)new_cap;
+    return true;
+}
+
 void mem_init(MemArena *mem) {
+    mem_free_ast_heap(mem);
     memset(mem, 0, sizeof(*mem));
+    mem->ast_cap               = MEM_SBO_AST_NODES;
     mem->jump_val              = val_void();
     mem->last_mod_val          = val_void();
     mem->invalid_ast_mut.kind  = 0xFFu;
@@ -70,6 +115,64 @@ void mem_snapshot_perm(MemArena *mem) {
     mem->perm_ast_count    = mem->ast_count;
     mem->perm_pool_top     = mem->pool_top;
     mem->perm_fn_src_count = mem->fn_src_count;
+}
+
+void mem_snapshot_base(MemArena *mem) {
+    if (!mem) return;
+    mem_snapshot_perm(mem);
+    mem->base_src_len        = mem->perm_src_len;
+    mem->base_ast_count      = mem->perm_ast_count;
+    mem->base_pool_top       = mem->perm_pool_top;
+    mem->base_fn_src_count   = mem->perm_fn_src_count;
+    mem->base_fast_real_type = mem->fast_real_type;
+    mem->base_str_type_id    = mem->str_type_id;
+    mem->base_vec_type_id    = mem->vec_type_id;
+    mem->base_mat_type_id    = mem->mat_type_id;
+    mem->base_fn_type_id     = mem->fn_type_id;
+    mem->base_map_type_id    = mem->map_type_id;
+}
+
+void mem_rewind_to_base(MemArena *mem) {
+    if (!mem) return;
+    mem_free_all_heap(mem);
+    if (mem->heap_ast_magic == MEM_HEAP_AST_MAGIC && mem->base_ast_count <= MEM_SBO_AST_NODES) {
+        if (mem->base_ast_count > 0) {
+            memcpy(mem->sbo_ast, mem->heap_ast, (size_t)mem->base_ast_count * sizeof(AstNode));
+        }
+        mem_free_ast_heap(mem);
+    }
+    mem->src_len             = mem->base_src_len;
+    mem->perm_src_len        = mem->base_src_len;
+    mem->ast_count           = mem->base_ast_count;
+    mem->perm_ast_count      = mem->base_ast_count;
+    mem->pool_top            = mem->base_pool_top;
+    mem->perm_pool_top       = mem->base_pool_top;
+    mem->fn_src_count        = mem->base_fn_src_count;
+    mem->perm_fn_src_count   = mem->base_fn_src_count;
+    mem->fast_real_type      = mem->base_fast_real_type;
+    mem->str_type_id         = mem->base_str_type_id;
+    mem->vec_type_id         = mem->base_vec_type_id;
+    mem->mat_type_id         = mem->base_mat_type_id;
+    mem->fn_type_id          = mem->base_fn_type_id;
+    mem->map_type_id         = mem->base_map_type_id;
+    mem->sp                  = 0;
+    mem->jump_active         = 0;
+    mem->jump_target_id      = 0;
+    mem->jump_val            = val_void();
+    mem->last_mod_val        = val_void();
+    mem->cur_mod             = 0;
+    mem->temp_root_count     = 0;
+    memset(mem->local_slot_names, 0, sizeof(mem->local_slot_names));
+    mem->vrange_cnt          = 0;
+    memset(mem->vrange_hdr, 0, sizeof(mem->vrange_hdr));
+    mem->imported_file_count = 0;
+    mem->eval_depth          = 0;
+    mem->call_depth          = 0;
+    mem->eval_steps          = 0;
+    for (uint8_t i = 0; i < MEM_MAX_LABELS; ++i) {
+        mem->label_ast[i] = MEM_NO_IDX;
+    }
+    mem_clear_err(mem);
 }
 
 void mem_rewind_scratch(MemArena *mem) {

@@ -278,7 +278,7 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
 
     /* 1. Pin all scratch AST_LIT float slots in [perm_ast_count .. ast_count) */
     for (uint16_t i = mem->perm_ast_count; i < mem->ast_count; ++i) {
-        const AstNode *n = &mem->ast[i];
+        const AstNode *n = &mem_ast_base_mut(mem)[i];
         if (n->kind == 0 /* AST_LIT */ && n->sub != mem->str_type_id && n->sub != MEM_TYPE_VOID) {
             if (n->ref >= perm_top && n->ref < old_top) {
                 mem->gc_mark[n->ref] = 1u;
@@ -431,7 +431,7 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
 
     /* 6. Remap AST_LIT refs, vrange_hdr, stack, jump_val, temp_roots, module vars, and extra_roots */
     for (uint16_t i = mem->perm_ast_count; i < mem->ast_count; ++i) {
-        AstNode *n = &mem->ast[i];
+        AstNode *n = &mem_ast_base_mut(mem)[i];
         if (n->kind == 0 /* AST_LIT */ && n->sub != mem->str_type_id && n->sub != MEM_TYPE_VOID) {
             if (n->ref >= perm_top && n->ref < old_top && mem->gc_fwd[n->ref] != MEM_NO_IDX) {
                 n->ref = mem->gc_fwd[n->ref];
@@ -640,7 +640,7 @@ static void str_gc_walk_all(MemArena *mem, StrGcCtx *ctx, bool remap) {
         else        mem->local_slot_names[i] = str_gc_remap_slice(ctx, mem->local_slot_names[i]);
     }
     for (uint16_t i = mem->perm_ast_count; i < mem->ast_count; ++i) {
-        AstNode *n = &mem->ast[i];
+        AstNode *n = &mem_ast_base_mut(mem)[i];
         if (n->kind == 0 /* AST_LIT */ && n->sub == mem->str_type_id && mem->str_type_id != 0) {
             StrSlice s = { n->left, n->right };
             if (!remap) {

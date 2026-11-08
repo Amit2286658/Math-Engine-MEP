@@ -104,7 +104,7 @@ size_t ext_save_mathc_mem(MemArena *mem, const SymTable *tab,
 
     WRITE_SLICE(&hdr,           sizeof(MathcHeader));
     WRITE_SLICE(mem->src_buf,   hdr.perm_src_len);
-    WRITE_SLICE(mem->ast,       hdr.perm_ast_count * sizeof(AstNode));
+    WRITE_SLICE(mem_ast_base(mem), hdr.perm_ast_count * sizeof(AstNode));
     WRITE_SLICE(mem->f64_pool,  hdr.perm_pool_top  * sizeof(double));
     WRITE_SLICE(sym_mod_names(tab),  (size_t)hdr.mod_count * sizeof(StrSlice));
     WRITE_SLICE(sym_mod_active(tab), (size_t)hdr.mod_count * sizeof(uint8_t));
@@ -114,7 +114,7 @@ size_t ext_save_mathc_mem(MemArena *mem, const SymTable *tab,
     WRITE_SLICE(tab->pat_elems, hdr.pat_elem_count * sizeof(PatElem));
     WRITE_SLICE(tab->fields,    hdr.field_count    * sizeof(FieldDef));
     WRITE_SLICE(tab->syms,      hdr.sym_count      * sizeof(StrSlice));
-    WRITE_SLICE(tab->overloads, hdr.overload_count * sizeof(OpOverload));
+    WRITE_SLICE(sym_overloads(tab), hdr.overload_count * sizeof(OpOverload));
     WRITE_SLICE(tab->consts,    hdr.const_count    * sizeof(ConstDef));
 
     #undef WRITE_SLICE
@@ -513,7 +513,9 @@ bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
     }
 
     bool was_blank = (tab->mod_count == 0);
-    if (!sym_ensure_mod_cap(tab, mem, hdr.mod_count)) {
+    if (!sym_ensure_mod_cap(tab, mem, hdr.mod_count) ||
+        !mem_ensure_ast_cap(mem, hdr.perm_ast_count) ||
+        !sym_ensure_ov_cap(tab, mem, hdr.overload_count)) {
         return false;
     }
 
@@ -528,7 +530,7 @@ bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
     } while (0)
 
     COPY_SLICE(mem->src_buf,            hdr.perm_src_len);
-    COPY_SLICE(mem->ast,                (size_t)hdr.perm_ast_count * sizeof(AstNode));
+    COPY_SLICE(mem_ast_base_mut(mem),   (size_t)hdr.perm_ast_count * sizeof(AstNode));
     COPY_SLICE(mem->f64_pool,           (size_t)hdr.perm_pool_top  * sizeof(double));
     COPY_SLICE(sym_mod_names_mut(tab),  (size_t)hdr.mod_count      * sizeof(StrSlice));
     COPY_SLICE(sym_mod_active_mut(tab), (size_t)hdr.mod_count      * sizeof(uint8_t));
@@ -538,7 +540,7 @@ bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
     COPY_SLICE(tab->pat_elems, hdr.pat_elem_count * sizeof(PatElem));
     COPY_SLICE(tab->fields,    hdr.field_count    * sizeof(FieldDef));
     COPY_SLICE(tab->syms,      hdr.sym_count      * sizeof(StrSlice));
-    COPY_SLICE(tab->overloads, hdr.overload_count * sizeof(OpOverload));
+    COPY_SLICE(sym_overloads_mut(tab), (size_t)hdr.overload_count * sizeof(OpOverload));
     COPY_SLICE(tab->consts,    hdr.const_count    * sizeof(ConstDef));
 
     #undef COPY_SLICE
@@ -595,5 +597,12 @@ bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
     sym_sync_consts_to_vars(tab, mem);
     sym_rebuild_index(tab);
     mem_snapshot_perm(mem);
+    if (tab->mod_count == tab->base_mod_count || (was_blank && tab->base_type_count == 0)) {
+        uint16_t saved_base_mods = tab->base_mod_count;
+        sym_snapshot_base(tab, mem);
+        if (saved_base_mods > 0) {
+            tab->base_mod_count = saved_base_mods;
+        }
+    }
     return true;
 }

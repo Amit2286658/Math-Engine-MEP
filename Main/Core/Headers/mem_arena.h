@@ -29,7 +29,9 @@ extern "C" {
  * ============================================================================ */
 
 #define MEM_SRC_BUF_CAP     49152   /* UTF-8 source buffer for interned strings   */
-#define MEM_MAX_AST_NODES   24576   /* 8-byte AST nodes (192 KB)                  */
+#define MEM_SBO_AST_NODES   24576   /* Inline SBO 8-byte AST nodes (192 KB)       */
+#define MEM_MAX_AST_NODES   65534   /* Max 16-bit AST nodes (SBO + heap growth)   */
+#define MEM_HEAP_AST_MAGIC 0x41535448u /* "ASTH" magic for heap-spilled AST pool  */
 #define MEM_MAX_F64_POOL     8192   /* Flat double pool for literals/structs/vecs */
 #define MEM_MAX_CALL_STACK   2048   /* Evaluation & local variable stack slots    */
 #define MEM_MAX_LABELS         16   /* Max tagged scopes (`Tag : { ... }`)        */
@@ -115,8 +117,11 @@ typedef struct {
     uint16_t    src_len;
     uint16_t    perm_src_len;
 
-    /* 8-Byte AST Node Pool + Per-Arena Mutable Fallback Sentinel */
-    AstNode     ast[MEM_MAX_AST_NODES];
+    /* 8-Byte AST Node Pool (Unbounded SBO + Heap Growth) + Fallback Sentinel */
+    AstNode     sbo_ast[MEM_SBO_AST_NODES];
+    AstNode    *heap_ast;
+    uint32_t    heap_ast_magic;
+    uint16_t    ast_cap;
     AstNode     invalid_ast_mut;
     uint16_t    ast_count;
     uint16_t    perm_ast_count;
@@ -158,6 +163,18 @@ typedef struct {
     StrSlice    fn_src_slice[64];
     uint8_t     fn_src_count;
     uint8_t     perm_fn_src_count;
+
+    /* Base-Layer (`stdlib + patches`) Arena Watermarks for O(1) User-Module Flush */
+    uint16_t    base_src_len;
+    uint16_t    base_ast_count;
+    uint16_t    base_pool_top;
+    uint8_t     base_fn_src_count;
+    uint8_t     base_fast_real_type;
+    uint8_t     base_str_type_id;
+    uint8_t     base_vec_type_id;
+    uint8_t     base_mat_type_id;
+    uint8_t     base_fn_type_id;
+    uint8_t     base_map_type_id;
 
     /* Local variable slot names for symbolic math & introspection */
     StrSlice    local_slot_names[64];
@@ -204,8 +221,22 @@ typedef struct {
  * 4. MEMORY LIFECYCLE, POOL ALLOCATION & ERROR API
  * ============================================================================ */
 
+static inline const AstNode *mem_ast_base(const MemArena *mem) {
+    return (mem->heap_ast_magic == MEM_HEAP_AST_MAGIC && mem->heap_ast != NULL)
+           ? mem->heap_ast
+           : mem->sbo_ast;
+}
+
+static inline AstNode *mem_ast_base_mut(MemArena *mem) {
+    return (mem->heap_ast_magic == MEM_HEAP_AST_MAGIC && mem->heap_ast != NULL)
+           ? mem->heap_ast
+           : mem->sbo_ast;
+}
+
 void     mem_init(MemArena *mem);
 void     mem_free_all_heap(MemArena *mem);
+void     mem_free_ast_heap(MemArena *mem);
+bool     mem_ensure_ast_cap(MemArena *mem, uint16_t needed_cap);
 void     mem_err(MemArena *mem, const char *fmt, ...);
 void     mem_clear_err(MemArena *mem);
 void     mem_out_append(MemArena *mem, const char *s, size_t len);
@@ -213,6 +244,8 @@ void     mem_out_clear(MemArena *mem);
 
 /* Snapshot permanent watermarks (after loading extensions) & rewind scratch per eval */
 void     mem_snapshot_perm(MemArena *mem);
+void     mem_snapshot_base(MemArena *mem);
+void     mem_rewind_to_base(MemArena *mem);
 void     mem_rewind_scratch(MemArena *mem);
 
 /* UTF-8 String Interning & Comparison */

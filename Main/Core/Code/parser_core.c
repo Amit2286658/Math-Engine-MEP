@@ -127,8 +127,8 @@ void parser_init(Parser *P, MemArena *mem, SymTable *tab,
 
 bool sym_has_visible_func_ov(const SymTable *tab, uint16_t sym_id) {
     if (sym_id >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity == FIX_FUNC && sym_ov_is_visible(tab, ov)) {
             return true;
         }
@@ -141,8 +141,8 @@ bool sym_has_func_ov_in_mod(const SymTable *tab, uint16_t sym_id, uint16_t mod_i
     if (out_is_priv) *out_is_priv = false;
     if (sym_id >= tab->sym_count || !sym_mod_enabled(tab, mod_id)) return false;
     bool saw_priv = false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity != FIX_FUNC || ov->mod_id != mod_id) continue;
         if ((ov->reserved & SYM_OV_PRIVATE) != 0 && mod_id != caller_mod) {
             saw_priv = true;
@@ -256,7 +256,7 @@ bool lex_peek_is_branch_kw(const Parser *P) {
 
 int find_active_meta_sym(const SymTable *tab, uint8_t target_meta) {
     for (uint16_t i = 0; i < tab->overload_count; ++i) {
-        const OpOverload *ov = &tab->overloads[i];
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->meta_tag == target_meta && sym_ov_is_visible(tab, ov)) {
             return (int)ov->sym_id;
         }
@@ -335,8 +335,8 @@ static uint16_t resolve_annot_type(const SymTable *tab, const MemArena *mem,
 
 bool sym_has_non_lazy_func_ov(const SymTable *tab, uint16_t sym_id) {
     if (sym_id >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity == FIX_FUNC && sym_ov_is_visible(tab, ov) &&
             (ov->meta_tag & SYM_META_LAZY_MASK) == 0) {
             return true;
@@ -347,7 +347,7 @@ bool sym_has_non_lazy_func_ov(const SymTable *tab, uint16_t sym_id) {
 
 int find_active_sub_sym(const MemArena *mem, const SymTable *tab) {
     for (uint16_t i = 0; i < tab->overload_count; ++i) {
-        const OpOverload *ov = &tab->overloads[i];
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity == FIX_INFIX_LEFT && ov->param_count == 2 &&
             sym_ov_is_visible(tab, ov) && ov->body_ast != MEM_NO_IDX) {
             const AstNode *root = mem_get_ast(mem, ov->body_ast);
@@ -493,8 +493,8 @@ bool ast_is_fn_expr_rec(const MemArena *mem, const SymTable *tab,
         }
         case AST_CALL: {
             if (n->ref >= tab->sym_count) return false;
-            for (uint16_t i = tab->sym_first_ov[n->ref]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-                const OpOverload *ov = &tab->overloads[i];
+            for (uint16_t i = tab->sym_first_ov[n->ref]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+                const OpOverload *ov = &sym_overloads(tab)[i];
                 if (ov->fixity != FIX_FUNC || ov->param_count != n->sub ||
                     !sym_mod_enabled(tab, ov->mod_id)) continue;
                 if (ov->ret_type == mem->fn_type_id) return true;
@@ -519,8 +519,8 @@ static uint16_t ast_infer_struct_or_fn_type(const Parser *P, uint16_t idx) {
     if (rn->kind == AST_FIELD_LOAD && rn->sub != 0) return rn->sub;
     if (ast_is_fn_expr_rec(mem, tab, P, idx, 0)) return mem->fn_type_id;
     if (rn->kind == AST_CALL && rn->ref < tab->sym_count) {
-        for (uint16_t i = tab->sym_first_ov[rn->ref]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-            const OpOverload *ov = &tab->overloads[i];
+        for (uint16_t i = tab->sym_first_ov[rn->ref]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+            const OpOverload *ov = &sym_overloads(tab)[i];
             if (ov->fixity == FIX_FUNC && ov->param_count == rn->sub &&
                 sym_mod_enabled(tab, ov->mod_id) && ov->ret_type != 0 &&
                 ov->ret_type < tab->type_count && !tab->types[ov->ret_type].is_consuming) {

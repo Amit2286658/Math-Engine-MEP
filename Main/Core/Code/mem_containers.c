@@ -439,8 +439,11 @@ uint16_t mem_alloc_ast(MemArena *mem, uint8_t kind, uint8_t sub,
         mem_err(mem, "AST node pool exhausted");
         return MEM_NO_IDX;
     }
+    if (!mem_ensure_ast_cap(mem, (uint16_t)(mem->ast_count + 1u))) {
+        return MEM_NO_IDX;
+    }
     uint16_t idx = mem->ast_count++;
-    AstNode *n = &mem->ast[idx];
+    AstNode *n = &mem_ast_base_mut(mem)[idx];
     n->kind  = kind;
     n->sub   = sub;
     n->ref   = ref;
@@ -455,7 +458,7 @@ const AstNode *mem_get_ast(const MemArena *mem, uint16_t idx) {
     if (!mem || idx >= mem->ast_count || idx >= MEM_MAX_AST_NODES) {
         return &k_invalid_ast;
     }
-    return &mem->ast[idx];
+    return &mem_ast_base(mem)[idx];
 }
 
 AstNode *mem_get_ast_mut(MemArena *mem, uint16_t idx) {
@@ -466,7 +469,7 @@ AstNode *mem_get_ast_mut(MemArena *mem, uint16_t idx) {
         mem->invalid_ast_mut = k_invalid_ast;
         return &mem->invalid_ast_mut;
     }
-    return &mem->ast[idx];
+    return &mem_ast_base_mut(mem)[idx];
 }
 
 uint16_t mem_push_frame(MemArena *mem, uint8_t slot_count) {

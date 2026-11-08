@@ -74,8 +74,8 @@ int ext_find_duplicate_overload(const SymTable *tab, uint16_t sym_id, uint16_t m
                                        uint8_t fixity, uint8_t pcount,
                                        const uint16_t *ptypes, const uint8_t *punits) {
     if (sym_id >= tab->sym_count) return -1;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->mod_id != mod_id || ov->fixity != fixity || ov->param_count != pcount) continue;
         bool same = true;
         for (uint8_t p = 0; p < pcount; ++p) {
@@ -504,8 +504,8 @@ void ext_compile_body(ExtLoader *L, OpOverload *ov, StrSlice *pnames) {
             mem_get_ast(mem, root->right)->kind == AST_SLOT_LOAD && mem_get_ast(mem, root->right)->sub == 1) {
             uint16_t target_sym = root->ref;
             if (target_sym < tab->sym_count) {
-                for (uint16_t i = tab->sym_first_ov[target_sym]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-                    const OpOverload *target = &tab->overloads[i];
+                for (uint16_t i = tab->sym_first_ov[target_sym]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+                    const OpOverload *target = &sym_overloads(tab)[i];
                     if (target != ov &&
                         target->param_count == 2 &&
                         target->param_types[0] == ov->param_types[0] &&
@@ -559,12 +559,12 @@ void ext_parse_sym_decl_ex(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags,
                      (int)iname.len, mem_str_ptr(mem, iname));
             return;
         }
-        if (tab->overload_count >= SYM_MAX_OVERLOADS) {
-            mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
+        if (tab->overload_count >= SYM_MAX_OVERLOADS ||
+            !sym_ensure_ov_cap(tab, mem, (uint16_t)(tab->overload_count + 1u))) {
             return;
         }
         uint16_t ov_idx = tab->overload_count++;
-        OpOverload *ov  = &tab->overloads[ov_idx];
+        OpOverload *ov  = &sym_overloads_mut(tab)[ov_idx];
         memset(ov, 0, sizeof(*ov));
         ov->sym_id   = sym_id;
         ov->mod_id   = L->cur_mod;
@@ -754,13 +754,13 @@ void ext_parse_sym_decl_ex(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags,
     if (dup_idx >= 0) {
         ov_idx = (uint16_t)dup_idx;
     } else {
-        if (tab->overload_count >= SYM_MAX_OVERLOADS) {
-            mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
+        if (tab->overload_count >= SYM_MAX_OVERLOADS ||
+            !sym_ensure_ov_cap(tab, mem, (uint16_t)(tab->overload_count + 1u))) {
             return;
         }
         ov_idx = tab->overload_count++;
     }
-    OpOverload *ov  = &tab->overloads[ov_idx];
+    OpOverload *ov  = &sym_overloads_mut(tab)[ov_idx];
     memset(ov, 0, sizeof(*ov));
     ov->sym_id      = sym_id;
     ov->mod_id      = L->cur_mod;
@@ -1015,8 +1015,8 @@ static bool ext_scan_decl_param_list(const char *src, uint16_t pos, uint16_t len
 
 static bool ext_store_op_active(const SymTable *tab) {
     for (uint16_t i = 0; i < tab->overload_count; ++i) {
-        if (tab->overloads[i].meta_tag == INTR_STORE &&
-            sym_mod_enabled(tab, tab->overloads[i].mod_id)) {
+        if (sym_overloads(tab)[i].meta_tag == INTR_STORE &&
+            sym_mod_enabled(tab, sym_overloads(tab)[i].mod_id)) {
             return true;
         }
     }

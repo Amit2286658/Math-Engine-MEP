@@ -275,8 +275,8 @@ static int ext_find_mod_entry_overload(const SymTable *tab, const MemArena *mem,
                                        uint16_t mod_id, const char *fn_name, uint16_t fn_len) {
     int sid = sym_find(tab, mem, fn_name, fn_len);
     if (sid < 0 || (uint16_t)sid >= tab->sym_count) return -1;
-    for (uint16_t i = tab->sym_first_ov[sid]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sid]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->mod_id == mod_id && ov->fixity == FIX_FUNC && ov->param_count == 0) {
             return (int)i;
         }
@@ -315,7 +315,6 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
 
     Value    last_val            = val_void();
     bool     had_any_token       = false;
-    bool     had_standalone_expr = false;
     bool     has_explicit_entry  = false;
     StrSlice explicit_entry_sym  = { 0, 0 };
 
@@ -570,13 +569,13 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
                 if (dup_idx >= 0) {
                     ov_idx = (uint16_t)dup_idx;
                 } else {
-                    if (tab->overload_count >= SYM_MAX_OVERLOADS) {
-                        mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
+                    if (tab->overload_count >= SYM_MAX_OVERLOADS ||
+                        !sym_ensure_ov_cap(tab, mem, (uint16_t)(tab->overload_count + 1u))) {
                         break;
                     }
                     ov_idx = tab->overload_count++;
                 }
-                OpOverload *ov     = &tab->overloads[ov_idx];
+                OpOverload *ov     = &sym_overloads_mut(tab)[ov_idx];
                 memset(ov, 0, sizeof(*ov));
                 ov->sym_id         = sym_id;
                 ov->mod_id         = L.cur_mod;
@@ -611,9 +610,6 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
              * triggers its standalone side effects. */
             L.pos = chunk_end;
             continue;
-        }
-        if (!is_var_decl_chunk) {
-            had_standalone_expr = true;
         }
         uint16_t saved_ast = mem->ast_count;
 
@@ -705,7 +701,7 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
             entry_buf[clen] = '\0';
             entry_name = entry_buf;
             entry_len  = clen;
-        } else if (!had_standalone_expr &&
+        } else if (!allow_redef &&
                    ext_find_mod_entry_overload(tab, mem, L.cur_mod, "main", 4) >= 0) {
             memcpy(entry_buf, "main", 5);
             entry_name = entry_buf;
@@ -727,7 +723,7 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
                 mem->call_depth   = 0;
                 mem->jump_active  = JUMP_NONE;
                 Value eval_res = eval_dispatch_overload(mem, tab,
-                                                        tab->overloads[entry_ov].sym_id,
+                                                        sym_overloads(tab)[entry_ov].sym_id,
                                                         FIX_FUNC, 0, NULL);
                 if (mem->jump_active == JUMP_RETURN) {
                     eval_res         = mem->jump_val;

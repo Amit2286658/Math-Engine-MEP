@@ -89,32 +89,52 @@ public final class MathEngineBridge implements AutoCloseable {
         return EvalResult.parseWire(nativeEval(requireOpenHandle(), expr));
     }
 
-    public synchronized int openSession() {
-        return nativeSessionOpen(requireOpenHandle());
+    public synchronized EvalResult evalModule(String moduleName, String expr) {
+        return EvalResult.parseWire(nativeModuleEval(requireOpenHandle(), moduleName, expr));
     }
 
-    public synchronized boolean closeSession(int sessionId) {
-        return nativeSessionClose(requireOpenHandle(), sessionId);
+    public synchronized boolean resetModule(String moduleName) {
+        return nativeModuleReset(requireOpenHandle(), moduleName);
     }
 
-    public synchronized boolean resetSession(int sessionId) {
-        return nativeSessionReset(requireOpenHandle(), sessionId);
+    public synchronized boolean flushUserModules() {
+        return nativeFlushUserModules(requireOpenHandle());
     }
 
-    public synchronized EvalResult evalSession(int sessionId, String expr) {
-        return EvalResult.parseWire(nativeSessionEval(requireOpenHandle(), sessionId, expr));
+    public synchronized EvalResult buildAndRun(String[] sources) {
+        return EvalResult.parseWire(nativeBuildAndRun(requireOpenHandle(), sources));
     }
 
-    public synchronized String exportSessionSnapshots(int sessionId) {
-        return nativeSessionExportSnapshots(requireOpenHandle(), sessionId);
+    public synchronized double[] samplePlot(String modName, String expr, double xMin, double xMax, int samples) {
+        return nativeSamplePlot(requireOpenHandle(), modName, expr, xMin, xMax, samples);
     }
 
-    public synchronized int restoreSession(String newlineJoinedSnapshots) {
-        return nativeSessionRestore(requireOpenHandle(), newlineJoinedSnapshots);
+    public synchronized String exportCatalog() {
+        return nativeExportCatalog(requireOpenHandle());
+    }
+
+    public synchronized String formatModuleVars(String moduleName) {
+        return nativeModuleFormatVars(requireOpenHandle(), moduleName);
+    }
+
+    public synchronized String exportModuleSource(String moduleName) {
+        return nativeModuleExportSource(requireOpenHandle(), moduleName);
     }
 
     public synchronized byte[] compileExtension(String mathSource) {
         return nativeCompileExt(requireOpenHandle(), mathSource);
+    }
+
+    public synchronized byte[] applyPatch(String patchSource) {
+        return nativeApplyPatch(requireOpenHandle(), patchSource);
+    }
+
+    public synchronized boolean hasEntry() {
+        return nativeHasEntry(requireOpenHandle());
+    }
+
+    public synchronized EvalResult runEntry() {
+        return EvalResult.parseWire(nativeRunEntry(requireOpenHandle()));
     }
 
     public synchronized boolean loadMathc(byte[] mathcBytes) {
@@ -153,6 +173,18 @@ public final class MathEngineBridge implements AutoCloseable {
         return nativeScratchPoolUsed(requireOpenHandle());
     }
 
+    public synchronized void setImportDir(String dirPath) {
+        nativeSetImportDir(requireOpenHandle(), dirPath);
+    }
+
+    public synchronized String getOutput() {
+        return nativeGetOutput(requireOpenHandle());
+    }
+
+    public synchronized void clearOutput() {
+        nativeClearOutput(requireOpenHandle());
+    }
+
     public synchronized String lastError() {
         return nativeLastError(requireOpenHandle());
     }
@@ -170,15 +202,18 @@ public final class MathEngineBridge implements AutoCloseable {
     public static native void    nativeDestroy(long handle);
     public static native String  nativeEval(long handle, String expr);
     public static native String  nativeLastError(long handle);
-    public static native int     nativeSessionOpen(long handle);
-    public static native boolean nativeSessionClose(long handle, int sessionId);
-    public static native boolean nativeSessionReset(long handle, int sessionId);
-    public static native String  nativeSessionEval(long handle, int sessionId, String expr);
-    public static native int     nativeSessionSnapshotCount(long handle, int sessionId);
-    public static native String  nativeSessionSnapshotAt(long handle, int sessionId, int index);
-    public static native String  nativeSessionExportSnapshots(long handle, int sessionId);
-    public static native int     nativeSessionRestore(long handle, String newlineJoinedSnapshots);
+    public static native String  nativeModuleEval(long handle, String modName, String expr);
+    public static native boolean nativeModuleReset(long handle, String modName);
+    public static native boolean nativeFlushUserModules(long handle);
+    public static native String  nativeBuildAndRun(long handle, String[] sources);
+    public static native double[] nativeSamplePlot(long handle, String modName, String expr, double xMin, double xMax, int samples);
+    public static native String  nativeExportCatalog(long handle);
+    public static native String  nativeModuleFormatVars(long handle, String modName);
+    public static native String  nativeModuleExportSource(long handle, String modName);
     public static native byte[]  nativeCompileExt(long handle, String mathSource);
+    public static native byte[]  nativeApplyPatch(long handle, String patchSource);
+    public static native boolean nativeHasEntry(long handle);
+    public static native String  nativeRunEntry(long handle);
     public static native boolean nativeLoadMathc(long handle, byte[] mathcBytes);
     public static native boolean nativeSetModule(long handle, String modName, boolean enabled);
     public static native boolean nativeIsModuleActive(long handle, String modName);
@@ -188,11 +223,14 @@ public final class MathEngineBridge implements AutoCloseable {
     public static native String  nativeSymSolve(long handle, String varName, String eq);
     public static native int     nativeCompactScratch(long handle);
     public static native int     nativeScratchPoolUsed(long handle);
+    public static native void    nativeSetImportDir(long handle, String dirPath);
+    public static native String  nativeGetOutput(long handle);
+    public static native void    nativeClearOutput(long handle);
     public static native boolean nativeRegisterExtern(long handle, String name, ExternCallback callback);
 
     /**
      * Kotlin/Java-backed host extern callback, invoked by `@<name>(...)` calls
-     * inside `.math` extensions (e.g. the bundled `[currency]` patch).
+     * inside `.math` extensions (e.g. a pulled `[currency]` patch).
      *
      * `numbers` holds every numeric argument, `strings` every string argument,
      * both in original call order; return the numeric result as a `double`.

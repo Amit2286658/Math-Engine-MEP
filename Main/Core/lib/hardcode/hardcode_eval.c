@@ -81,8 +81,8 @@ bool hardcode_try_eval_variadic_vec(MemArena *mem, SymTable *tab,
     }
 
     bool has_active_ctor = false;
-    for (uint16_t i = tab->sym_first_ov[n->ref]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        if (tab->overloads[i].fixity == FIX_FUNC && sym_mod_enabled(tab, tab->overloads[i].mod_id)) {
+    for (uint16_t i = tab->sym_first_ov[n->ref]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        if (sym_overloads(tab)[i].fixity == FIX_FUNC && sym_mod_enabled(tab, sym_overloads(tab)[i].mod_id)) {
             has_active_ctor = true;
             break;
         }
@@ -220,8 +220,8 @@ static bool is_direct_vrange_binary(const MemArena *mem, const SymTable *tab,
     if (n->kind != AST_BINARY) return false;
     uint16_t sid = n->ref;
     if (sid >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sid]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sid]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity == n->sub && sym_mod_enabled(tab, ov->mod_id) &&
             ov->body_ast != MEM_NO_IDX) {
             const AstNode *b = mem_get_ast(mem, ov->body_ast);
@@ -290,8 +290,8 @@ static bool extract_vrange_expr_info(const MemArena *mem, const SymTable *tab,
     const AstNode *n = mem_get_ast(mem, ast_idx);
     if (n->kind == AST_BINARY && n->ref < tab->sym_count) {
         bool is_by_op = false;
-        for (uint16_t i = tab->sym_first_ov[n->ref]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-            const OpOverload *ov = &tab->overloads[i];
+        for (uint16_t i = tab->sym_first_ov[n->ref]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+            const OpOverload *ov = &sym_overloads(tab)[i];
             if (ov->fixity == n->sub && sym_mod_enabled(tab, ov->mod_id) &&
                 ov->body_ast != MEM_NO_IDX) {
                 const AstNode *b = mem_get_ast(mem, ov->body_ast);

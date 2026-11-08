@@ -30,6 +30,15 @@ void sym_free_heap(SymTable *tab) {
     tab->heap_vars      = NULL;
     tab->heap_var_magic = 0;
     tab->var_cap        = SYM_SBO_VARS;
+
+    if (tab->heap_ov_magic == SYM_HEAP_OV_MAGIC) {
+        free(tab->heap_overloads);
+        free(tab->heap_ov_next);
+    }
+    tab->heap_overloads = NULL;
+    tab->heap_ov_next   = NULL;
+    tab->heap_ov_magic  = 0;
+    tab->ov_cap         = SYM_SBO_OVERLOADS;
 }
 
 void sym_init(SymTable *tab) {
@@ -38,6 +47,7 @@ void sym_init(SymTable *tab) {
     memset(tab, 0, sizeof(*tab));
     tab->mod_cap           = SYM_SBO_MODULES;
     tab->var_cap           = SYM_SBO_VARS;
+    tab->ov_cap            = SYM_SBO_OVERLOADS;
     tab->type_count        = 1; /* Index 0 reserved for MEM_TYPE_VOID */
     tab->unit_count        = 1; /* Index 0 reserved for MEM_UNIT_NONE */
     tab->base_mod_count    = 0;
@@ -46,7 +56,7 @@ void sym_init(SymTable *tab) {
     tab->ephem_unit_cursor = 0;
     memset(tab->sym_first_ov, 0xFF, sizeof(tab->sym_first_ov));
     memset(tab->sym_last_ov,  0xFF, sizeof(tab->sym_last_ov));
-    memset(tab->ov_next,      0xFF, sizeof(tab->ov_next));
+    memset(tab->sbo_ov_next,  0xFF, sizeof(tab->sbo_ov_next));
 }
 
 bool sym_ensure_mod_cap(SymTable *tab, MemArena *mem, uint16_t needed_cap) {
@@ -127,18 +137,62 @@ bool sym_ensure_var_cap(SymTable *tab, MemArena *mem, uint16_t needed_cap) {
     return true;
 }
 
+bool sym_ensure_ov_cap(SymTable *tab, MemArena *mem, uint16_t needed_cap) {
+    if (!tab) return false;
+    if (tab->ov_cap == 0) tab->ov_cap = SYM_SBO_OVERLOADS;
+    if (needed_cap <= tab->ov_cap) return true;
+    if (needed_cap > SYM_MAX_OVERLOADS) {
+        if (mem) mem_err(mem, "Overload table overflow (max %d)", SYM_MAX_OVERLOADS);
+        return false;
+    }
+
+    uint32_t new_cap = (uint32_t)tab->ov_cap;
+    while (new_cap < (uint32_t)needed_cap) {
+        new_cap *= 2u;
+        if (new_cap > SYM_MAX_OVERLOADS) {
+            new_cap = SYM_MAX_OVERLOADS;
+            break;
+        }
+    }
+
+    OpOverload *new_ovs  = (OpOverload *)calloc(new_cap, sizeof(OpOverload));
+    uint16_t   *new_next = (uint16_t *)malloc(new_cap * sizeof(uint16_t));
+    if (!new_ovs || !new_next) {
+        free(new_ovs);
+        free(new_next);
+        if (mem) mem_err(mem, "Out of memory expanding overload table");
+        return false;
+    }
+    memset(new_next, 0xFF, new_cap * sizeof(uint16_t));
+
+    if (tab->overload_count > 0) {
+        memcpy(new_ovs,  sym_overloads(tab), (size_t)tab->overload_count * sizeof(OpOverload));
+        memcpy(new_next, sym_ov_next(tab),   (size_t)tab->overload_count * sizeof(uint16_t));
+    }
+    if (tab->heap_ov_magic == SYM_HEAP_OV_MAGIC) {
+        free(tab->heap_overloads);
+        free(tab->heap_ov_next);
+    }
+    tab->heap_overloads = new_ovs;
+    tab->heap_ov_next   = new_next;
+    tab->heap_ov_magic  = SYM_HEAP_OV_MAGIC;
+    tab->ov_cap         = (uint16_t)new_cap;
+    return true;
+}
+
 void sym_link_overload(SymTable *tab, uint16_t ov_idx) {
     if (ov_idx >= tab->overload_count) return;
-    uint16_t sid = tab->overloads[ov_idx].sym_id;
-    tab->ov_next[ov_idx] = MEM_NO_IDX;
+    uint16_t sid = sym_overloads(tab)[ov_idx].sym_id;
+    uint16_t *next_arr = sym_ov_next_mut(tab);
+    next_arr[ov_idx] = MEM_NO_IDX;
     if (sid >= SYM_MAX_SYMS) return;
     if (tab->sym_first_ov[sid] == MEM_NO_IDX) {
         tab->sym_first_ov[sid] = ov_idx;
         tab->sym_last_ov[sid]  = ov_idx;
     } else {
         uint16_t prev = tab->sym_last_ov[sid];
-        if (prev < SYM_MAX_OVERLOADS) {
-            tab->ov_next[prev] = ov_idx;
+        if (prev < tab->overload_count) {
+            next_arr[prev] = ov_idx;
         }
         tab->sym_last_ov[sid] = ov_idx;
     }
@@ -147,7 +201,8 @@ void sym_link_overload(SymTable *tab, uint16_t ov_idx) {
 void sym_rebuild_index(SymTable *tab) {
     memset(tab->sym_first_ov, 0xFF, sizeof(tab->sym_first_ov));
     memset(tab->sym_last_ov,  0xFF, sizeof(tab->sym_last_ov));
-    memset(tab->ov_next,      0xFF, sizeof(tab->ov_next));
+    uint16_t cap = tab->ov_cap ? tab->ov_cap : SYM_SBO_OVERLOADS;
+    memset(sym_ov_next_mut(tab), 0xFF, (size_t)cap * sizeof(uint16_t));
     for (uint16_t i = 0; i < tab->overload_count; ++i) {
         sym_link_overload(tab, i);
     }
@@ -218,6 +273,90 @@ bool sym_is_module_active(const SymTable *tab, const MemArena *mem, const char *
         }
     }
     return false;
+}
+
+void sym_snapshot_base(SymTable *tab, MemArena *mem) {
+    if (!tab || !mem) return;
+    mem_snapshot_base(mem);
+    tab->base_mod_count      = tab->mod_count;
+    tab->base_type_count     = tab->type_count;
+    tab->base_unit_count     = tab->unit_count;
+    memcpy(tab->base_unit_dims, tab->unit_dims, sizeof(tab->unit_dims));
+    tab->base_pat_elem_count = tab->pat_elem_count;
+    tab->base_field_count    = tab->field_count;
+    tab->base_sym_count      = tab->sym_count;
+    tab->base_overload_count = tab->overload_count;
+    tab->base_const_count    = tab->const_count;
+    for (uint8_t i = 0; i < tab->const_count && i < SYM_MAX_CONSTS; ++i) {
+        uint16_t pidx = tab->consts[i].pool_idx;
+        tab->base_const_f64[i] = (pidx < MEM_MAX_F64_POOL) ? mem->f64_pool[pidx] : 0.0;
+    }
+}
+
+bool sym_flush_user_modules(SymTable *tab, MemArena *mem) {
+    if (!tab || !mem) return false;
+    if (tab->base_mod_count == 0) {
+        return true;
+    }
+    mem_rewind_to_base(mem);
+
+    tab->mod_count      = tab->base_mod_count;
+    tab->cur_mod        = 0;
+    uint8_t *mact       = sym_mod_active_mut(tab);
+    for (uint16_t m = 0; m < tab->base_mod_count; ++m) {
+        mact[m] = 1u;
+    }
+
+    tab->type_count     = tab->base_type_count ? tab->base_type_count : 1u;
+    tab->unit_count     = tab->base_unit_count ? tab->base_unit_count : 1u;
+    memcpy(tab->unit_dims, tab->base_unit_dims, sizeof(tab->unit_dims));
+    for (uint8_t u = SYM_EPHEM_UNIT_BASE; u < SYM_MAX_UNITS; ++u) {
+        if (u >= tab->unit_count) {
+            memset(&tab->units[u], 0, sizeof(StrSlice));
+            memset(&tab->unit_dims[u], 0, sizeof(UnitDimDef));
+        }
+    }
+    tab->ephem_unit_cursor = 0;
+
+    memset(mem->type_stride, 0, sizeof(mem->type_stride));
+    for (uint16_t i = 1; i < tab->type_count && i < 64u; ++i) {
+        mem->type_stride[i] = (uint8_t)tab->types[i].flat_size;
+    }
+
+    tab->pat_elem_count = tab->base_pat_elem_count;
+    tab->field_count    = tab->base_field_count;
+    tab->sym_count      = tab->base_sym_count;
+    if (tab->heap_ov_magic == SYM_HEAP_OV_MAGIC && tab->base_overload_count <= SYM_SBO_OVERLOADS) {
+        if (tab->base_overload_count > 0) {
+            memcpy(tab->sbo_overloads, tab->heap_overloads, (size_t)tab->base_overload_count * sizeof(OpOverload));
+        }
+        free(tab->heap_overloads);
+        free(tab->heap_ov_next);
+        tab->heap_overloads = NULL;
+        tab->heap_ov_next   = NULL;
+        tab->heap_ov_magic  = 0;
+        tab->ov_cap         = SYM_SBO_OVERLOADS;
+    }
+    tab->overload_count = tab->base_overload_count;
+    tab->const_count    = tab->base_const_count;
+    tab->entry_mod_id   = MEM_NO_IDX;
+    tab->entry_ov_idx   = MEM_NO_IDX;
+
+    for (uint8_t i = 0; i < tab->const_count && i < SYM_MAX_CONSTS; ++i) {
+        uint16_t rtid = tab->consts[i].type_id;
+        uint8_t  ruid = tab->consts[i].unit_id;
+        uint16_t pidx = tab->consts[i].pool_idx;
+        if (pidx < MEM_MAX_F64_POOL) {
+            mem->f64_pool[pidx] = tab->base_const_f64[i];
+        }
+        tab->const_vals[i] = val_make_f64_at_pool(mem, rtid, ruid, pidx);
+    }
+
+    tab->var_count = 0;
+    sym_sync_consts_to_vars(tab, mem);
+    sym_rebuild_index(tab);
+    mem_snapshot_perm(mem);
+    return true;
 }
 
 void sym_sync_consts_to_vars(SymTable *tab, MemArena *mem) {
@@ -629,8 +768,8 @@ bool sym_reset_module(SymTable *tab, MemArena *mem, const char *mod_name) {
     /* 3. Remove all OpOverload entries owned by `mod_id` and rebuild dispatch chains */
     uint16_t w_ov = 0;
     for (uint16_t i = 0; i < tab->overload_count; ++i) {
-        if (tab->overloads[i].mod_id != mod_id) {
-            if (w_ov != i) tab->overloads[w_ov] = tab->overloads[i];
+        if (sym_overloads(tab)[i].mod_id != mod_id) {
+            if (w_ov != i) sym_overloads_mut(tab)[w_ov] = sym_overloads(tab)[i];
             w_ov++;
         }
     }
@@ -646,8 +785,8 @@ bool sym_has_priv_ov(const SymTable *tab, uint16_t sym_id, OpFixity fix_filter,
                      uint16_t *out_priv_mod) {
     if (out_priv_mod) *out_priv_mod = MEM_NO_IDX;
     if (!tab || sym_id >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (!sym_mod_enabled(tab, ov->mod_id)) continue;
         if (fix_filter != FIX_SYNTAX && ov->fixity != (uint8_t)fix_filter) continue;
         if ((ov->reserved & SYM_OV_PRIVATE) != 0 && ov->mod_id != tab->cur_mod) {
@@ -689,8 +828,8 @@ int sym_find(const SymTable *tab, const MemArena *mem, const char *str, uint16_t
 
 bool sym_has_active_op(const SymTable *tab, uint16_t sym_id) {
     if (sym_id >= tab->sym_count) return false;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity != FIX_FUNC && ov->fixity != FIX_SYNTAX &&
             sym_ov_is_visible(tab, ov)) {
             return true;
@@ -701,8 +840,8 @@ bool sym_has_active_op(const SymTable *tab, uint16_t sym_id) {
 
 uint8_t sym_get_active_syntax(const SymTable *tab, uint16_t sym_id) {
     if (sym_id >= tab->sym_count) return 0;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity == FIX_SYNTAX && sym_ov_is_visible(tab, ov)) {
             return ov->meta_tag;
         }
@@ -713,8 +852,8 @@ uint8_t sym_get_active_syntax(const SymTable *tab, uint16_t sym_id) {
 int sym_get_active_prec(const SymTable *tab, uint16_t sym_id, OpFixity fixity) {
     if (sym_id >= tab->sym_count) return -1;
     int best = -1;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (ov->fixity == (uint8_t)fixity && sym_ov_is_visible(tab, ov)) {
             if ((int)ov->prec > best) best = (int)ov->prec;
         }
@@ -724,8 +863,8 @@ int sym_get_active_prec(const SymTable *tab, uint16_t sym_id, OpFixity fixity) {
 
 uint8_t sym_active_meta_tag(const SymTable *tab, uint16_t sym_id, OpFixity fix_filter) {
     if (sym_id >= tab->sym_count) return 0;
-    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = tab->ov_next[i]) {
-        const OpOverload *ov = &tab->overloads[i];
+    for (uint16_t i = tab->sym_first_ov[sym_id]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+        const OpOverload *ov = &sym_overloads(tab)[i];
         if (sym_ov_is_visible(tab, ov)) {
             if (fix_filter == FIX_FUNC && ov->fixity != FIX_FUNC) continue;
             if ((fix_filter == FIX_PREFIX || fix_filter == FIX_POSTFIX) && ov->fixity != (uint8_t)fix_filter) continue;

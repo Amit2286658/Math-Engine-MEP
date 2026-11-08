@@ -54,6 +54,7 @@ void eng_destroy(Engine *eng) {
      * allocations here and do not depend on engine heap or symbol memory. */
     sym_free_externs(&eng->sym);
     mem_free_all_heap(&eng->mem);
+    mem_free_ast_heap(&eng->mem);
     sym_free_heap(&eng->sym);
     free(eng);
 }
@@ -198,6 +199,19 @@ bool eng_mod_reset(Engine *eng, const char *mod_name) {
     eng->mem.sym_tab = &eng->sym;
     mem_clear_err(&eng->mem);
     return sym_reset_module(&eng->sym, &eng->mem, mod_name);
+}
+
+void eng_snapshot_base(Engine *eng) {
+    if (!eng) return;
+    eng->mem.sym_tab = &eng->sym;
+    sym_snapshot_base(&eng->sym, &eng->mem);
+}
+
+bool eng_flush_user_modules(Engine *eng) {
+    if (!eng) return false;
+    eng->mem.sym_tab = &eng->sym;
+    mem_clear_err(&eng->mem);
+    return sym_flush_user_modules(&eng->sym, &eng->mem);
 }
 
 uint16_t eng_mod_var_count(const Engine *eng, const char *mod_name) {
@@ -502,7 +516,7 @@ static const char *find_base_unit_op_sym(const Engine *eng, uint8_t uid, uint16_
     if (out_len) *out_len = 0;
     if (!eng || uid == MEM_UNIT_NONE) return NULL;
     for (uint16_t i = 0; i < eng->sym.overload_count; ++i) {
-        const OpOverload *ov = &eng->sym.overloads[i];
+        const OpOverload *ov = &sym_overloads(&eng->sym)[i];
         if (ov->fixity != FIX_POSTFIX || ov->ret_unit != uid ||
             !sym_mod_enabled(&eng->sym, ov->mod_id) || ov->body_ast == MEM_NO_IDX) {
             continue;
@@ -814,7 +828,7 @@ bool eng_run_entry(Engine *eng, Value *out_val) {
         mem_err(&eng->mem, "No project entry point ('@entry' or 'main()') is defined");
         return false;
     }
-    const OpOverload *ov = &eng->sym.overloads[eng->sym.entry_ov_idx];
+    const OpOverload *ov = &sym_overloads(&eng->sym)[eng->sym.entry_ov_idx];
     uint16_t prev_mem_mod = eng->mem.cur_mod;
     uint16_t prev_tab_mod = eng->sym.cur_mod;
     eng->mem.cur_mod = ov->mod_id;
@@ -838,6 +852,13 @@ bool eng_build_and_run(Engine *eng, const char *const *sources,
     if (!sources || unit_count == 0) {
         mem_err(&eng->mem, "Null or empty source unit list");
         return false;
+    }
+    if (eng->sym.base_mod_count > 0 &&
+        (eng->sym.mod_count > eng->sym.base_mod_count ||
+         eng->mem.perm_ast_count > eng->mem.base_ast_count ||
+         eng->sym.overload_count > eng->sym.base_overload_count ||
+         eng->sym.type_count > eng->sym.base_type_count)) {
+        (void)sym_flush_user_modules(&eng->sym, &eng->mem);
     }
     if (!ext_compile_and_link(&eng->mem, &eng->sym, sources, unit_count)) {
         return false;
@@ -872,4 +893,404 @@ bool eng_apply_patches(Engine *eng, const char *const *patch_sources,
     bool ok = ext_link_units(&eng->mem, &eng->sym, ctx);
     ext_build_destroy(ctx);
     return ok;
+}
+
+/* ============================================================================
+ * NATIVE BATCH 2D PLOT SAMPLER & LIVE SYMTABLE AUTOCOMPLETE CATALOG EXPORTER
+ * ============================================================================ */
+
+uint16_t eng_sample_plot(Engine *eng, const char *mod_name,
+                         const char *expr, double x_min,
+                         double x_max, uint16_t steps,
+                         double *out_xy, uint16_t max_pairs) {
+    if (!eng || !expr || !out_xy || max_pairs == 0) return 0;
+    eng->mem.sym_tab = &eng->sym;
+    mem_clear_err(&eng->mem);
+    mem_rewind_scratch(&eng->mem);
+
+    const char *eff_mod = (mod_name && mod_name[0] != '\0') ? mod_name : "default";
+    int mid = sym_find_mod(&eng->sym, &eng->mem, eff_mod);
+    uint16_t target_mod = (mid >= 0) ? (uint16_t)mid : 0u;
+    uint16_t prev_mem_mod = eng->mem.cur_mod;
+    uint16_t prev_tab_mod = eng->sym.cur_mod;
+    eng->mem.cur_mod = target_mod;
+    eng->sym.cur_mod = target_mod;
+
+    /* Trim leading/trailing whitespace */
+    while (*expr == ' ' || *expr == '\t' || *expr == '\r' || *expr == '\n') expr++;
+    size_t raw_len = strlen(expr);
+    while (raw_len > 0 && (expr[raw_len - 1] == ' ' || expr[raw_len - 1] == '\t' ||
+                           expr[raw_len - 1] == '\r' || expr[raw_len - 1] == '\n')) {
+        raw_len--;
+    }
+    if (raw_len == 0 || raw_len > 16000u) {
+        eng->mem.cur_mod = prev_mem_mod;
+        eng->sym.cur_mod = prev_tab_mod;
+        return 0;
+    }
+
+    char clean_expr[16384];
+    memcpy(clean_expr, expr, raw_len);
+    clean_expr[raw_len] = '\0';
+
+    /* 1. Fast check: is `clean_expr` a direct `$vec`, `vec<vec2>`, `$mat`, or callable identifier? */
+    bool is_simple_ident = true;
+    for (size_t i = 0; i < raw_len; ++i) {
+        unsigned char c = (unsigned char)clean_expr[i];
+        if (i == 0 ? !lex_is_ident_start(c) : !lex_is_ident_cont(c)) {
+            is_simple_ident = false;
+            break;
+        }
+    }
+
+    char eval_src[16448];
+    snprintf(eval_src, sizeof(eval_src), "%s", clean_expr);
+
+    if (is_simple_ident) {
+        int sid = sym_find(&eng->sym, &eng->mem, clean_expr, (uint16_t)raw_len);
+        if (sid >= 0) {
+            int vidx = sym_find_var(&eng->sym, (uint16_t)sid, target_mod, NULL);
+            if (vidx >= 0) {
+                Value dv = sym_vars(&eng->sym)[vidx].val;
+                uint16_t dtid = val_get_type(&eng->mem, dv);
+                if (dtid == eng->mem.vec_type_id && dtid != 0) {
+                    uint16_t pidx     = val_get_pool_idx(dv);
+                    uint16_t raw_hdr0 = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 0));
+                    uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
+                    uint32_t vlen     = (uint32_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 1));
+                    uint16_t data_idx = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 3));
+                    uint16_t stride   = (elem_tid > 0 && elem_tid < eng->sym.type_count)
+                                        ? eng->sym.types[elem_tid].flat_size : 1u;
+                    uint16_t out_cnt  = 0;
+                    for (uint32_t i = 0; i < vlen && out_cnt < max_pairs; ++i) {
+                        uint32_t off = i * (uint32_t)stride;
+                        double px = (double)i;
+                        double py = 0.0;
+                        if (stride == 2 && elem_tid > 0 && elem_tid < eng->sym.type_count &&
+                            !eng->sym.types[elem_tid].is_consuming) {
+                            px = mem_data_read(&eng->mem, data_idx, off);
+                            py = mem_data_read(&eng->mem, data_idx, off + 1u);
+                        } else {
+                            py = mem_data_read(&eng->mem, data_idx, off);
+                        }
+                        if (isfinite(px) && isfinite(py)) {
+                            out_xy[out_cnt * 2u]      = px;
+                            out_xy[out_cnt * 2u + 1u] = py;
+                            out_cnt++;
+                        }
+                    }
+                    eng->mem.cur_mod = prev_mem_mod;
+                    eng->sym.cur_mod = prev_tab_mod;
+                    return out_cnt;
+                } else if (dtid == eng->mem.fn_type_id && dtid != 0) {
+                    snprintf(eval_src, sizeof(eval_src), "%s(x)", clean_expr);
+                }
+            } else {
+                /* Check if `clean_expr` is a 1-arg function in SymTable */
+                for (uint16_t oi = eng->sym.sym_first_ov[sid]; oi != MEM_NO_IDX; oi = sym_ov_next(&eng->sym)[oi]) {
+                    const OpOverload *ov = &sym_overloads(&eng->sym)[oi];
+                    if (ov->fixity == FIX_FUNC && ov->param_count == 1 && sym_ov_is_visible(&eng->sym, ov)) {
+                        snprintf(eval_src, sizeof(eval_src), "%s(x)", clean_expr);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /* 2. Compile `eval_src` ONCE into an AST with pre-allocated local slots `x` (slot 0) and `t` (slot 1) */
+    uint16_t saved_ast = eng->mem.ast_count;
+    uint16_t saved_pool = eng->mem.pool_top;
+    uint16_t saved_src  = eng->mem.src_len;
+
+    Parser P;
+    parser_init(&P, &eng->mem, &eng->sym, eval_src, (uint16_t)strlen(eval_src), 0, true, false);
+    P.cur_mod      = target_mod;
+    P.is_mod_scope = false;
+    uint8_t real_tid = eng->mem.fast_real_type ? eng->mem.fast_real_type : 1u;
+    (void)parser_add_local(&P, "x", 1, real_tid); /* slot 0 = x */
+    (void)parser_add_local(&P, "t", 1, real_tid); /* slot 1 = t */
+
+    lex_next(&P.lex);
+    uint16_t root = parser_parse_expr(&P, 0);
+    if (!eng->mem.has_error && P.lex.cur.kind != TOK_EOF) {
+        mem_err(&eng->mem, "Unexpected trailing token '%.*s'",
+                (int)P.lex.cur.len, P.lex.src + P.lex.cur.off);
+    }
+    if (!parser_check_labels(&P) || eng->mem.has_error || root == MEM_NO_IDX) {
+        eng->mem.ast_count = saved_ast;
+        eng->mem.cur_mod   = prev_mem_mod;
+        eng->sym.cur_mod   = prev_tab_mod;
+        return 0;
+    }
+
+    uint16_t saved_labels[MEM_MAX_LABELS];
+    memcpy(saved_labels, eng->mem.label_ast, sizeof(saved_labels));
+    for (uint8_t i = 0; i < MEM_MAX_LABELS; ++i) {
+        eng->mem.label_ast[i] = (i < P.label_count) ? P.labels[i].body_ast : MEM_NO_IDX;
+    }
+
+    uint8_t slot_cnt = (P.local_count >= 2u) ? P.local_count : 2u;
+    uint16_t frame_base = mem_push_frame(&eng->mem, slot_cnt);
+    if (eng->mem.has_error) {
+        memcpy(eng->mem.label_ast, saved_labels, sizeof(saved_labels));
+        eng->mem.ast_count = saved_ast;
+        eng->mem.cur_mod   = prev_mem_mod;
+        eng->sym.cur_mod   = prev_tab_mod;
+        return 0;
+    }
+
+    double lo = (x_min < x_max) ? x_min : (x_max - 1.0);
+    double hi = (x_max > x_min) ? x_max : (x_min + 10.0);
+    uint16_t n = (steps < 2u) ? 2u : ((steps > max_pairs) ? max_pairs : steps);
+    double dx = (hi - lo) / (double)(n - 1u);
+
+    uint16_t post_parse_pool = eng->mem.pool_top;
+    uint16_t post_parse_src  = eng->mem.src_len;
+    uint16_t out_cnt = 0;
+
+    for (uint16_t i = 0; i < n && out_cnt < max_pairs; ++i) {
+        double xv = lo + (double)i * dx;
+        Value xval = val_make_f64(&eng->mem, real_tid, xv);
+        mem_set_slot(&eng->mem, frame_base, 0, xval);
+        mem_set_slot(&eng->mem, frame_base, 1, xval);
+        for (uint8_t s = 2; s < slot_cnt; ++s) {
+            mem_set_slot(&eng->mem, frame_base, s, val_make_f64(&eng->mem, real_tid, 0.0));
+        }
+        eng->mem.eval_steps  = 0;
+        eng->mem.eval_depth  = 0;
+        eng->mem.call_depth  = 0;
+        eng->mem.jump_active = JUMP_NONE;
+        mem_clear_err(&eng->mem);
+
+        Value res = eval_ast(&eng->mem, &eng->sym, root, frame_base, 0);
+        if (eng->mem.jump_active == JUMP_RETURN) {
+            res = eng->mem.jump_val;
+            eng->mem.jump_active = JUMP_NONE;
+        }
+        if (!eng->mem.has_error) {
+            uint16_t rtid = val_get_type(&eng->mem, res);
+            if (rtid == real_tid) {
+                double yv = val_get_f64(&eng->mem, res);
+                if (isfinite(xv) && isfinite(yv)) {
+                    out_xy[out_cnt * 2u]      = xv;
+                    out_xy[out_cnt * 2u + 1u] = yv;
+                    out_cnt++;
+                }
+            } else if (i == 0 && rtid == eng->mem.vec_type_id && rtid != 0) {
+                /* Expression returned a vector directly (e.g. `1...10` or `[x^2 for x in 1...8]`) */
+                uint16_t pidx     = val_get_pool_idx(res);
+                uint16_t raw_hdr0 = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 0));
+                uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
+                uint32_t vlen     = (uint32_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 1));
+                uint16_t data_idx = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 3));
+                uint16_t stride   = (elem_tid > 0 && elem_tid < eng->sym.type_count)
+                                    ? eng->sym.types[elem_tid].flat_size : 1u;
+                for (uint32_t k = 0; k < vlen && out_cnt < max_pairs; ++k) {
+                    uint32_t off = k * (uint32_t)stride;
+                    double px = (double)k;
+                    double py = (stride == 2 && elem_tid > 0 && !eng->sym.types[elem_tid].is_consuming)
+                                ? mem_data_read(&eng->mem, data_idx, off + 1u)
+                                : mem_data_read(&eng->mem, data_idx, off);
+                    if (stride == 2 && elem_tid > 0 && !eng->sym.types[elem_tid].is_consuming) {
+                        px = mem_data_read(&eng->mem, data_idx, off);
+                    }
+                    if (isfinite(px) && isfinite(py)) {
+                        out_xy[out_cnt * 2u]      = px;
+                        out_xy[out_cnt * 2u + 1u] = py;
+                        out_cnt++;
+                    }
+                }
+                break;
+            }
+        }
+        eng->mem.pool_top = post_parse_pool;
+        eng->mem.src_len  = post_parse_src;
+    }
+
+    mem_clear_err(&eng->mem);
+    mem_pop_frame(&eng->mem, frame_base);
+    memcpy(eng->mem.label_ast, saved_labels, sizeof(saved_labels));
+    eng->mem.ast_count = saved_ast;
+    eng->mem.pool_top  = saved_pool;
+    eng->mem.src_len   = saved_src;
+    eng->mem.cur_mod   = prev_mem_mod;
+    eng->sym.cur_mod   = prev_tab_mod;
+    return out_cnt;
+}
+
+size_t eng_export_catalog(const Engine *eng, char *out_buf, size_t buf_cap) {
+    if (!out_buf || buf_cap == 0) return 0;
+    out_buf[0] = '\0';
+    if (!eng) return 0;
+
+    size_t used = 0;
+    const SymTable *tab = &eng->sym;
+    const MemArena *mem = &eng->mem;
+    const OpOverload *ovs = sym_overloads(tab);
+
+    /* 1. Active Functions, Prefix/Infix/Postfix Operators & Unit Suffixes */
+    for (uint16_t i = 0; i < tab->overload_count && used + 128u < buf_cap; ++i) {
+        const OpOverload *ov = &ovs[i];
+        if (ov->fixity == FIX_SYNTAX) continue;
+        if (!sym_mod_enabled(tab, ov->mod_id)) continue;
+        if ((ov->reserved & SYM_OV_PRIVATE) != 0 && ov->mod_id != tab->cur_mod) continue;
+        if (ov->sym_id >= tab->sym_count) continue;
+
+        StrSlice sym = tab->syms[ov->sym_id];
+        if (sym.len == 0) continue;
+        char sname[64];
+        uint16_t slen = (sym.len < 60u) ? sym.len : 60u;
+        memcpy(sname, mem_str_ptr(mem, sym), slen);
+        sname[slen] = '\0';
+
+        /* Skip punctuation-only operators unless alphanumeric/word operator */
+        bool has_alnum = false;
+        for (uint16_t c = 0; c < slen; ++c) {
+            unsigned char ch = (unsigned char)sname[c];
+            if (lex_is_ident_start(ch) || (ch >= '0' && ch <= '9')) {
+                has_alnum = true;
+                break;
+            }
+        }
+        if (!has_alnum) continue;
+
+        char mname[32] = "default";
+        if (ov->mod_id < tab->mod_count) {
+            StrSlice ms = sym_mod_name(tab, ov->mod_id);
+            snprintf(mname, sizeof(mname), "%.*s", (int)ms.len, mem_str_ptr(mem, ms));
+        }
+
+        char rtype[32] = "real", runit[32] = "none";
+        if (ov->ret_type == SYM_TYPE_ANY) {
+            snprintf(rtype, sizeof(rtype), "any");
+        } else if (ov->ret_type > 0 && ov->ret_type < tab->type_count) {
+            eng_type_name(eng, ov->ret_type, rtype, sizeof(rtype));
+        }
+        if (ov->ret_unit > 0 && ov->ret_unit < SYM_UNIT_LOCK_NONE && ov->ret_unit < tab->unit_count) {
+            eng_unit_name(eng, ov->ret_unit, runit, sizeof(runit));
+        } else if (ov->ret_unit == SYM_UNIT_GENERIC) {
+            snprintf(runit, sizeof(runit), "T");
+        }
+
+        const char *kind = "fn";
+        char sig[256];
+        if (ov->fixity == FIX_POSTFIX && ov->ret_unit > 0 && ov->ret_unit < SYM_UNIT_LOCK_NONE) {
+            kind = "unit";
+            snprintf(sig, sizeof(sig), "<x> %s -> %s [%s]", sname, rtype, runit);
+        } else if (ov->fixity == FIX_POSTFIX) {
+            kind = "op";
+            snprintf(sig, sizeof(sig), "(x) %s -> %s", sname, rtype);
+        } else if (ov->fixity == FIX_INFIX_LEFT || ov->fixity == FIX_INFIX_RIGHT) {
+            kind = "op";
+            snprintf(sig, sizeof(sig), "(a) %s (b) -> %s", sname, rtype);
+        } else if (ov->fixity == FIX_PREFIX) {
+            kind = "op";
+            snprintf(sig, sizeof(sig), "%s (x) -> %s", sname, rtype);
+        } else {
+            kind = "fn";
+            char pbuf[96] = "";
+            size_t pused = 0;
+            for (uint8_t p = 0; p < ov->param_count; ++p) {
+                char pt[24] = "real";
+                if (ov->param_types[p] == SYM_TYPE_ANY) snprintf(pt, sizeof(pt), "any");
+                else if (ov->param_types[p] > 0 && ov->param_types[p] < tab->type_count) {
+                    eng_type_name(eng, ov->param_types[p], pt, sizeof(pt));
+                }
+                eng_buf_append(pbuf, sizeof(pbuf), &pused, "%sp%u: %s",
+                               (p > 0 ? ", " : ""), (unsigned)(p + 1), pt);
+            }
+            if (strcmp(runit, "none") != 0) {
+                snprintf(sig, sizeof(sig), "%s(%s) -> %s, %s", sname, pbuf, rtype, runit);
+            } else {
+                snprintf(sig, sizeof(sig), "%s(%s) -> %s", sname, pbuf, rtype);
+            }
+        }
+
+        eng_buf_append(out_buf, buf_cap, &used, "%s%s|%s|%s|%s|%s|%s",
+                       (used > 0 ? "\n" : ""),
+                       kind, sname, sig, rtype, runit, mname);
+    }
+
+    /* 2. Registered Types & Structs */
+    for (uint16_t tid = 1; tid < tab->type_count && used + 128u < buf_cap; ++tid) {
+        const TypeDef *td = &tab->types[tid];
+        if (!sym_mod_enabled(tab, td->mod_id)) continue;
+        char tname[32];
+        eng_type_name(eng, tid, tname, sizeof(tname));
+        if (tname[0] == '\0') continue;
+
+        char mname[32] = "default";
+        if (td->mod_id < tab->mod_count) {
+            StrSlice ms = sym_mod_name(tab, td->mod_id);
+            snprintf(mname, sizeof(mname), "%.*s", (int)ms.len, mem_str_ptr(mem, ms));
+        }
+
+        char sig[128];
+        if (!td->is_consuming && td->field_count > 0) {
+            char fbuf[80] = "";
+            size_t fused = 0;
+            for (uint8_t f = 0; f < td->field_count; ++f) {
+                const FieldDef *fd = &tab->fields[td->start_idx + f];
+                char ft[24] = "real";
+                eng_type_name(eng, fd->type_id, ft, sizeof(ft));
+                eng_buf_append(fbuf, sizeof(fbuf), &fused, "%s%.*s: %s",
+                               (f > 0 ? ", " : ""),
+                               (int)fd->name.len, mem_str_ptr(mem, fd->name), ft);
+            }
+            snprintf(sig, sizeof(sig), "struct %s(%s)", tname, fbuf);
+        } else {
+            snprintf(sig, sizeof(sig), "$%s", tname);
+        }
+        eng_buf_append(out_buf, buf_cap, &used, "%stype|%s|%s|%s|none|%s",
+                       (used > 0 ? "\n" : ""), tname, sig, tname, mname);
+    }
+
+    /* 3. Registered Unit Groups */
+    for (uint8_t uid = 1; uid < tab->unit_count && used + 96u < buf_cap; ++uid) {
+        char uname[32];
+        eng_unit_name(eng, uid, uname, sizeof(uname));
+        if (uname[0] == '\0' || strcmp(uname, "none") == 0) continue;
+        eng_buf_append(out_buf, buf_cap, &used, "%sunit|%s|unit group [%s]|real|%s|units",
+                       (used > 0 ? "\n" : ""), uname, uname, uname);
+    }
+
+    /* 4. Active Module Constants & Public Variables */
+    const ModVarDef *vars = sym_vars(tab);
+    for (uint16_t v = 0; v < tab->var_count && used + 128u < buf_cap; ++v) {
+        const ModVarDef *mv = &vars[v];
+        if (!sym_mod_enabled(tab, mv->mod_id)) continue;
+        if ((mv->flags & SYM_VAR_PRIVATE) != 0 && mv->mod_id != tab->cur_mod) continue;
+        if (mv->sym_id >= tab->sym_count) continue;
+        StrSlice vs = tab->syms[mv->sym_id];
+        if (vs.len == 0) continue;
+
+        char vname[48], vt[32], vu[32], mname[32] = "default";
+        uint16_t vlen = (vs.len < 44u) ? vs.len : 44u;
+        memcpy(vname, mem_str_ptr(mem, vs), vlen);
+        vname[vlen] = '\0';
+        eng_type_name(eng, eng_val_type(eng, mv->val), vt, sizeof(vt));
+        eng_unit_name(eng, eng_val_unit(eng, mv->val), vu, sizeof(vu));
+        if (mv->mod_id < tab->mod_count) {
+            StrSlice ms = sym_mod_name(tab, mv->mod_id);
+            snprintf(mname, sizeof(mname), "%.*s", (int)ms.len, mem_str_ptr(mem, ms));
+        }
+        char sig[256];
+        snprintf(sig, sizeof(sig), "%s : %s%s%s",
+                 vname, vt, (strcmp(vu, "none") != 0 ? ", " : ""), (strcmp(vu, "none") != 0 ? vu : ""));
+        eng_buf_append(out_buf, buf_cap, &used, "%sconst|%s|%s|%s|%s|%s",
+                       (used > 0 ? "\n" : ""), vname, sig, vt, vu, mname);
+    }
+
+    /* 5. Loaded Modules */
+    for (uint16_t m = 1; m < tab->mod_count && used + 96u < buf_cap; ++m) {
+        StrSlice ms = sym_mod_name(tab, m);
+        if (ms.len == 0) continue;
+        char mname[32];
+        snprintf(mname, sizeof(mname), "%.*s", (int)ms.len, mem_str_ptr(mem, ms));
+        eng_buf_append(out_buf, buf_cap, &used, "%smod|%s|<[%s]>|module|none|%s",
+                       (used > 0 ? "\n" : ""), mname, mname, mname);
+    }
+
+    return used;
 }

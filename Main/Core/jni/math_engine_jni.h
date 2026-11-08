@@ -31,6 +31,11 @@ typedef void    *jclass;
 typedef const char *jstring;
 typedef struct { jsize len; uint8_t *data; } JniMockByteArray;
 typedef JniMockByteArray *jbyteArray;
+typedef struct { jsize len; double *data; } JniMockDoubleArray;
+typedef JniMockDoubleArray *jdoubleArray;
+typedef double jdouble;
+typedef struct { jsize len; jstring *items; } JniMockStringArray;
+typedef JniMockStringArray *jobjectArray;
 
 typedef struct JniMockEnv {
     const char *(*GetStringUTFChars)(struct JniMockEnv **env, jstring s, jboolean *isCopy);
@@ -86,6 +91,24 @@ Java_com_mathengine_MathEngineBridge_nativeModuleEval(JNIEnv *env, jclass clazz,
 JNIEXPORT jboolean JNICALL
 Java_com_mathengine_MathEngineBridge_nativeModuleReset(JNIEnv *env, jclass clazz,
                                                        jlong handle, jstring modName);
+
+JNIEXPORT jboolean JNICALL
+Java_com_mathengine_MathEngineBridge_nativeFlushUserModules(JNIEnv *env, jclass clazz,
+                                                            jlong handle);
+
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeBuildAndRun(JNIEnv *env, jclass clazz,
+                                                       jlong handle, jobjectArray sources);
+
+JNIEXPORT jdoubleArray JNICALL
+Java_com_mathengine_MathEngineBridge_nativeSamplePlot(JNIEnv *env, jclass clazz,
+                                                      jlong handle, jstring modName,
+                                                      jstring expr, jdouble xMin,
+                                                      jdouble xMax, jint samples);
+
+JNIEXPORT jstring JNICALL
+Java_com_mathengine_MathEngineBridge_nativeExportCatalog(JNIEnv *env, jclass clazz,
+                                                         jlong handle);
 
 JNIEXPORT jstring JNICALL
 Java_com_mathengine_MathEngineBridge_nativeModuleFormatVars(JNIEnv *env, jclass clazz,
