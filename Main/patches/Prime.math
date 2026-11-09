@@ -8,4 +8,5 @@ prime_count(x:vec) -> real = {
             y = y++
         }
     }
+    y
 }
