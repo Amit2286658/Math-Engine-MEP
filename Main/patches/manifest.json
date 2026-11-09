@@ -2,6 +2,17 @@
   "version": 1,
   "patches": [
     {
+      "file": "Prime.math",
+      "modules": [
+        "prime"
+      ],
+      "deps": [
+        "arith"
+      ],
+      "sha256": "e03f944997488ed125d33427d815bf2e6e43f78a62542168e05602560212077f",
+      "size": 142
+    },
+    {
       "file": "currency.math",
       "modules": [
         "currency"
