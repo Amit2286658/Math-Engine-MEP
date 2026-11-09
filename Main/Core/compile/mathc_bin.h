@@ -36,7 +36,7 @@ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 
 #define MATHC_MAGIC            0x4348544Du  /* "MTHC" in little-endian        */
 #define MATHC_VERSION          1u
-#define MATHC_MAX_IMAGE_BYTES  524288u      /* Max serialized .mathc size     */
+#define MATHC_MAX_IMAGE_BYTES  1048576u     /* Max serialized .mathc size (1 MiB stdlib + patches) */
 
 typedef struct {
     uint32_t magic;              /* MATHC_MAGIC ("MTHC")                      */

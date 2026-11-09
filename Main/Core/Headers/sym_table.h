@@ -30,8 +30,8 @@ extern "C" {
 #define SYM_SBO_VARS          256   /* Inline SBO module variable slots           */
 #define SYM_HEAP_VAR_MAGIC 0x56415248u /* "VARH" magic for heap-spilled vars     */
 #define SYM_MAX_TYPES          64
-#define SYM_MAX_UNITS          64
-#define SYM_EPHEM_UNIT_BASE    48u  /* Slots 48..63: ephemeral 7D SI compound units */
+#define SYM_MAX_UNITS         128
+#define SYM_EPHEM_UNIT_BASE   112u  /* Slots 112..127: ephemeral 7D SI compound units */
 #define SYM_MAX_PAT_ELEMS     256
 #define SYM_MAX_FIELDS        256
 #define SYM_MAX_SYMS         2048

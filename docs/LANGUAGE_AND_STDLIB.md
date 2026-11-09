@@ -123,10 +123,24 @@ The `into` operator converts any unit-tagged scalar or vector into a compatible 
   - `10 in 1..<10` -> `0`
   - `"k" in map("k", 42)` -> `1`
 - **Loops & Comprehensions**:
-  - Range/collection loop: `s := 0 ; (i in 1...5) { s += i } ; s` -> `15`
-  - Indexed loop: `v := vec(10, 20, 30) ; s := 0 ; (i, x in v) { s += (i + 1) * x } ; s` -> `140`
-  - While loop: `x := 1 ; (x < 100) ?? { x *= 2 } ; x` -> `128`
+  - `for-in` loops accept two interchangeable spellings — a brace body, or an explicit
+    `??` body-opener (`??` is the `while` operator reused as the loop headline):
+    - `s := 0 ; (i in 1...5) { s += i } ; s` -> `15`
+    - `s := 0 ; (i in 1...5) ?? { s += i } ; s` -> `15` (identical semantics)
+  - Indexed loops bind the 0-based position first, then the element:
+    `v := vec(10, 20, 30) ; s := 0 ; (i, x in v) { s += (i + 1) * x } ; s` -> `140` (`i` runs `0, 1, 2`)
+  - Pre-tested `while` loop: `x := 1 ; (x < 100) ?? { x *= 2 } ; x` -> `128`
+  - Post-tested `do-while` loops — spell the body first, condition second. Two
+    accepted spellings, plus the implicit one the parser allows:
+    - Block body + condition: `x := 7 ; { x += 1 } ?? (x < 10) ; x` -> `10`
+    - Parenthesized body + explicit `?!?` do-while operator:
+      `x := 7 ; (x += 1) ?!? (x < 10) ; x` -> `10`
+    - Implicit: a block on the left of `??` whose right side is *not* a brace
+      (`{ x += 1 } ?? (x < 10)`) is automatically parsed as do-while, not while.
   - Comprehension: `[x^2 for x in 1...6 if x % 2 == 0]` -> `[4, 16, 36]`
+  - Booleans are the numbers `1` / `0` — there is **no `true`/`false` literal**
+    (write `1` for true, `0` for false; `!` is logical not, `&` / `|` are the
+    distributed logical and/or connectors).
 
 ---
 
@@ -146,6 +160,33 @@ The `into` operator converts any unit-tagged scalar or vector into a compatible 
       else: "high"
   }   # -> "mid"
   ```
+- **Ternary Conditional (`? :`)**:
+  Right-associative, so chains without nesting:
+  ```math
+  x := 2
+  (x == 1) ? 10 : (x == 2) ? 20 : 30   # -> 20
+  y := 5
+  (y < 0) ? "neg" : (y == 0) ? "zero" : "pos"   # -> "pos"
+  ```
+- **Tagged Scopes (`tag: { ... }`) with `run` / `jump` / `continue` / `break`**:
+  An identifier followed by `:` and a block (or expression) defines a named,
+  re-runnable scope. The body executes once where it is written; the tag-aware
+  jumps then let you drive it from anywhere inside:
+  - `run(tag)` — re-executes the scope body and yields its value.
+  - `continue(tag)` / `jump(tag)` — jump back to the scope tag; the scope body
+    restarts from its top (goto-style). Neither carries a value.
+  - `break(tag[, value])` — exits the scope, optionally producing a result
+    (bound by the enclosing expression).
+  ```math
+  acc := 0 ; twice: { acc += 3 } ; run(twice) + run(twice)   # -> 15  (6 + 9; acc ends at 9)
+
+  c := 0 ; found: { (c < 3) ?? { c += 1 ; continue(found) } } ; c   # -> 3
+
+  r := found: { break(found, 42) } ; r   # -> 42
+  ```
+  Note that locals declared *inside* a tagged scope are re-initialized on every
+  `run` / `continue` — keep loop counters in the enclosing scope, as above.
+  Anonymous `break` / `continue` (no tag) act on the innermost enclosing loop.
 - **Composite Structs (`struct Name(...)` / `$Name(...)`)**:
   ```math
   struct Point(x: real, y: real)
@@ -168,6 +209,19 @@ The `into` operator converts any unit-tagged scalar or vector into a compatible 
 | **Linear Solver** | `linsolve([2, 1 ; 5, 3], [4, 11])` | `[1, 2]` |
 | **Eigenvalues** | `eigvals([2, 1 ; 1, 2])` | `[3, 1]` |
 | **Dictionary (`$map`)** | `m := map("a", 10, "b", 20) ; m["c"] = 30 ; m["a"] + m["c"]` | `40` |
+
+- **Pipes Are Sugar (static rewrite, not a runtime call)**:
+  The parser rewrites `|>` at parse time (`hardcode_parse_pipe_rhs`), so the
+  following three are the *same* call tree — pipe, nested arguments, and UFCS
+  (`a.f(b, c)` parses as `f(a, b, c)`):
+  ```math
+  (1...4) |> map(x => x^2) |> sum()   # -> 30
+  sum(map(1...4, x => x^2))           # -> 30  (pipe = argument reordering)
+  (1...4).map(x => x^2).sum()         # -> 30  (UFCS via the dot operator)
+  ```
+  A bare function name pipes the left value as the sole argument
+  (`x |> f` == `f(x)`), and a lambda is a valid pipe target:
+  `5 |> (x => x * 100)` -> `500`.
 
 ---
 
@@ -217,12 +271,48 @@ println("Distance: {2km into m} m")   # Prints: Distance: 2000 m
 println("Formatted: {π:.4f}")         # Prints: Formatted: 3.1416
 ```
 
-Supported currency identifiers in `[currency]` (`patches/currency.math`):
-- **USD**: `$`, `USD`, `usd`
-- **INR**: `₹`, `RS`, `Rs`, `rs`, `INR`, `inr`
-- **EUR**: `€`, `EUR`, `eur`
-- **GBP**: `£`, `GBP`, `gbp`
-- **JPY**: `¥`, `JPY`, `jpy`
+Supported currency identifiers — a 55-currency offline baseline mirroring what
+the `@currency_convert` host extern (see `CurrencyConverter.kt`) seeds offline.
+All pairs spell the complete 55×55 `into` matrix:
+
+- **Base 13 — hand-maintained `patches/currency.math`** (fits the base unit
+  registry, so this file loads on *every* shipped engine):
+  - **USD**: `$` (also `US$`), `USD`, `usd`
+  - **EUR**: `€`, `EUR`, `eur`
+  - **GBP**: `£`, `GBP`, `gbp`
+  - **INR**: `₹`, `Rs`, `RS`, `rs`, `INR`, `inr`
+  - **JPY**: `¥`, `JPY`, `jpy`  (`¥` maps to JPY only; CNY is spelled by its codes)
+  - **CNY**: `CNY`, `cny`
+  - **AUD**: `A$`, `AUD`, `aud`
+  - **CAD**: `C$`, `CAD`, `cad`
+  - **CHF**: `CHF`, `chf`
+  - **SGD**: `S$`, `SGD`, `sgd`
+  - **HKD**: `HK$`, `HKD`, `hkd`
+  - **KRW**: `₩`, `KRW`, `krw`
+  - **NZD**: `NZ$`, `NZD`, `nzd`
+- **Remaining 42 — generated `currency_pairs_1..6.math`** (one file per 7
+  currencies; each file also carries the base-13 *inbound* rows, so a
+  destination's conversions all live next to its spellings):
+  SEK, NOK, DKK, MXN, BRL (`R$`), ZAR, RUB (`₽`), TRY (`₺`), SAR, AED, THB
+  (`฿`), MYR, IDR, PHP (`₱`), PLN, TWD, VND (`₫`), EGP, PKR, BDT, LKR, NPR,
+  NGN (`₦`), KES, GHS, ARS, CLP, COP, PEN, ILS (`₪`), QAR, KWD, BHD, OMR,
+  CZK, HUF, RON, BGN, ISK, UAH (`₴`), KZT (`₸`), MAD — every code in both
+  upper and lower case plus the quoted symbol in parentheses.
+
+  These files require the widened unit registry (`SYM_MAX_UNITS = 128`); on
+  older engines each file fails to compile and the app's patch loader skips
+  exactly that file — old installations keep working with the base-13 patch.
+
+Implementation notes:
+
+- `try` / `catch` / `throw` are **reserved keywords**, so TRY's unit group is
+  internally named `lira`; its spellings are `TRY` and `₺` (no lowercase).
+- Conversion bodies call the `@currency_convert` extern, so rates track the
+  live/refreshed table on the device; the `into` spellings are just sugar over
+  the string layer.
+- The ~160 further ISO codes surfaced by the live-rate providers (beyond the
+  55 baseline) remain reachable through the pure function layer on any engine:
+  `convert(100, "USD", "ZMW")`, `fx_rate("USD", "ZMW")`, `convert_all(...)`.
 
 
 ## Recent Engine Upgrades (Base-Layer Watermarks, SBO+Heap AST/Overloads, Batch Plotter & Live Catalog)
@@ -237,3 +327,7 @@ Supported currency identifiers in `[currency]` (`patches/currency.math`):
    - Parses a plotted expression, 1-arg function, `vec<real>`, or `vec<vec2>` trajectory once into a temporary AST and evaluates all `N` sample points across `[x_min, x_max]` in a single C loop, returning a flat `double[]` (`[x0, y0, x1, y1, ...]`) over a single JNI call.
 4. **Live `SymTable` Catalog Export (`eng_export_catalog` / `nativeExportCatalog`)**
    - Exports all active functions, operators, units, types/structs, constants, and modules directly from the live C `SymTable` (`kind|name|sig|retType|retUnit|modName`) so host IDEs and editors automatically autocomplete newly loaded OTA `.math` patches and linked project modules.
+5. **Wider Unit Registry & 1 MiB `.mathc` Images (`SYM_MAX_UNITS = 128`, `MATHC_MAX_IMAGE_BYTES = 1 MiB`)**
+   - `Core/Headers/sym_table.h`: `SYM_MAX_UNITS` raised `64` -> `128`; owned named unit-group slots are now `1..111`, and `SYM_EPHEM_UNIT_BASE` moved `48` -> `112` (ephemeral 7D SI compound units occupy slots `112..127`). All call sites route through these two defines (sym_table, delegate_core, delegate_numeric, mathc_bin), so no other code changed.
+   - `Core/compile/mathc_bin.h`: `MATHC_MAX_IMAGE_BYTES` raised `524288` -> `1048576`; the cumulative `.mathc` image (stdlib + every linked patch) now caps at 1 MiB.
+   - This is what enables the 55-currency patch family (see *String Interpolation & Currency Sugar* above): `currency_pairs_1..6.math` own all 55 currency unit groups and spell the full 55×55 `into` matrix (~3,000 additional overloads, SBO+heap).

@@ -9,8 +9,21 @@
 # ==============================================================================
 # 1. Currency symbol & code aliases (each marker is its own unit group so
 #    `unit_of(5$) == "usd"` lets `currency_convert` see the source currency)
+#
+#    Registry budget: this base file defines 13 currency groups, which keeps the
+#    whole base exactly inside the OLD (SYM_MAX_UNITS=64) engine's 47 owned
+#    named-group slots (34 stdlib + 13 currency), so every shipped APK can load
+#    it. The remaining 42 baseline currencies live in `currency_pairs_N.math`
+#    and require the SYM_MAX_UNITS=128 engine (they fail gracefully per-file on
+#    older engines via the patch loader).
+#
+#    NOTE: TRY's lowercase identifier collides with the reserved keywords
+#    (`try`), so its group is named `lira` and only `TRY` / `₺` are spelled.
+#    The ¥ alias maps to JPY only (matching the host symbol table); CNY is
+#    spelled by its codes.
 # ==============================================================================
 (x)    "$"  :95 -> real, usd = x
+(x)    "US$" :95 -> real, usd = x
 (x)    USD  :95 -> real, usd = x
 (x)    usd  :95 -> real, usd = x
 (x)    "€"  :95 -> real, eur = x
@@ -28,9 +41,33 @@
 (x)    "¥"  :95 -> real, jpy = x
 (x)    JPY  :95 -> real, jpy = x
 (x)    jpy  :95 -> real, jpy = x
+(x)    CNY  :95 -> real, cny = x
+(x)    cny  :95 -> real, cny = x
+(x)    "A$" :95 -> real, aud = x
+(x)    AUD  :95 -> real, aud = x
+(x)    aud  :95 -> real, aud = x
+(x)    "C$" :95 -> real, cad = x
+(x)    CAD  :95 -> real, cad = x
+(x)    cad  :95 -> real, cad = x
+(x)    CHF  :95 -> real, chf = x
+(x)    chf  :95 -> real, chf = x
+(x)    "S$" :95 -> real, sgd = x
+(x)    SGD  :95 -> real, sgd = x
+(x)    sgd  :95 -> real, sgd = x
+(x)    "HK$":95 -> real, hkd = x
+(x)    HKD  :95 -> real, hkd = x
+(x)    hkd  :95 -> real, hkd = x
+(x)    "₩"  :95 -> real, krw = x
+(x)    KRW  :95 -> real, krw = x
+(x)    krw  :95 -> real, krw = x
+(x)    "NZ$":95 -> real, nzd = x
+(x)    NZD  :95 -> real, nzd = x
+(x)    nzd  :95 -> real, nzd = x
 
 # Bare constants (RHS of `into`): `25$ into RS` / `25$ into Rs` – the right side
 # resolves as a 1-unit value tagged with the target currency.
+"$"   : real, usd = 1
+"US$" : real, usd = 1
 "USD" : real, usd = 1
 "usd" : real, usd = 1
 "EUR" : real, eur = 1
@@ -44,40 +81,229 @@
 "inr" : real, inr = 1
 "JPY" : real, jpy = 1
 "jpy" : real, jpy = 1
+"CNY" : real, cny = 1
+"cny" : real, cny = 1
+"A$"  : real, aud = 1
+"AUD" : real, aud = 1
+"aud" : real, aud = 1
+"C$"  : real, cad = 1
+"CAD" : real, cad = 1
+"cad" : real, cad = 1
+"CHF" : real, chf = 1
+"chf" : real, chf = 1
+"S$"  : real, sgd = 1
+"SGD" : real, sgd = 1
+"sgd" : real, sgd = 1
+"HK$" : real, hkd = 1
+"HKD" : real, hkd = 1
+"hkd" : real, hkd = 1
+"₩"   : real, krw = 1
+"KRW" : real, krw = 1
+"krw" : real, krw = 1
+"NZ$" : real, nzd = 1
+"NZD" : real, nzd = 1
+"nzd" : real, nzd = 1
 
 # ==============================================================================
 # 2. `from into to` conversion overloads (`25$ into RS`, `100 USD into EUR`, ...)
 #    `with_unit` (`@raw`) passes fallback `$str` messages through untouched.
+#    This block covers the full 13x13 matrix of base currencies; the remaining
+#    42 currencies' rows are in `currency_pairs_N.math` (generated).
 # ==============================================================================
+# ---- USD rows ----
 (x: real, usd) "into" (y: real, usd) :>55 = with_unit(x, y)
 (x: real, usd) "into" (y: real, eur) :>55 = with_unit(@currency_convert("USD", "EUR", x), y)
 (x: real, usd) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("USD", "GBP", x), y)
 (x: real, usd) "into" (y: real, inr) :>55 = with_unit(@currency_convert("USD", "INR", x), y)
 (x: real, usd) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("USD", "JPY", x), y)
+(x: real, usd) "into" (y: real, cny) :>55 = with_unit(@currency_convert("USD", "CNY", x), y)
+(x: real, usd) "into" (y: real, aud) :>55 = with_unit(@currency_convert("USD", "AUD", x), y)
+(x: real, usd) "into" (y: real, cad) :>55 = with_unit(@currency_convert("USD", "CAD", x), y)
+(x: real, usd) "into" (y: real, chf) :>55 = with_unit(@currency_convert("USD", "CHF", x), y)
+(x: real, usd) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("USD", "SGD", x), y)
+(x: real, usd) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("USD", "HKD", x), y)
+(x: real, usd) "into" (y: real, krw) :>55 = with_unit(@currency_convert("USD", "KRW", x), y)
+(x: real, usd) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("USD", "NZD", x), y)
 
-(x: real, eur) "into" (y: real, eur) :>55 = with_unit(x, y)
+# ---- EUR rows ----
 (x: real, eur) "into" (y: real, usd) :>55 = with_unit(@currency_convert("EUR", "USD", x), y)
+(x: real, eur) "into" (y: real, eur) :>55 = with_unit(x, y)
 (x: real, eur) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("EUR", "GBP", x), y)
 (x: real, eur) "into" (y: real, inr) :>55 = with_unit(@currency_convert("EUR", "INR", x), y)
 (x: real, eur) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("EUR", "JPY", x), y)
+(x: real, eur) "into" (y: real, cny) :>55 = with_unit(@currency_convert("EUR", "CNY", x), y)
+(x: real, eur) "into" (y: real, aud) :>55 = with_unit(@currency_convert("EUR", "AUD", x), y)
+(x: real, eur) "into" (y: real, cad) :>55 = with_unit(@currency_convert("EUR", "CAD", x), y)
+(x: real, eur) "into" (y: real, chf) :>55 = with_unit(@currency_convert("EUR", "CHF", x), y)
+(x: real, eur) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("EUR", "SGD", x), y)
+(x: real, eur) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("EUR", "HKD", x), y)
+(x: real, eur) "into" (y: real, krw) :>55 = with_unit(@currency_convert("EUR", "KRW", x), y)
+(x: real, eur) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("EUR", "NZD", x), y)
 
-(x: real, gbp) "into" (y: real, gbp) :>55 = with_unit(x, y)
+# ---- GBP rows ----
 (x: real, gbp) "into" (y: real, usd) :>55 = with_unit(@currency_convert("GBP", "USD", x), y)
 (x: real, gbp) "into" (y: real, eur) :>55 = with_unit(@currency_convert("GBP", "EUR", x), y)
+(x: real, gbp) "into" (y: real, gbp) :>55 = with_unit(x, y)
 (x: real, gbp) "into" (y: real, inr) :>55 = with_unit(@currency_convert("GBP", "INR", x), y)
 (x: real, gbp) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("GBP", "JPY", x), y)
+(x: real, gbp) "into" (y: real, cny) :>55 = with_unit(@currency_convert("GBP", "CNY", x), y)
+(x: real, gbp) "into" (y: real, aud) :>55 = with_unit(@currency_convert("GBP", "AUD", x), y)
+(x: real, gbp) "into" (y: real, cad) :>55 = with_unit(@currency_convert("GBP", "CAD", x), y)
+(x: real, gbp) "into" (y: real, chf) :>55 = with_unit(@currency_convert("GBP", "CHF", x), y)
+(x: real, gbp) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("GBP", "SGD", x), y)
+(x: real, gbp) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("GBP", "HKD", x), y)
+(x: real, gbp) "into" (y: real, krw) :>55 = with_unit(@currency_convert("GBP", "KRW", x), y)
+(x: real, gbp) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("GBP", "NZD", x), y)
 
-(x: real, inr) "into" (y: real, inr) :>55 = with_unit(x, y)
+# ---- INR rows ----
 (x: real, inr) "into" (y: real, usd) :>55 = with_unit(@currency_convert("INR", "USD", x), y)
 (x: real, inr) "into" (y: real, eur) :>55 = with_unit(@currency_convert("INR", "EUR", x), y)
 (x: real, inr) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("INR", "GBP", x), y)
+(x: real, inr) "into" (y: real, inr) :>55 = with_unit(x, y)
 (x: real, inr) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("INR", "JPY", x), y)
+(x: real, inr) "into" (y: real, cny) :>55 = with_unit(@currency_convert("INR", "CNY", x), y)
+(x: real, inr) "into" (y: real, aud) :>55 = with_unit(@currency_convert("INR", "AUD", x), y)
+(x: real, inr) "into" (y: real, cad) :>55 = with_unit(@currency_convert("INR", "CAD", x), y)
+(x: real, inr) "into" (y: real, chf) :>55 = with_unit(@currency_convert("INR", "CHF", x), y)
+(x: real, inr) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("INR", "SGD", x), y)
+(x: real, inr) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("INR", "HKD", x), y)
+(x: real, inr) "into" (y: real, krw) :>55 = with_unit(@currency_convert("INR", "KRW", x), y)
+(x: real, inr) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("INR", "NZD", x), y)
 
-(x: real, jpy) "into" (y: real, jpy) :>55 = with_unit(x, y)
+# ---- JPY rows ----
 (x: real, jpy) "into" (y: real, usd) :>55 = with_unit(@currency_convert("JPY", "USD", x), y)
 (x: real, jpy) "into" (y: real, eur) :>55 = with_unit(@currency_convert("JPY", "EUR", x), y)
 (x: real, jpy) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("JPY", "GBP", x), y)
 (x: real, jpy) "into" (y: real, inr) :>55 = with_unit(@currency_convert("JPY", "INR", x), y)
+(x: real, jpy) "into" (y: real, jpy) :>55 = with_unit(x, y)
+(x: real, jpy) "into" (y: real, cny) :>55 = with_unit(@currency_convert("JPY", "CNY", x), y)
+(x: real, jpy) "into" (y: real, aud) :>55 = with_unit(@currency_convert("JPY", "AUD", x), y)
+(x: real, jpy) "into" (y: real, cad) :>55 = with_unit(@currency_convert("JPY", "CAD", x), y)
+(x: real, jpy) "into" (y: real, chf) :>55 = with_unit(@currency_convert("JPY", "CHF", x), y)
+(x: real, jpy) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("JPY", "SGD", x), y)
+(x: real, jpy) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("JPY", "HKD", x), y)
+(x: real, jpy) "into" (y: real, krw) :>55 = with_unit(@currency_convert("JPY", "KRW", x), y)
+(x: real, jpy) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("JPY", "NZD", x), y)
+
+# ---- CNY rows ----
+(x: real, cny) "into" (y: real, usd) :>55 = with_unit(@currency_convert("CNY", "USD", x), y)
+(x: real, cny) "into" (y: real, eur) :>55 = with_unit(@currency_convert("CNY", "EUR", x), y)
+(x: real, cny) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("CNY", "GBP", x), y)
+(x: real, cny) "into" (y: real, inr) :>55 = with_unit(@currency_convert("CNY", "INR", x), y)
+(x: real, cny) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("CNY", "JPY", x), y)
+(x: real, cny) "into" (y: real, cny) :>55 = with_unit(x, y)
+(x: real, cny) "into" (y: real, aud) :>55 = with_unit(@currency_convert("CNY", "AUD", x), y)
+(x: real, cny) "into" (y: real, cad) :>55 = with_unit(@currency_convert("CNY", "CAD", x), y)
+(x: real, cny) "into" (y: real, chf) :>55 = with_unit(@currency_convert("CNY", "CHF", x), y)
+(x: real, cny) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("CNY", "SGD", x), y)
+(x: real, cny) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("CNY", "HKD", x), y)
+(x: real, cny) "into" (y: real, krw) :>55 = with_unit(@currency_convert("CNY", "KRW", x), y)
+(x: real, cny) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("CNY", "NZD", x), y)
+
+# ---- AUD rows ----
+(x: real, aud) "into" (y: real, usd) :>55 = with_unit(@currency_convert("AUD", "USD", x), y)
+(x: real, aud) "into" (y: real, eur) :>55 = with_unit(@currency_convert("AUD", "EUR", x), y)
+(x: real, aud) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("AUD", "GBP", x), y)
+(x: real, aud) "into" (y: real, inr) :>55 = with_unit(@currency_convert("AUD", "INR", x), y)
+(x: real, aud) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("AUD", "JPY", x), y)
+(x: real, aud) "into" (y: real, cny) :>55 = with_unit(@currency_convert("AUD", "CNY", x), y)
+(x: real, aud) "into" (y: real, aud) :>55 = with_unit(x, y)
+(x: real, aud) "into" (y: real, cad) :>55 = with_unit(@currency_convert("AUD", "CAD", x), y)
+(x: real, aud) "into" (y: real, chf) :>55 = with_unit(@currency_convert("AUD", "CHF", x), y)
+(x: real, aud) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("AUD", "SGD", x), y)
+(x: real, aud) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("AUD", "HKD", x), y)
+(x: real, aud) "into" (y: real, krw) :>55 = with_unit(@currency_convert("AUD", "KRW", x), y)
+(x: real, aud) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("AUD", "NZD", x), y)
+
+# ---- CAD rows ----
+(x: real, cad) "into" (y: real, usd) :>55 = with_unit(@currency_convert("CAD", "USD", x), y)
+(x: real, cad) "into" (y: real, eur) :>55 = with_unit(@currency_convert("CAD", "EUR", x), y)
+(x: real, cad) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("CAD", "GBP", x), y)
+(x: real, cad) "into" (y: real, inr) :>55 = with_unit(@currency_convert("CAD", "INR", x), y)
+(x: real, cad) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("CAD", "JPY", x), y)
+(x: real, cad) "into" (y: real, cny) :>55 = with_unit(@currency_convert("CAD", "CNY", x), y)
+(x: real, cad) "into" (y: real, aud) :>55 = with_unit(@currency_convert("CAD", "AUD", x), y)
+(x: real, cad) "into" (y: real, cad) :>55 = with_unit(x, y)
+(x: real, cad) "into" (y: real, chf) :>55 = with_unit(@currency_convert("CAD", "CHF", x), y)
+(x: real, cad) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("CAD", "SGD", x), y)
+(x: real, cad) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("CAD", "HKD", x), y)
+(x: real, cad) "into" (y: real, krw) :>55 = with_unit(@currency_convert("CAD", "KRW", x), y)
+(x: real, cad) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("CAD", "NZD", x), y)
+
+# ---- CHF rows ----
+(x: real, chf) "into" (y: real, usd) :>55 = with_unit(@currency_convert("CHF", "USD", x), y)
+(x: real, chf) "into" (y: real, eur) :>55 = with_unit(@currency_convert("CHF", "EUR", x), y)
+(x: real, chf) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("CHF", "GBP", x), y)
+(x: real, chf) "into" (y: real, inr) :>55 = with_unit(@currency_convert("CHF", "INR", x), y)
+(x: real, chf) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("CHF", "JPY", x), y)
+(x: real, chf) "into" (y: real, cny) :>55 = with_unit(@currency_convert("CHF", "CNY", x), y)
+(x: real, chf) "into" (y: real, aud) :>55 = with_unit(@currency_convert("CHF", "AUD", x), y)
+(x: real, chf) "into" (y: real, cad) :>55 = with_unit(@currency_convert("CHF", "CAD", x), y)
+(x: real, chf) "into" (y: real, chf) :>55 = with_unit(x, y)
+(x: real, chf) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("CHF", "SGD", x), y)
+(x: real, chf) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("CHF", "HKD", x), y)
+(x: real, chf) "into" (y: real, krw) :>55 = with_unit(@currency_convert("CHF", "KRW", x), y)
+(x: real, chf) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("CHF", "NZD", x), y)
+
+# ---- SGD rows ----
+(x: real, sgd) "into" (y: real, usd) :>55 = with_unit(@currency_convert("SGD", "USD", x), y)
+(x: real, sgd) "into" (y: real, eur) :>55 = with_unit(@currency_convert("SGD", "EUR", x), y)
+(x: real, sgd) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("SGD", "GBP", x), y)
+(x: real, sgd) "into" (y: real, inr) :>55 = with_unit(@currency_convert("SGD", "INR", x), y)
+(x: real, sgd) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("SGD", "JPY", x), y)
+(x: real, sgd) "into" (y: real, cny) :>55 = with_unit(@currency_convert("SGD", "CNY", x), y)
+(x: real, sgd) "into" (y: real, aud) :>55 = with_unit(@currency_convert("SGD", "AUD", x), y)
+(x: real, sgd) "into" (y: real, cad) :>55 = with_unit(@currency_convert("SGD", "CAD", x), y)
+(x: real, sgd) "into" (y: real, chf) :>55 = with_unit(@currency_convert("SGD", "CHF", x), y)
+(x: real, sgd) "into" (y: real, sgd) :>55 = with_unit(x, y)
+(x: real, sgd) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("SGD", "HKD", x), y)
+(x: real, sgd) "into" (y: real, krw) :>55 = with_unit(@currency_convert("SGD", "KRW", x), y)
+(x: real, sgd) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("SGD", "NZD", x), y)
+
+# ---- HKD rows ----
+(x: real, hkd) "into" (y: real, usd) :>55 = with_unit(@currency_convert("HKD", "USD", x), y)
+(x: real, hkd) "into" (y: real, eur) :>55 = with_unit(@currency_convert("HKD", "EUR", x), y)
+(x: real, hkd) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("HKD", "GBP", x), y)
+(x: real, hkd) "into" (y: real, inr) :>55 = with_unit(@currency_convert("HKD", "INR", x), y)
+(x: real, hkd) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("HKD", "JPY", x), y)
+(x: real, hkd) "into" (y: real, cny) :>55 = with_unit(@currency_convert("HKD", "CNY", x), y)
+(x: real, hkd) "into" (y: real, aud) :>55 = with_unit(@currency_convert("HKD", "AUD", x), y)
+(x: real, hkd) "into" (y: real, cad) :>55 = with_unit(@currency_convert("HKD", "CAD", x), y)
+(x: real, hkd) "into" (y: real, chf) :>55 = with_unit(@currency_convert("HKD", "CHF", x), y)
+(x: real, hkd) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("HKD", "SGD", x), y)
+(x: real, hkd) "into" (y: real, hkd) :>55 = with_unit(x, y)
+(x: real, hkd) "into" (y: real, krw) :>55 = with_unit(@currency_convert("HKD", "KRW", x), y)
+(x: real, hkd) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("HKD", "NZD", x), y)
+
+# ---- KRW rows ----
+(x: real, krw) "into" (y: real, usd) :>55 = with_unit(@currency_convert("KRW", "USD", x), y)
+(x: real, krw) "into" (y: real, eur) :>55 = with_unit(@currency_convert("KRW", "EUR", x), y)
+(x: real, krw) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("KRW", "GBP", x), y)
+(x: real, krw) "into" (y: real, inr) :>55 = with_unit(@currency_convert("KRW", "INR", x), y)
+(x: real, krw) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("KRW", "JPY", x), y)
+(x: real, krw) "into" (y: real, cny) :>55 = with_unit(@currency_convert("KRW", "CNY", x), y)
+(x: real, krw) "into" (y: real, aud) :>55 = with_unit(@currency_convert("KRW", "AUD", x), y)
+(x: real, krw) "into" (y: real, cad) :>55 = with_unit(@currency_convert("KRW", "CAD", x), y)
+(x: real, krw) "into" (y: real, chf) :>55 = with_unit(@currency_convert("KRW", "CHF", x), y)
+(x: real, krw) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("KRW", "SGD", x), y)
+(x: real, krw) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("KRW", "HKD", x), y)
+(x: real, krw) "into" (y: real, krw) :>55 = with_unit(x, y)
+(x: real, krw) "into" (y: real, nzd) :>55 = with_unit(@currency_convert("KRW", "NZD", x), y)
+
+# ---- NZD rows ----
+(x: real, nzd) "into" (y: real, usd) :>55 = with_unit(@currency_convert("NZD", "USD", x), y)
+(x: real, nzd) "into" (y: real, eur) :>55 = with_unit(@currency_convert("NZD", "EUR", x), y)
+(x: real, nzd) "into" (y: real, gbp) :>55 = with_unit(@currency_convert("NZD", "GBP", x), y)
+(x: real, nzd) "into" (y: real, inr) :>55 = with_unit(@currency_convert("NZD", "INR", x), y)
+(x: real, nzd) "into" (y: real, jpy) :>55 = with_unit(@currency_convert("NZD", "JPY", x), y)
+(x: real, nzd) "into" (y: real, cny) :>55 = with_unit(@currency_convert("NZD", "CNY", x), y)
+(x: real, nzd) "into" (y: real, aud) :>55 = with_unit(@currency_convert("NZD", "AUD", x), y)
+(x: real, nzd) "into" (y: real, cad) :>55 = with_unit(@currency_convert("NZD", "CAD", x), y)
+(x: real, nzd) "into" (y: real, chf) :>55 = with_unit(@currency_convert("NZD", "CHF", x), y)
+(x: real, nzd) "into" (y: real, sgd) :>55 = with_unit(@currency_convert("NZD", "SGD", x), y)
+(x: real, nzd) "into" (y: real, hkd) :>55 = with_unit(@currency_convert("NZD", "HKD", x), y)
+(x: real, nzd) "into" (y: real, krw) :>55 = with_unit(@currency_convert("NZD", "KRW", x), y)
+(x: real, nzd) "into" (y: real, nzd) :>55 = with_unit(x, y)
 
 # ==============================================================================
 # 3. Plain function layer (ISO codes, no symbol aliases needed)

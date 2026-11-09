@@ -1,10 +1,84 @@
 {
-  "version": 2,
+  "version": 1,
   "patches": [
     {
       "file": "currency.math",
-      "sha256": "4bafa2a7c441b277047da82ba60a8ea62614e79f912e434b4ab00af382543cbc",
-      "description": "Currency conversion foundation ([currency]) with into operator and case-insensitive currency codes"
+      "modules": [
+        "currency"
+      ],
+      "deps": [
+        "boot_types",
+        "arith",
+        "string"
+      ],
+      "sha256": "af569acb14f8516a9c596c69baba9459829a3789f7d7b9a82e368930052a6d21",
+      "size": 20482
+    },
+    {
+      "file": "currency_pairs_1.math",
+      "modules": [
+        "currency_pairs_1"
+      ],
+      "deps": [
+        "currency"
+      ],
+      "sha256": "2ddda751cf5dc3cec39fe7a82ea941e80b604f7a8c92406f1fe14f5fac4a97cc",
+      "size": 46331
+    },
+    {
+      "file": "currency_pairs_2.math",
+      "modules": [
+        "currency_pairs_2"
+      ],
+      "deps": [
+        "currency"
+      ],
+      "sha256": "5c2e8522896221368b2a1c9147fb7e1d2f19902f8fb4e878b3e54fc74cf1044c",
+      "size": 46405
+    },
+    {
+      "file": "currency_pairs_3.math",
+      "modules": [
+        "currency_pairs_3"
+      ],
+      "deps": [
+        "currency"
+      ],
+      "sha256": "8941a02a37ed55dd3cdeb2804df3fea1d429d188826b2e7e88873870c5946eb7",
+      "size": 46278
+    },
+    {
+      "file": "currency_pairs_4.math",
+      "modules": [
+        "currency_pairs_4"
+      ],
+      "deps": [
+        "currency"
+      ],
+      "sha256": "1b074b58b8159cd5611243e6bc3c2ecb8b9cfeb6517b60d38c5ac54fb459cbdf",
+      "size": 46278
+    },
+    {
+      "file": "currency_pairs_5.math",
+      "modules": [
+        "currency_pairs_5"
+      ],
+      "deps": [
+        "currency"
+      ],
+      "sha256": "63acf420c5a33c80abe61de2ce8ec9f376dd3e3b60159ede55941d74921b625e",
+      "size": 46278
+    },
+    {
+      "file": "currency_pairs_6.math",
+      "modules": [
+        "currency_pairs_6"
+      ],
+      "deps": [
+        "currency"
+      ],
+      "sha256": "70bb648d13544fefd10f4a909cf45fff1ef93470368e17b6a845eab36195db13",
+      "size": 46333
     }
   ]
 }
