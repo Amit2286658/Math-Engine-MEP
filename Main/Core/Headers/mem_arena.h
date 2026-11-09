@@ -238,6 +238,7 @@ void     mem_free_all_heap(MemArena *mem);
 void     mem_free_ast_heap(MemArena *mem);
 bool     mem_ensure_ast_cap(MemArena *mem, uint16_t needed_cap);
 void     mem_err(MemArena *mem, const char *fmt, ...);
+void     mem_err_attach_line(MemArena *mem, int line);
 void     mem_clear_err(MemArena *mem);
 void     mem_out_append(MemArena *mem, const char *s, size_t len);
 void     mem_out_clear(MemArena *mem);

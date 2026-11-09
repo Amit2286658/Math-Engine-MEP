@@ -613,6 +613,13 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
         }
         uint16_t saved_ast = mem->ast_count;
 
+        /* Chunk diagnostics: file-absolute line of this statement (1-based),
+         * attached to any runtime error raised while executing it. */
+        int chunk_line = 1;
+        for (uint16_t q = 0; q < L.pos; ++q) {
+            if (L.src[q] == '\n') chunk_line++;
+        }
+
         Parser P;
         parser_init(&P, mem, tab, L.src, chunk_end, L.pos, false, false);
         P.is_mod_scope = true;
@@ -621,10 +628,19 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
         lex_next(&P.lex);
         uint16_t expr_root = parser_parse_expr(&P, 0);
         if (!mem->has_error && P.lex.cur.kind != TOK_EOF) {
+            /* Token-precise line for a chunk's offending token (the chunk may
+             * group several adjacent statements; the fallback chunk-start
+             * line would otherwise blame the group's first statement). */
+            int tok_line = 1;
+            for (uint16_t q = 0; q < P.lex.cur.off; ++q) {
+                if (L.src[q] == '\n') tok_line++;
+            }
             mem_err(mem, "Unexpected trailing token '%.*s'",
                     (int)P.lex.cur.len, L.src + P.lex.cur.off);
+            mem_err_attach_line(mem, tok_line);
         }
         if (!parser_check_labels(&P) || mem->has_error || expr_root == MEM_NO_IDX) {
+            mem_err_attach_line(mem, chunk_line);
             break;
         }
         L.pos = chunk_end;
@@ -640,6 +656,7 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
             frame_base = mem_push_frame(mem, P.local_count);
             if (mem->has_error) {
                 memcpy(mem->label_ast, saved_labels, sizeof(saved_labels));
+                mem_err_attach_line(mem, chunk_line);
                 break;
             }
             for (uint8_t i = 0; i < P.local_count; ++i) {
@@ -678,7 +695,10 @@ bool ext_eval_slice_ex(MemArena *mem, SymTable *tab,
             mem->ast_count = saved_ast;
         }
 
-        if (mem->has_error) break;
+        if (mem->has_error) {
+            mem_err_attach_line(mem, chunk_line);
+            break;
+        }
         last_val = step_val;
         if (early_return) break;
     }

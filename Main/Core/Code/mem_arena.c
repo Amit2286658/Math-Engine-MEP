@@ -87,6 +87,19 @@ void mem_err(MemArena *mem, const char *fmt, ...) {
     va_end(ap);
 }
 
+/* Attach a source-file line number to the most recent runtime error message
+ * (`... (line N)`). App-side tooling extracts this suffix to point at the
+ * exact statement. No-op if no error is pending, the message already cites a
+ * line, or there is no room left in the error buffer. */
+void mem_err_attach_line(MemArena *mem, int line) {
+    if (!mem || !mem->has_error || line <= 0) return;
+    const size_t len = strlen(mem->err_msg);
+    if (len >= sizeof(mem->err_msg)) return;
+    if (strstr(mem->err_msg, "line ") != NULL) return;
+    if (len + 20u >= sizeof(mem->err_msg)) return;
+    snprintf(mem->err_msg + len, sizeof(mem->err_msg) - len, " (line %d)", line);
+}
+
 void mem_clear_err(MemArena *mem) {
     mem->has_error  = false;
     mem->err_msg[0] = '\0';
