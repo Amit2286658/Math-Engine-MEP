@@ -1274,6 +1274,95 @@ int main(int argc, char **argv) {
     printf("    - [Live Catalog] `eng_export_catalog` stdlib + OTA patch symbols    : %s\n\n",
            sec18_catalog_ok ? "PASS" : "FAIL");
 
+    /* ----------------------------------------------------------------------
+     * 19. Static Element Typing, Inferred Defaults & Compile-Time Field Guardrails
+     * ---------------------------------------------------------------------- */
+    printf("[19] Static Element Typing, Inferred Defaults & Compile-Time Field Guardrails:\n");
+    bool sec19_ct_field_ok = false;
+    bool sec19_rt_locks_ok = false;
+    bool sec19_mathc_ov_ok = false;
+    {
+        Engine *se = eng_create();
+        if (se && test_load_stdlib_file(se)) {
+            Value tmp = val_void();
+            /* 19a. Compile-time struct field validation on indexed elements, loops, comprehensions & lambdas */
+            bool g_idx  = !eng_eval(se, "pts : vec<vec2> := vec(vec2(1, 2)) ; pts[0].z", &tmp) &&
+                          (strstr(se->mem.err_msg, "Struct 'vec2' has no field 'z'") != NULL);
+            bool g_push = !eng_eval(se, "pts := vec() ; pts.push(vec2(1, 2)) ; pts[0].z", &tmp) &&
+                          (strstr(se->mem.err_msg, "Struct 'vec2' has no field 'z'") != NULL);
+            bool g_loop = !eng_eval(se, "pts := vec(vec2(1, 2)) ; (p in pts) { p.z }", &tmp) &&
+                          (strstr(se->mem.err_msg, "Struct 'vec2' has no field 'z'") != NULL);
+            bool g_comp = !eng_eval(se, "[p.z for p in vec(vec2(1, 2))]", &tmp) &&
+                          (strstr(se->mem.err_msg, "Struct 'vec2' has no field 'z'") != NULL);
+            bool g_lam  = !eng_eval(se, "f := (v: vec<vec2>) => v[0].z ; f(vec(vec2(1, 2)))", &tmp) &&
+                          (strstr(se->mem.err_msg, "Struct 'vec2' has no field 'z'") != NULL);
+            sec19_ct_field_ok = g_idx && g_push && g_loop && g_comp && g_lam;
+
+            /* 19b. Static element type & unit lock enforcement on variables, vectors, maps & [...] literals */
+            bool l_decl  = !eng_eval(se, "v : vec<vec2> := vec(10, 20, 30)", &tmp) &&
+                           (strstr(se->mem.err_msg, "concrete type 'vec<vec2>'") != NULL);
+            bool l_vpush = !eng_eval(se, "v : vec<vec2> := vec() ; v.push(42)", &tmp) &&
+                           (strstr(se->mem.err_msg, "cannot push 'real' into vec<vec2>") != NULL);
+            bool l_inf   = !eng_eval(se, "v := vec() ; v.push(10) ; v.push(\"str\")", &tmp) &&
+                           (strstr(se->mem.err_msg, "cannot push 'str' into vec<real>") != NULL);
+            bool l_unit  = !eng_eval(se, "d : vec<real, length> := vec() ; d.push(5 sec)", &tmp) &&
+                           (strstr(se->mem.err_msg, "cannot push '[time]' into vec<[length]>") != NULL);
+            bool l_map   = !eng_eval(se, "m : map<vec2> := map() ; m[\"k\"] = 42", &tmp) &&
+                           (strstr(se->mem.err_msg, "Map value type mismatch") != NULL);
+            bool l_het   = !eng_eval(se, "[1, \"two\"]", &tmp) &&
+                           (strstr(se->mem.err_msg, "use vec<any>(...) for heterogeneous vectors") != NULL);
+            sec19_rt_locks_ok = l_decl && l_vpush && l_inf && l_unit && l_map && l_het;
+
+            /* 19c. Precompiled .mathc module with struct fields & overloads on vec<T> */
+            const char *typed_mod_src =
+                "[typed_poly]\n"
+                "<[arith]\n"
+                "<[vec]\n"
+                "<[geom_ext]\n"
+                "<[string]\n"
+                "$mesh2d(verts:vec<vec2>, weights:map<real>)\n"
+                "describe_elems(v:vec<real>) -> str = \"real:\" + (v.sum())_\n"
+                "describe_elems(v:vec<vec2>) -> str = \"vec2:\" + (v[0].x + v[0].y)_\n"
+                "describe_elems(v:vec<str>)  -> str = \"str:\" + str_join(v, \"-\")\n"
+                "mesh_score(m:mesh2d, k:str) = m.verts[0].x * m.weights[k] + m.verts[1].y\n";
+            const uint8_t *tmod_bin = NULL;
+            size_t tmod_len = 0;
+            if (user_compile_ext(se, typed_mod_src, &tmod_bin, &tmod_len) && tmod_bin && tmod_len > 0) {
+                Engine *se2 = eng_create();
+                if (se2 && test_load_stdlib_file(se2) && user_load_mathc(se2, tmod_bin, tmod_len)) {
+                    Value r1 = val_void(), r2 = val_void();
+                    char b1[128] = "";
+                    bool d_ok = eng_eval(se2,
+                        "describe_elems(vec()) + \"|\" + describe_elems(list(10, 20)) + \"|\" + "
+                        "describe_elems(vec(vec2(3, 4))) + \"|\" + describe_elems(vec(\"A\", \"B\"))",
+                        &r1) &&
+                        val_as_cstr(&se2->mem, r1, b1, sizeof(b1)) &&
+                        (strcmp(b1, "real:0|real:30|vec2:7|str:A-B") == 0);
+                    bool m_ok = eng_eval(se2,
+                        "w := map() ; w[\"scale\"] = 10 ; "
+                        "m := mesh2d(vec(vec2(2, 3), vec2(4, 5)), w) ; "
+                        "g_pts : vec<vec2> := vec() ; g_pts.push(vec2(7, 8)) ; "
+                        "mesh_score(m, \"scale\") + g_pts[0].x + g_pts[0].y",
+                        &r2) &&
+                        (val_get_f64(&se2->mem, r2) == 40.0);
+                    bool m_guard = !eng_eval(se2,
+                        "w2 := map() ; w2[\"s\"] = 1 ; mesh2d(vec(10, 20, 30), w2)",
+                        &r2) &&
+                        (strstr(se2->mem.err_msg, "vec<vec2>") != NULL);
+                    sec19_mathc_ov_ok = d_ok && m_ok && m_guard;
+                }
+                if (se2) eng_destroy(se2);
+            }
+        }
+        if (se) eng_destroy(se);
+    }
+    printf("    - [Compile-Time Fields] Reject invalid `.z` on `vec<vec2>` index/loop/comp/lambda : %s\n",
+           sec19_ct_field_ok ? "PASS" : "FAIL");
+    printf("    - [Static Element Locks] Enforce `vec<T, U>`, `map<T, U>` & homogeneous `[...]`   : %s\n",
+           sec19_rt_locks_ok ? "PASS" : "FAIL");
+    printf("    - [`.mathc` & Dispatch] Struct `vec<vec2>` fields & `vec<T>` overload dispatch    : %s\n\n",
+           sec19_mathc_ov_ok ? "PASS" : "FAIL");
+
     ext_build_free_heap(&ubuild);
     sym_free_heap(&s_fuzz_eng.sym);
     mem_free_all_heap(&s_fuzz_eng.mem);
@@ -1283,6 +1372,7 @@ int main(int argc, char **argv) {
             sec16_routing_ok && sec16_mig_ok && sec16_gc_ok &&
             sec17_standalone_ok && sec17_multifile_ok && sec17_import_and_si_ok && sec17_patches_ok &&
             sec18_plot_ok && sec18_heap_ast_ov_ok && sec18_catalog_ok &&
+            sec19_ct_field_ok && sec19_rt_locks_ok && sec19_mathc_ov_ok &&
             audit_g1_ok && audit_g2_ok && audit_g3_ok && audit_g4_ok &&
             audit2_b1_ok && audit2_b2_b3_ok && audit2_b5_ok &&
             sec1_sym_ok && sec3_sym_ok && sec3_mt_ok &&

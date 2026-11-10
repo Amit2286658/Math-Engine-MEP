@@ -464,6 +464,17 @@ static bool hc_scan_param_list_parens(const char *src, uint16_t p, uint16_t len,
             if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
             while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
             p = skip_raw_ws_hc(src, p, len);
+            if (p < len && src[p] == '<') {
+                int adepth = 1;
+                p++;
+                while (p < len && adepth > 0) {
+                    if (src[p] == '<') adepth++;
+                    else if (src[p] == '>') adepth--;
+                    p++;
+                }
+                if (adepth != 0) return false;
+                p = skip_raw_ws_hc(src, p, len);
+            }
         }
         if (p < len && src[p] == '=' &&
             !(p + 1 < len && (src[p + 1] == '=' || src[p + 1] == '>'))) {
@@ -825,7 +836,7 @@ bool hardcode_try_parse_container_type_arg(Parser *P, const char *id_str, uint16
     int kind_code = container_kind_from_name_hc(P->lex.mem, P->lex.tab, id_str, id_len);
     if (kind_code < 0) return false;
 
-    MemArena       *mem = P->lex.mem;
+    MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
 
     if (P->lex.cur.had_newline || P->lex.cur.kind != TOK_OP) return false;
@@ -864,12 +875,12 @@ bool hardcode_try_parse_container_type_arg(Parser *P, const char *id_str, uint16
         }
         uint8_t uid = sym_find_or_add_unit(tab, mem, s2_ptr, s2_len);
         if (mem->has_error) return false;
-        locked_tid = (tid == SYM_TYPE_ANY) ? 0 : (uint8_t)tid;
+        locked_tid = (tid == SYM_TYPE_ANY) ? SYM_ELEM_ANY : (uint8_t)tid;
         locked_uid = (uid == SYM_UNIT_GENERIC || uid == SYM_UNIT_OMITTED || uid == SYM_UNIT_LOCK_NONE) ? 0 : uid;
     } else {
         uint16_t tid = resolve_container_elem_type_hc(tab, mem, s1_ptr, s1_len);
         if (tid == SYM_TYPE_ANY) {
-            locked_tid = 0;
+            locked_tid = SYM_ELEM_ANY;
             locked_uid = 0;
         } else if (tid != MEM_TYPE_VOID) {
             locked_tid = (uint8_t)tid;
@@ -881,7 +892,8 @@ bool hardcode_try_parse_container_type_arg(Parser *P, const char *id_str, uint16
                         (int)s1_len, s1_ptr, (int)id_len, id_str);
                 return false;
             }
-            locked_tid = 0;
+            locked_tid = (uid != SYM_UNIT_GENERIC && uid != SYM_UNIT_OMITTED && mem->fast_real_type != 0)
+                         ? mem->fast_real_type : 0;
             locked_uid = (uid == SYM_UNIT_GENERIC || uid == SYM_UNIT_OMITTED || uid == SYM_UNIT_LOCK_NONE) ? 0 : uid;
         }
     }
@@ -901,10 +913,8 @@ bool hardcode_try_parse_container_type_arg(Parser *P, const char *id_str, uint16
 
     if (out_spec) {
         *out_spec = (uint16_t)(0x8000u |
-                               (((uint32_t)kind_code & 0x07u) << 12u) |
-                               (((uint32_t)locked_uid & 0x3Fu) << 6u) |
-                               ((uint32_t)locked_tid & 0x3Fu));
+                               (((uint32_t)locked_uid & 0xFFu) << 7u) |
+                               ((uint32_t)locked_tid & 0x7Fu));
     }
     return true;
 }
-

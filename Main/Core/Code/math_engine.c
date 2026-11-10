@@ -4,13 +4,6 @@
  * Every engine boots BLANK ("empty engine") and its host loads the precompiled
  * standard library image (`stdlib.mathc`) separately in O(1) `memcpy` time via
  * the user-loader (`Core/compile/user_loader.h`, JNI `nativeLoadMathc()`).
- *
- * Note:
- *   - Compilation, dependency-resolved linking, `.mathc` serialization,
- *     top-to-bottom module execution, and user extension loading live in
- *     `Core/compile/`.
- *   - Module-scoped variables (`:=` / `mut` mutable vs. `=` / `const` immutable,
- *     `pub` vs. `priv` visibility) live directly in `SymTable.vars`.
  */
 
 #include "math_engine.h"
@@ -29,8 +22,6 @@ void eng_init_blank(Engine *eng) {
 }
 
 void eng_init(Engine *eng) {
-    /* Blank init; the returned engine has NO standard library. Hosts load
-     * `stdlib.mathc` explicitly (user_load_mathc / nativeLoadMathc). */
     eng_init_blank(eng);
 }
 
@@ -43,15 +34,11 @@ Engine *eng_create_blank(void) {
 }
 
 Engine *eng_create(void) {
-    /* Same as eng_create_blank: an empty engine whose host is responsible
-     * for loading `stdlib.mathc` before evaluating. */
     return eng_create_blank();
 }
 
 void eng_destroy(Engine *eng) {
     if (!eng) return;
-    /* Extern destructors first: JNI bridges free their global refs / payload
-     * allocations here and do not depend on engine heap or symbol memory. */
     sym_free_externs(&eng->sym);
     mem_free_all_heap(&eng->mem);
     mem_free_ast_heap(&eng->mem);
@@ -103,7 +90,6 @@ bool eng_eval(Engine *eng, const char *expr, Value *out_val) {
         return false;
     }
 
-    /* Route scripts containing module headers, `<[dep]`, `import`, `@dim`, `@entry`, `$type`/`struct`, or `pub`/`priv` through the unified module pipeline */
     if (ext_src_has_module_constructs(&eng->mem, &eng->sym, expr, (uint16_t)raw_len)) {
         return eng_build_and_run(eng, &expr, 1, out_val);
     }
@@ -591,11 +577,12 @@ static void export_val_expr(Engine *eng, Value val, uint8_t depth,
         uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8u) & 0x7Fu);
         uint32_t len      = (uint32_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 1));
         uint16_t data_idx = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 3));
-        uint16_t stride   = (elem_tid > 0 && elem_tid < eng->sym.type_count)
+        uint16_t stride   = (elem_tid != SYM_TYPE_ANY && elem_tid > 0 && elem_tid < eng->sym.type_count)
                             ? eng->sym.types[elem_tid].flat_size : 1;
 
         char et_name[32] = "", eu_name[32] = "";
-        if (elem_tid != 0) eng_type_name(eng, elem_tid, et_name, sizeof(et_name));
+        if (elem_tid == SYM_TYPE_ANY) snprintf(et_name, sizeof(et_name), "any");
+        else if (elem_tid != 0) eng_type_name(eng, elem_tid, et_name, sizeof(et_name));
         if (elem_uid != 0) eng_unit_name(eng, elem_uid, eu_name, sizeof(eu_name));
 
         if (elem_tid != 0 && elem_uid != 0) {
@@ -611,22 +598,7 @@ static void export_val_expr(Engine *eng, Value val, uint8_t depth,
         for (uint32_t i = 0; i < len && *used + 1 < cap; ++i) {
             if (i > 0) eng_buf_append(buf, cap, used, ", ");
             uint32_t off = i * (uint32_t)stride;
-            Value elem_v;
-            if (elem_tid == eng->mem.str_type_id && elem_tid != 0) {
-                uint32_t packed = (uint32_t)mem_data_read(&eng->mem, data_idx, off);
-                StrSlice s = { (uint16_t)(packed >> 16), (uint16_t)(packed & 0xFFFFu) };
-                elem_v = val_make_str(&eng->mem, elem_tid, s);
-            } else if (elem_tid > 0 && elem_tid < eng->sym.type_count &&
-                       !eng->sym.types[elem_tid].is_consuming) {
-                elem_v = val_with_unit(&eng->mem,
-                                       val_make_comp(&eng->mem, elem_tid, (uint16_t)(data_idx + off), stride),
-                                       elem_uid);
-            } else {
-                elem_v = val_make_f64_unit(&eng->mem,
-                                           elem_tid ? elem_tid : eng->mem.fast_real_type,
-                                           elem_uid,
-                                           mem_data_read(&eng->mem, data_idx, off));
-            }
+            Value elem_v = delegate_vec_read_elem(&eng->mem, &eng->sym, elem_tid, elem_uid, data_idx, off);
             export_val_expr(eng, elem_v, (uint8_t)(depth + 1), buf, cap, used);
         }
         eng_buf_append(buf, cap, used, ")");
@@ -645,14 +617,34 @@ static void export_val_expr(Engine *eng, Value val, uint8_t depth,
     }
 
     if (tid == eng->mem.map_type_id && tid != 0) {
+        uint16_t raw_hdr0 = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 0));
+        uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
+        uint8_t  elem_uid = (uint8_t)((raw_hdr0 >> 8u) & 0x7Fu);
         uint16_t len      = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 1));
         uint16_t data_idx = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 3));
+        char et_name[32] = "", eu_name[32] = "";
+        if (elem_tid == SYM_TYPE_ANY) snprintf(et_name, sizeof(et_name), "any");
+        else if (elem_tid != 0) eng_type_name(eng, elem_tid, et_name, sizeof(et_name));
+        if (elem_uid != 0) eng_unit_name(eng, elem_uid, eu_name, sizeof(eu_name));
+
         if (len == 0) {
-            eng_buf_append(buf, cap, used, "map()");
+            if (elem_tid != 0 && elem_uid != 0) {
+                eng_buf_append(buf, cap, used, "map<%s, %s>()", et_name, eu_name);
+            } else if (elem_tid != 0) {
+                eng_buf_append(buf, cap, used, "map<%s>()", et_name);
+            } else if (elem_uid != 0) {
+                eng_buf_append(buf, cap, used, "map<%s>()", eu_name);
+            } else {
+                eng_buf_append(buf, cap, used, "map()");
+            }
             return;
         }
         if (len <= 3) {
-            eng_buf_append(buf, cap, used, "dict(");
+            if (elem_tid == SYM_TYPE_ANY) {
+                eng_buf_append(buf, cap, used, "dict<any>(");
+            } else {
+                eng_buf_append(buf, cap, used, "dict(");
+            }
             for (uint16_t i = 0; i < len && *used + 1 < cap; ++i) {
                 if (i > 0) eng_buf_append(buf, cap, used, ", ");
                 export_escaped_str(eng, mem_map_entry_key(&eng->mem, data_idx, i), buf, cap, used);
@@ -663,7 +655,11 @@ static void export_val_expr(Engine *eng, Value val, uint8_t depth,
             eng_buf_append(buf, cap, used, ")");
             return;
         }
-        eng_buf_append(buf, cap, used, "{ __m := map()");
+        if (elem_tid == SYM_TYPE_ANY) {
+            eng_buf_append(buf, cap, used, "{ __m := map<any>()");
+        } else {
+            eng_buf_append(buf, cap, used, "{ __m := map()");
+        }
         for (uint16_t i = 0; i < len && *used + 1 < cap; ++i) {
             eng_buf_append(buf, cap, used, " ; __m[");
             export_escaped_str(eng, mem_map_entry_key(&eng->mem, data_idx, i), buf, cap, used);
@@ -710,18 +706,19 @@ static void export_val_expr(Engine *eng, Value val, uint8_t depth,
     for (uint8_t i = 0; i < td->field_count && *used + 1 < cap; ++i) {
         if (i > 0) eng_buf_append(buf, cap, used, ", ");
         const FieldDef *fd = &eng->sym.fields[td->start_idx + i];
+        uint16_t ftid  = sym_unpack_outer_type(&eng->mem, fd->type_id);
         uint16_t fpidx = (uint16_t)(pidx + fd->flat_offset);
         Value fval;
-        if (!eng->sym.types[fd->type_id].is_consuming) {
+        if (!eng->sym.types[ftid].is_consuming) {
             fval = val_with_unit(&eng->mem,
-                                 val_make_comp(&eng->mem, fd->type_id, fpidx, eng->sym.types[fd->type_id].flat_size),
+                                 val_make_comp(&eng->mem, ftid, fpidx, eng->sym.types[ftid].flat_size),
                                  uid);
-        } else if (fd->type_id == eng->mem.str_type_id && eng->mem.str_type_id != 0) {
+        } else if (ftid == eng->mem.str_type_id && eng->mem.str_type_id != 0) {
             uint32_t packed = (uint32_t)mem_read_pool(&eng->mem, fpidx);
             StrSlice s = { (uint16_t)(packed >> 16u), (uint16_t)(packed & 0xFFFFu) };
-            fval = val_make_str(&eng->mem, fd->type_id, s);
+            fval = val_make_str(&eng->mem, ftid, s);
         } else {
-            fval = val_make_f64_unit(&eng->mem, fd->type_id, uid, mem_read_pool(&eng->mem, fpidx));
+            fval = val_make_f64_unit(&eng->mem, ftid, uid, mem_read_pool(&eng->mem, fpidx));
         }
         export_val_expr(eng, fval, (uint8_t)(depth + 1), buf, cap, used);
     }
@@ -916,7 +913,6 @@ uint16_t eng_sample_plot(Engine *eng, const char *mod_name,
     eng->mem.cur_mod = target_mod;
     eng->sym.cur_mod = target_mod;
 
-    /* Trim leading/trailing whitespace */
     while (*expr == ' ' || *expr == '\t' || *expr == '\r' || *expr == '\n') expr++;
     size_t raw_len = strlen(expr);
     while (raw_len > 0 && (expr[raw_len - 1] == ' ' || expr[raw_len - 1] == '\t' ||
@@ -933,7 +929,6 @@ uint16_t eng_sample_plot(Engine *eng, const char *mod_name,
     memcpy(clean_expr, expr, raw_len);
     clean_expr[raw_len] = '\0';
 
-    /* 1. Fast check: is `clean_expr` a direct `$vec`, `vec<vec2>`, `$mat`, or callable identifier? */
     bool is_simple_ident = true;
     for (size_t i = 0; i < raw_len; ++i) {
         unsigned char c = (unsigned char)clean_expr[i];
@@ -986,7 +981,6 @@ uint16_t eng_sample_plot(Engine *eng, const char *mod_name,
                     snprintf(eval_src, sizeof(eval_src), "%s(x)", clean_expr);
                 }
             } else {
-                /* Check if `clean_expr` is a 1-arg function in SymTable */
                 for (uint16_t oi = eng->sym.sym_first_ov[sid]; oi != MEM_NO_IDX; oi = sym_ov_next(&eng->sym)[oi]) {
                     const OpOverload *ov = &sym_overloads(&eng->sym)[oi];
                     if (ov->fixity == FIX_FUNC && ov->param_count == 1 && sym_ov_is_visible(&eng->sym, ov)) {
@@ -998,8 +992,7 @@ uint16_t eng_sample_plot(Engine *eng, const char *mod_name,
         }
     }
 
-    /* 2. Compile `eval_src` ONCE into an AST with pre-allocated local slots `x` (slot 0) and `t` (slot 1) */
-    uint16_t saved_ast = eng->mem.ast_count;
+    uint16_t saved_ast  = eng->mem.ast_count;
     uint16_t saved_pool = eng->mem.pool_top;
     uint16_t saved_src  = eng->mem.src_len;
 
@@ -1008,8 +1001,8 @@ uint16_t eng_sample_plot(Engine *eng, const char *mod_name,
     P.cur_mod      = target_mod;
     P.is_mod_scope = false;
     uint8_t real_tid = eng->mem.fast_real_type ? eng->mem.fast_real_type : 1u;
-    (void)parser_add_local(&P, "x", 1, real_tid); /* slot 0 = x */
-    (void)parser_add_local(&P, "t", 1, real_tid); /* slot 1 = t */
+    (void)parser_add_local(&P, "x", 1, real_tid);
+    (void)parser_add_local(&P, "t", 1, real_tid);
 
     lex_next(&P.lex);
     uint16_t root = parser_parse_expr(&P, 0);
@@ -1078,7 +1071,6 @@ uint16_t eng_sample_plot(Engine *eng, const char *mod_name,
                     out_cnt++;
                 }
             } else if (i == 0 && rtid == eng->mem.vec_type_id && rtid != 0) {
-                /* Expression returned a vector directly (e.g. `1...10` or `[x^2 for x in 1...8]`) */
                 uint16_t pidx     = val_get_pool_idx(res);
                 uint16_t raw_hdr0 = (uint16_t)mem_read_pool(&eng->mem, (uint16_t)(pidx + 0));
                 uint16_t elem_tid = (uint16_t)(raw_hdr0 & 0xFFu);
@@ -1144,7 +1136,6 @@ size_t eng_export_catalog(const Engine *eng, char *out_buf, size_t buf_cap) {
         memcpy(sname, mem_str_ptr(mem, sym), slen);
         sname[slen] = '\0';
 
-        /* Skip punctuation-only operators unless alphanumeric/word operator */
         bool has_alnum = false;
         for (uint16_t c = 0; c < slen; ++c) {
             unsigned char ch = (unsigned char)sname[c];
@@ -1164,7 +1155,7 @@ size_t eng_export_catalog(const Engine *eng, char *out_buf, size_t buf_cap) {
         char rtype[32] = "real", runit[32] = "none";
         if (ov->ret_type == SYM_TYPE_ANY) {
             snprintf(rtype, sizeof(rtype), "any");
-        } else if (ov->ret_type > 0 && ov->ret_type < tab->type_count) {
+        } else if (ov->ret_type > 0 && (ov->ret_type < tab->type_count || sym_type_is_parameterized(ov->ret_type))) {
             eng_type_name(eng, ov->ret_type, rtype, sizeof(rtype));
         }
         if (ov->ret_unit > 0 && ov->ret_unit < SYM_UNIT_LOCK_NONE && ov->ret_unit < tab->unit_count) {
@@ -1194,7 +1185,8 @@ size_t eng_export_catalog(const Engine *eng, char *out_buf, size_t buf_cap) {
             for (uint8_t p = 0; p < ov->param_count; ++p) {
                 char pt[24] = "real";
                 if (ov->param_types[p] == SYM_TYPE_ANY) snprintf(pt, sizeof(pt), "any");
-                else if (ov->param_types[p] > 0 && ov->param_types[p] < tab->type_count) {
+                else if (ov->param_types[p] > 0 &&
+                         (ov->param_types[p] < tab->type_count || sym_type_is_parameterized(ov->param_types[p]))) {
                     eng_type_name(eng, ov->param_types[p], pt, sizeof(pt));
                 }
                 eng_buf_append(pbuf, sizeof(pbuf), &pused, "%sp%u: %s",
@@ -1269,7 +1261,8 @@ size_t eng_export_catalog(const Engine *eng, char *out_buf, size_t buf_cap) {
         uint16_t vlen = (vs.len < 44u) ? vs.len : 44u;
         memcpy(vname, mem_str_ptr(mem, vs), vlen);
         vname[vlen] = '\0';
-        eng_type_name(eng, eng_val_type(eng, mv->val), vt, sizeof(vt));
+        uint16_t disp_vt = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu) : eng_val_type(eng, mv->val);
+        eng_type_name(eng, disp_vt, vt, sizeof(vt));
         eng_unit_name(eng, eng_val_unit(eng, mv->val), vu, sizeof(vu));
         if (mv->mod_id < tab->mod_count) {
             StrSlice ms = sym_mod_name(tab, mv->mod_id);

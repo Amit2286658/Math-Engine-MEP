@@ -17,7 +17,7 @@ uint16_t parser_parse_expr(Parser *P, int min_prec) {
 }
 
 static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
-    MemArena       *mem = P->lex.mem;
+    MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
     uint16_t left = parse_nud(P);
     if (mem->has_error || left == MEM_NO_IDX) return MEM_NO_IDX;
@@ -169,6 +169,9 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
                         }
                     }
                 }
+                if (is_into_op && right != MEM_NO_IDX) {
+                    parser_try_infer_container_push(P, right, left);
+                }
                 if (mtag == INTR_STORE) {
                     if (P->in_symbolic_expr > 0) {
                         left = mem_alloc_ast(mem, AST_BINARY, (uint8_t)fix, t.sym_id, left, right);
@@ -200,6 +203,17 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
                                             ? (uint16_t)(0x4000u | ((idx_tag & 0x3Fu) << 8u))
                                             : 0;
                         uint16_t iter_ast = in_node->right;
+                        uint16_t iter_t   = ast_infer_struct_or_fn_type(P, iter_ast);
+                        uint16_t elem_t   = sym_unpack_elem_type(mem, iter_t);
+                        if (elem_t != MEM_TYPE_VOID && elem_t != SYM_TYPE_ANY) {
+                            P->slot_types[var_slot] = elem_t;
+                            for (uint8_t li = 0; li < P->vis_count; ++li) {
+                                if (P->locals[li].slot == var_slot) {
+                                    P->locals[li].type_id = elem_t;
+                                    break;
+                                }
+                            }
+                        }
                         mem_get_ast_mut(mem, in_node->left)->ref &= (uint16_t)~AST_SLOT_UNDEF_ITER_BIT;
                         if (cur_op_meta(P) == INTR_WHILE) {
                             lex_next(&P->lex); /* consume optional '??' */
@@ -250,6 +264,5 @@ static uint16_t parser_parse_expr_inner(Parser *P, int min_prec) {
 
         break;
     }
-
     return left;
 }

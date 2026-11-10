@@ -124,7 +124,7 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
             if (mem->has_error || mem->jump_active != JUMP_NONE) return val_void();
             uint16_t base_pidx = val_get_pool_idx(base);
             uint8_t  base_unit = val_get_unit(mem, base);
-            uint16_t ftid      = n->sub;
+            uint16_t ftid      = sym_unpack_outer_type(mem, n->sub);
             uint16_t foff      = n->ref;
             if (ftid != 0 && ftid < tab->type_count && !tab->types[ftid].is_consuming) {
                 return val_with_unit(mem, val_make_comp(mem, ftid, base_pidx + foff, tab->types[ftid].flat_size),
@@ -183,38 +183,27 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                     }
                     if (lhs->right != 0 && lhs->right != MEM_NO_IDX) {
                         mem->slot_locked_unit[abs_slot] = (uint8_t)lhs->right;
+                        uint16_t rtid = val_get_type(mem, rhs);
                         if ((uint8_t)lhs->right < SYM_UNIT_LOCK_NONE &&
-                            val_get_type(mem, rhs) != MEM_TYPE_VOID &&
+                            rtid != MEM_TYPE_VOID &&
+                            rtid != mem->vec_type_id && rtid != mem->map_type_id &&
                             val_get_unit(mem, rhs) == MEM_UNIT_NONE) {
                             rhs = val_with_unit(mem, rhs, (uint8_t)lhs->right);
                         }
                     }
 
                     uint8_t req_type = mem->slot_locked_type[abs_slot];
-                    if (req_type != 0 && req_type != SYM_TYPE_ANY) {
-                        uint16_t rhs_type = val_get_type(mem, rhs);
-                        if (rhs_type != req_type) {
-                            char exp_t[32], got_t[32];
-                            sym_type_name(tab, mem, req_type, exp_t, sizeof(exp_t));
-                            sym_type_name(tab, mem, rhs_type, got_t, sizeof(got_t));
-                            mem_err(mem, "Type mismatch: variable holds concrete type '%s', cannot assign '%s'",
-                                    exp_t, got_t);
-                            return val_void();
+                    uint8_t req_unit = mem->slot_locked_unit[abs_slot];
+                    if (req_unit != 0 && req_unit < SYM_UNIT_LOCK_NONE) {
+                        uint16_t rtid = val_get_type(mem, rhs);
+                        if (rtid != MEM_TYPE_VOID &&
+                            rtid != mem->vec_type_id && rtid != mem->map_type_id &&
+                            val_get_unit(mem, rhs) == MEM_UNIT_NONE) {
+                            rhs = val_with_unit(mem, rhs, req_unit);
                         }
                     }
-
-                    uint8_t req_unit = mem->slot_locked_unit[abs_slot];
-                    if (req_unit != 0 && req_unit != SYM_UNIT_GENERIC && req_unit != SYM_UNIT_OMITTED) {
-                        uint8_t expected_u = (req_unit == SYM_UNIT_LOCK_NONE) ? MEM_UNIT_NONE : req_unit;
-                        uint8_t rhs_unit   = val_get_unit(mem, rhs);
-                        if (rhs_unit != expected_u) {
-                            char exp_u[32], got_u[32];
-                            sym_unit_name(tab, mem, expected_u, exp_u, sizeof(exp_u));
-                            sym_unit_name(tab, mem, rhs_unit,   got_u, sizeof(got_u));
-                            mem_err(mem, "Unit mismatch: variable holds concrete unit '%s', cannot assign '%s'",
-                                    exp_u, got_u);
-                            return val_void();
-                        }
+                    if (!sym_validate_and_stamp_lock(tab, mem, MEM_NO_IDX, NULL, req_type, req_unit, &rhs)) {
+                        return val_void();
                     }
 
                     mem_set_slot(mem, frame_base, slot_idx, rhs);
@@ -223,12 +212,14 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                         mem_val_mark_immutable(mem, rhs);
                     }
                     /* Sync recursive self-binding or active-frame upvalue mutation to closure HeapBlocks */
-                    if (mem->heap_active_count > 0) {
+                    if (mem->active_closure_count > 0 || mem->closure_list_overflow) {
                         bool is_colon_eq = false;
                         (void)hardcode_is_plain_store_sym(mem, tab, n->ref, &is_colon_eq);
                         uint16_t self_hdr = (mem->fn_type_id != 0 && val_get_type(mem, rhs) == mem->fn_type_id)
                                             ? val_get_pool_idx(rhs) : MEM_NO_IDX;
-                        for (uint16_t hid = 0; hid < MEM_MAX_HEAP_BLOCKS; ++hid) {
+                        uint16_t lim = mem->closure_list_overflow ? MEM_MAX_HEAP_BLOCKS : mem->active_closure_count;
+                        for (uint16_t ci = 0; ci < lim; ++ci) {
+                            uint16_t hid = mem->closure_list_overflow ? ci : mem->active_closure_hids[ci];
                             HeapBlock *hb = &mem->heap_blocks[hid];
                             if (hb->in_use == 2u && hb->data != NULL && hb->cap_slots >= 3u) {
                                 uint32_t meta    = (uint32_t)hb->data[hb->cap_slots - 1u];
@@ -305,15 +296,13 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                     if (mem->has_error || mem->jump_active != JUMP_NONE) return val_void();
                     uint16_t base_pidx = val_get_pool_idx(target);
                     uint16_t foff      = lhs->ref;
-                    uint16_t ftid      = lhs->sub;
-                    uint16_t rhs_tid   = val_get_type(mem, rhs);
-                    if (ftid != 0 && rhs_tid != ftid) {
-                        char exp_t[32], got_t[32];
-                        sym_type_name(tab, mem, ftid, exp_t, sizeof(exp_t));
-                        sym_type_name(tab, mem, rhs_tid, got_t, sizeof(got_t));
-                        mem_err(mem, "Struct field expects '%s', got '%s'", exp_t, got_t);
-                        return val_void();
+                    uint16_t raw_ftid  = lhs->sub;
+                    if (raw_ftid != 0) {
+                        if (!sym_validate_and_stamp_lock(tab, mem, MEM_NO_IDX, "Struct field", raw_ftid, 0, &rhs)) {
+                            return val_void();
+                        }
                     }
+                    uint16_t ftid = sym_unpack_outer_type(mem, raw_ftid);
                     if (ftid != 0 && ftid < tab->type_count && !tab->types[ftid].is_consuming) {
                         uint16_t fsize   = tab->types[ftid].flat_size;
                         uint16_t src_idx = val_get_pool_idx(rhs);
@@ -640,6 +629,11 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                 uint16_t hid = (uint16_t)(env_hid & MEM_HEAP_ID_MASK);
                 HeapBlock *hb = &mem->heap_blocks[hid];
                 hb->in_use = 2u; /* Active-frame lexical closure environment */
+                if (mem->active_closure_count < MEM_MAX_ACTIVE_CLOSURES) {
+                    mem->active_closure_hids[mem->active_closure_count++] = (uint8_t)hid;
+                } else {
+                    mem->closure_list_overflow = 1u;
+                }
                 for (uint8_t k = 0; k < slot_start; ++k) {
                     uint16_t abs_s = (uint16_t)(frame_base + k);
                     Value sv = (abs_s < MEM_MAX_CALL_STACK) ? mem->stack[abs_s] : val_void();
@@ -858,10 +852,6 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
             }
             const ExternDef *ext = sym_find_extern(tab, mem, n->ref);
             if (!ext || !ext->fn) {
-                /* No host implementation registered yet: degrade to a loud
-                 * STRING result instead of failing the whole expression, so
-                 * extension patches (currency, location services, etc.) stay
-                 * evaluable while the host app implements the extern. */
                 StrSlice s = tab->syms[n->ref];
                 char name[40];
                 snprintf(name, sizeof(name), "%.*s", (int)s.len,
@@ -911,17 +901,31 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
                 Value fval = eval_ast(mem, tab, link->left, frame_base, cur_ret_type);
                 if (mem->has_error || mem->jump_active != JUMP_NONE) return val_void();
 
-                uint16_t fval_tid = val_get_type(mem, fval);
-                if (fval_tid != fd->type_id) {
+                if (!sym_validate_and_stamp_lock(tab, mem, MEM_NO_IDX, NULL, fd->type_id, 0, &fval)) {
+                    mem_clear_err(mem);
+                    uint16_t fval_tid_err = val_get_type(mem, fval);
                     char st_name[32], exp_t[32], got_t[32];
                     sym_type_name(tab, mem, st_tid, st_name, sizeof(st_name));
                     sym_type_name(tab, mem, fd->type_id, exp_t, sizeof(exp_t));
-                    sym_type_name(tab, mem, fval_tid, got_t, sizeof(got_t));
+                    if (fval_tid_err == mem->vec_type_id && fval_tid_err != 0) {
+                        uint16_t vraw = (uint16_t)mem_read_pool(mem, val_get_pool_idx(fval));
+                        uint16_t et   = (uint16_t)(vraw & 0xFFu);
+                        sym_type_name(tab, mem, et ? sym_pack_container_type(mem, fval_tid_err, et) : fval_tid_err,
+                                      got_t, sizeof(got_t));
+                    } else if (fval_tid_err == mem->map_type_id && fval_tid_err != 0) {
+                        uint16_t mraw = (uint16_t)mem_read_pool(mem, val_get_pool_idx(fval));
+                        uint16_t et   = (uint16_t)(mraw & 0xFFu);
+                        sym_type_name(tab, mem, et ? sym_pack_container_type(mem, fval_tid_err, et) : fval_tid_err,
+                                      got_t, sizeof(got_t));
+                    } else {
+                        sym_type_name(tab, mem, fval_tid_err, got_t, sizeof(got_t));
+                    }
                     mem_err(mem, "Struct %s field %.*s expects %s, got %s",
                             st_name, (int)fd->name.len, mem_str_ptr(mem, fd->name), exp_t, got_t);
                     return val_void();
                 }
 
+                uint16_t fval_tid = val_get_type(mem, fval);
                 uint8_t fu = val_get_unit(mem, fval);
                 if (fu != MEM_UNIT_NONE && comp_unit == MEM_UNIT_NONE) {
                     comp_unit = fu;
@@ -963,5 +967,3 @@ static Value eval_ast_inner(MemArena *mem, SymTable *tab,
             return val_void();
     }
 }
-
-

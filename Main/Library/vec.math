@@ -361,10 +361,10 @@ map_has(m:map, k:T)                    = @map_has(m, k)
 has_key(m:map, k:T)                    = @map_has(m, k)
 map_del(m:map, k:T)             -> map = @map_del(m, k)
 remove(m:map, k:T)              -> map = @map_del(m, k)
-keys(m:map)                     -> vec = [k for k in m]
-vals(m:map)                     -> vec = [v for k, v in m]
-values(m:map)                   -> vec = [v for k, v in m]
-entries(m:map)                  -> vec = [k + "=" + (v_) for k, v in m]
+keys(m:map)                     -> vec<str> = [k for k in m]
+vals(m:map)                     -> vec      = [v for k, v in m]
+values(m:map)                   -> vec      = [v for k, v in m]
+entries(m:map)                  -> vec<str> = [k + "=" + (v_) for k, v in m]
 len(m:map)                             = @vlen(m)
 is_empty(m:map)                        = @eq(@vlen(m), 0)
 clear(m:map)                    -> map = @vclear(m)
@@ -382,7 +382,7 @@ clear(m:map)                    -> map = @vclear(m)
 }
 
 # 8. Pure MEP 7D SI Unit Dimensional Introspection (`dim_vec`, `same_dim`)
-dim_vec(x:T)         -> vec = [@unit_name(x, i) for i in 0..<7]
+dim_vec(x:T)         -> vec<real> = [@unit_name(x, i) for i in 0..<7]
 same_dim(a:T, b:T)          = (dim_vec(a) == dim_vec(b))
 
 # 9. Extended Collection Slicing, Custom-Key Sorting & Functional Map Helpers

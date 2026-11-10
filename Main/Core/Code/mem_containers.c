@@ -489,25 +489,54 @@ uint16_t mem_push_frame(MemArena *mem, uint8_t slot_count) {
 
 void mem_pop_frame(MemArena *mem, uint16_t frame_base) {
     if (!mem) return;
-    if (mem->heap_active_count > 0) {
-        for (uint16_t i = 0; i < MEM_MAX_HEAP_BLOCKS; ++i) {
-            HeapBlock *hb = &mem->heap_blocks[i];
-            if (hb->in_use == 2u && hb->data != NULL && hb->cap_slots >= 3u) {
-                uint32_t meta   = (uint32_t)hb->data[hb->cap_slots - 1u];
-                uint16_t orig_fb = (uint16_t)(meta >> 8u);
-                uint8_t  s_start = (uint8_t)(meta & 0xFFu);
-                if (orig_fb >= frame_base) {
-                    for (uint8_t k = 0; k < s_start && (uint32_t)k * 2u + 1u < hb->cap_slots; ++k) {
-                        uint16_t abs_s = (uint16_t)(orig_fb + k);
-                        if (abs_s < MEM_MAX_CALL_STACK) {
-                            memcpy(&hb->data[k], &mem->stack[abs_s], sizeof(Value));
-                            uint32_t lpack = (uint32_t)mem->slot_locked_type[abs_s]
-                                           | ((uint32_t)mem->slot_locked_unit[abs_s] << 8u)
-                                           | ((uint32_t)mem->slot_is_const[abs_s] << 16u);
-                            hb->data[s_start + k] = (double)lpack;
+    if (mem->active_closure_count > 0 || mem->closure_list_overflow) {
+        if (!mem->closure_list_overflow) {
+            uint8_t write_idx = 0;
+            for (uint8_t i = 0; i < mem->active_closure_count; ++i) {
+                uint8_t hid = mem->active_closure_hids[i];
+                HeapBlock *hb = &mem->heap_blocks[hid];
+                if (hb->in_use == 2u && hb->data != NULL && hb->cap_slots >= 3u) {
+                    uint32_t meta    = (uint32_t)hb->data[hb->cap_slots - 1u];
+                    uint16_t orig_fb = (uint16_t)(meta >> 8u);
+                    uint8_t  s_start = (uint8_t)(meta & 0xFFu);
+                    if (orig_fb >= frame_base) {
+                        for (uint8_t k = 0; k < s_start && (uint32_t)k * 2u + 1u < hb->cap_slots; ++k) {
+                            uint16_t abs_s = (uint16_t)(orig_fb + k);
+                            if (abs_s < MEM_MAX_CALL_STACK) {
+                                memcpy(&hb->data[k], &mem->stack[abs_s], sizeof(Value));
+                                uint32_t lpack = (uint32_t)mem->slot_locked_type[abs_s]
+                                               | ((uint32_t)mem->slot_locked_unit[abs_s] << 8u)
+                                               | ((uint32_t)mem->slot_is_const[abs_s] << 16u);
+                                hb->data[s_start + k] = (double)lpack;
+                            }
                         }
+                        hb->in_use = 3u;
+                    } else {
+                        mem->active_closure_hids[write_idx++] = hid;
                     }
-                    hb->in_use = 3u;
+                }
+            }
+            mem->active_closure_count = write_idx;
+        } else {
+            for (uint16_t i = 0; i < MEM_MAX_HEAP_BLOCKS; ++i) {
+                HeapBlock *hb = &mem->heap_blocks[i];
+                if (hb->in_use == 2u && hb->data != NULL && hb->cap_slots >= 3u) {
+                    uint32_t meta   = (uint32_t)hb->data[hb->cap_slots - 1u];
+                    uint16_t orig_fb = (uint16_t)(meta >> 8u);
+                    uint8_t  s_start = (uint8_t)(meta & 0xFFu);
+                    if (orig_fb >= frame_base) {
+                        for (uint8_t k = 0; k < s_start && (uint32_t)k * 2u + 1u < hb->cap_slots; ++k) {
+                            uint16_t abs_s = (uint16_t)(orig_fb + k);
+                            if (abs_s < MEM_MAX_CALL_STACK) {
+                                memcpy(&hb->data[k], &mem->stack[abs_s], sizeof(Value));
+                                uint32_t lpack = (uint32_t)mem->slot_locked_type[abs_s]
+                                               | ((uint32_t)mem->slot_locked_unit[abs_s] << 8u)
+                                               | ((uint32_t)mem->slot_is_const[abs_s] << 16u);
+                                hb->data[s_start + k] = (double)lpack;
+                            }
+                        }
+                        hb->in_use = 3u;
+                    }
                 }
             }
         }
@@ -531,18 +560,8 @@ void mem_set_slot(MemArena *mem, uint16_t frame_base, uint8_t slot, Value v) {
 }
 
 /* ============================================================================
- * 4. VALUE ENCODING (8-BYTE IEEE-754 NAN-BOXING)
+ * 4. VALUE ENCODING (8-BYTE IEEE-754 NAN-BOXING WITH LOSSLESS INLINE I32/F32)
  * ============================================================================ */
-
-#define NANBOX_PREFIX     0xFFF8000000000000ULL
-#define NANBOX_MASK       0xFFF8000000000000ULL
-#define NANBOX_TAG_SHIFT  48
-#define NANBOX_TYPE_SHIFT 32
-#define NANBOX_UNIT_SHIFT 40
-
-#define NB_TAG_VOID       0xFFF8ULL
-#define NB_TAG_POOL       0xFFF9ULL
-#define NB_TAG_STR        0xFFFAULL
 
 static inline uint64_t f64_to_bits(double d) {
     d = canonicalize_f64(d);
@@ -558,6 +577,31 @@ static inline double bits_to_f64(uint64_t u) {
     double d;
     memcpy(&d, &u, sizeof(d));
     return d;
+}
+
+static inline bool try_encode_inline_scalar(uint16_t type_id, uint8_t unit_id, double d, Value *out_val) {
+    if (d >= -2147483648.0 && d <= 2147483647.0) {
+        int32_t i32 = (int32_t)d;
+        if ((double)i32 == d && !(i32 == 0 && signbit(d))) {
+            uint32_t u32 = (uint32_t)i32;
+            *out_val = (NB_TAG_I32 << NANBOX_TAG_SHIFT)
+                     | ((uint64_t)unit_id << NANBOX_UNIT_SHIFT)
+                     | ((uint64_t)(type_id & 0xFFu) << NANBOX_TYPE_SHIFT)
+                     | (uint64_t)u32;
+            return true;
+        }
+    }
+    float f32 = (float)d;
+    if ((double)f32 == d) {
+        uint32_t u32;
+        memcpy(&u32, &f32, sizeof(u32));
+        *out_val = (NB_TAG_F32 << NANBOX_TAG_SHIFT)
+                 | ((uint64_t)unit_id << NANBOX_UNIT_SHIFT)
+                 | ((uint64_t)(type_id & 0xFFu) << NANBOX_TYPE_SHIFT)
+                 | (uint64_t)u32;
+        return true;
+    }
+    return false;
 }
 
 Value val_void(void) {
@@ -578,6 +622,10 @@ Value val_make_f64_unit(MemArena *mem, uint16_t type_id, uint8_t unit_id, double
     if (type_id == mem->fast_real_type && type_id != 0 && unit_id == MEM_UNIT_NONE) {
         return f64_to_bits(d);
     }
+    Value inl = 0;
+    if (try_encode_inline_scalar(type_id, unit_id, d, &inl)) {
+        return inl;
+    }
     uint16_t idx = mem_alloc_pool(mem, 1);
     if (idx == MEM_NO_IDX || mem->has_error) return val_void();
     mem_write_pool(mem, idx, d);
@@ -595,6 +643,16 @@ double val_get_f64(const MemArena *mem, Value v) {
     uint16_t top = (uint16_t)(v >> NANBOX_TAG_SHIFT);
     if (top < NB_TAG_VOID) {
         return bits_to_f64(v);
+    }
+    if (top == NB_TAG_I32) {
+        int32_t i32 = (int32_t)(uint32_t)(v & 0xFFFFFFFFu);
+        return (double)i32;
+    }
+    if (top == NB_TAG_F32) {
+        uint32_t u32 = (uint32_t)(v & 0xFFFFFFFFu);
+        float f32;
+        memcpy(&f32, &u32, sizeof(f32));
+        return (double)f32;
     }
     uint16_t idx = (uint16_t)(v & 0xFFFFu);
     return mem_read_pool(mem, idx);
@@ -654,6 +712,14 @@ Value val_with_unit(MemArena *mem, Value v, uint8_t unit_id) {
         return val_make_f64_unit(mem, mem->fast_real_type, unit_id, bits_to_f64(v));
     }
     uint16_t tid = (uint16_t)((v >> NANBOX_TYPE_SHIFT) & 0xFFu);
+    if (top == NB_TAG_I32 || top == NB_TAG_F32) {
+        if (unit_id == MEM_UNIT_NONE && tid == mem->fast_real_type && tid != 0) {
+            return f64_to_bits(val_get_f64(mem, v));
+        }
+        v &= ~(0xFFULL << NANBOX_UNIT_SHIFT);
+        v |= ((uint64_t)unit_id << NANBOX_UNIT_SHIFT);
+        return v;
+    }
     if (unit_id == MEM_UNIT_NONE && tid == mem->fast_real_type && tid != 0 &&
         ((v >> 16) & 0xFFFFu) == 0) {
         return f64_to_bits(val_get_f64(mem, v));
@@ -715,4 +781,3 @@ bool val_as_cstr(const MemArena *mem, Value v, char *buf, size_t cap) {
     buf[copy_len] = '\0';
     return true;
 }
-

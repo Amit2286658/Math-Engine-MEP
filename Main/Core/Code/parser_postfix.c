@@ -5,7 +5,7 @@
 
 
 uint16_t parse_field_step(Parser *P, uint16_t left) {
-    MemArena       *mem = P->lex.mem;
+    MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
 
     if (P->lex.cur.kind != TOK_IDENT &&
@@ -18,7 +18,7 @@ uint16_t parse_field_step(Parser *P, uint16_t left) {
     lex_next(&P->lex);
 
     /* Check if `left` is a struct whose field `fname` is a `$fn` closure (`obj.cb(args)`) */
-    if (P->lex.cur.kind == TOK_LPAREN && mem->fn_type_id != 0) {
+    if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN && mem->fn_type_id != 0) {
         const AstNode *lnode_p = mem_get_ast(mem, left);
         uint16_t ctype    = MEM_TYPE_VOID;
         uint16_t b_ast    = left;
@@ -27,35 +27,24 @@ uint16_t parse_field_step(Parser *P, uint16_t left) {
         if (lnode_p->kind == AST_SLOT_LOAD) {
             b_slot = (uint8_t)(lnode_p->sub & AST_SLOT_IDX_MASK);
             ctype  = P->slot_types[b_slot];
-        } else if (lnode_p->kind == AST_CONST_SYM) {
-            uint16_t cmod = (lnode_p->right != MEM_NO_IDX && lnode_p->right < tab->mod_count)
-                            ? lnode_p->right : P->cur_mod;
-            int mv_i = sym_find_var(tab, lnode_p->ref, cmod, NULL);
-            if (mv_i >= 0) {
-                const ModVarDef *mv = &sym_vars(tab)[mv_i];
-                ctype = val_get_type(mem, mv->val);
-                if (ctype == MEM_TYPE_VOID) {
-                    ctype = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
-                                                    : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
-                }
-            }
-        } else if (lnode_p->kind == AST_CONSTRUCT) {
-            ctype = lnode_p->ref;
         } else if (lnode_p->kind == AST_FIELD_LOAD) {
             ctype  = lnode_p->sub;
             p_off  = lnode_p->ref;
             b_ast  = lnode_p->left;
             b_slot = lnode_p->right;
+        } else {
+            ctype  = ast_infer_struct_or_fn_type(P, left);
         }
+        uint16_t c_outer = sym_unpack_outer_type(mem, ctype);
         uint16_t f_tid = MEM_TYPE_VOID, f_off = 0;
         bool is_fn_field = false;
-        if (ctype != MEM_TYPE_VOID && ctype < tab->type_count &&
-            !tab->types[ctype].is_consuming && tab->types[ctype].field_count > 0) {
-            if (sym_resolve_field(tab, mem, ctype, fname, flen, &f_tid, &f_off) &&
-                f_tid == mem->fn_type_id) {
+        if (c_outer != MEM_TYPE_VOID && c_outer < tab->type_count &&
+            !tab->types[c_outer].is_consuming && tab->types[c_outer].field_count > 0) {
+            if (sym_resolve_field(tab, mem, c_outer, fname, flen, &f_tid, &f_off) &&
+                sym_unpack_outer_type(mem, f_tid) == mem->fn_type_id) {
                 is_fn_field = true;
             }
-        } else if (ctype == MEM_TYPE_VOID && find_local_idx(P, fname, flen) < 0) {
+        } else if (c_outer == MEM_TYPE_VOID && find_local_idx(P, fname, flen) < 0) {
             int f_sid = sym_find(tab, mem, fname, flen);
             bool has_fn_or_var = (f_sid >= 0) &&
                 (sym_has_visible_func_ov(tab, (uint16_t)f_sid) ||
@@ -65,7 +54,7 @@ uint16_t parse_field_step(Parser *P, uint16_t left) {
                     if (!tab->types[tid].is_consuming && tab->types[tid].field_count > 0 &&
                         sym_mod_enabled(tab, tab->types[tid].mod_id)) {
                         if (sym_resolve_field(tab, mem, tid, fname, flen, &f_tid, &f_off) &&
-                            f_tid == mem->fn_type_id) {
+                            sym_unpack_outer_type(mem, f_tid) == mem->fn_type_id) {
                             is_fn_field = true;
                             break;
                         }
@@ -88,7 +77,7 @@ uint16_t parse_field_step(Parser *P, uint16_t left) {
     }
 
     /* Uniform Function Call Syntax (UFCS): `base.fn(a, b)` -> `fn(base, a, b)` */
-    if (P->lex.cur.kind == TOK_LPAREN) {
+    if (!P->lex.cur.had_newline && P->lex.cur.kind == TOK_LPAREN) {
         lex_next(&P->lex); /* consume '(' */
         uint8_t saved_ternary = P->in_ternary_then;
         P->in_ternary_then = 0;
@@ -96,10 +85,12 @@ uint16_t parse_field_step(Parser *P, uint16_t left) {
         uint16_t head = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, left, MEM_NO_IDX);
         uint16_t tail = head;
         uint8_t  argc = 1;
+        uint16_t first_arg_ast = MEM_NO_IDX;
 
         if (P->lex.cur.kind != TOK_RPAREN) {
             while (!mem->has_error) {
                 uint16_t arg  = parser_parse_expr(P, 0);
+                if (argc == 1) first_arg_ast = arg;
                 uint16_t link = mem_alloc_ast(mem, AST_ARG_LINK, 0, 0, arg, MEM_NO_IDX);
                 if (head == MEM_NO_IDX) head = link;
                 else mem_get_ast_mut(mem, tail)->right = link;
@@ -119,10 +110,16 @@ uint16_t parse_field_step(Parser *P, uint16_t left) {
         }
         lex_next(&P->lex);
 
+        if (argc == 2 && first_arg_ast != MEM_NO_IDX &&
+            ((flen == 4 && memcmp(fname, "push", 4) == 0) ||
+             (flen == 7 && memcmp(fname, "enqueue", 7) == 0))) {
+            parser_try_infer_container_push(P, left, first_arg_ast);
+        }
+
         int vidx = find_local_idx(P, fname, flen);
         if (vidx >= 0) {
             uint8_t slot = P->locals[vidx].slot;
-            if (mem->fn_type_id != 0 && P->slot_types[slot] == mem->fn_type_id) {
+            if (mem->fn_type_id != 0 && sym_unpack_outer_type(mem, P->slot_types[slot]) == mem->fn_type_id) {
                 uint16_t fn_load = mem_alloc_ast(mem, AST_SLOT_LOAD, slot, 0, 0, 0);
                 return mem_alloc_ast(mem, AST_FN_CALL, argc, 0, fn_load, head);
             }
@@ -141,7 +138,7 @@ uint16_t parse_field_step(Parser *P, uint16_t left) {
                 mv_tid = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
                                                  : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
             }
-            if ((mem->fn_type_id != 0 && mv_tid == mem->fn_type_id) ||
+            if ((mem->fn_type_id != 0 && sym_unpack_outer_type(mem, mv_tid) == mem->fn_type_id) ||
                 !sym_has_visible_func_ov(tab, (uint16_t)sym_id)) {
                 uint16_t fn_load = mem_alloc_ast(mem, AST_CONST_SYM, 0, (uint16_t)sym_id, MEM_NO_IDX, P->cur_mod);
                 return mem_alloc_ast(mem, AST_FN_CALL, argc, 0, fn_load, head);
@@ -164,32 +161,29 @@ uint16_t parse_field_step(Parser *P, uint16_t left) {
     if (lnode->kind == AST_SLOT_LOAD) {
         base_slot = (uint8_t)(lnode->sub & AST_SLOT_IDX_MASK);
         cur_type  = P->slot_types[base_slot];
-    } else if (lnode->kind == AST_CONST_SYM) {
-        int mv_idx = sym_find_var(tab, lnode->ref, P->cur_mod, NULL);
-        if (mv_idx >= 0) {
-            const ModVarDef *mv = &sym_vars(tab)[mv_idx];
-            cur_type = val_get_type(mem, mv->val);
-            if (cur_type == MEM_TYPE_VOID) {
-                cur_type = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
-                                                   : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
-            }
-        }
-    } else if (lnode->kind == AST_CONSTRUCT) {
-        cur_type  = lnode->ref;
     } else if (lnode->kind == AST_FIELD_LOAD) {
         cur_type  = lnode->sub;
         prev_off  = lnode->ref;
         base_ast  = lnode->left;
         base_slot = lnode->right;
+    } else {
+        cur_type  = ast_infer_struct_or_fn_type(P, left);
     }
 
+    uint16_t cur_outer = sym_unpack_outer_type(mem, cur_type);
     uint16_t ftype = MEM_TYPE_VOID;
     uint16_t foff  = 0;
     bool resolved  = false;
 
-    if (cur_type != MEM_TYPE_VOID && cur_type < tab->type_count &&
-        !tab->types[cur_type].is_consuming && tab->types[cur_type].field_count > 0) {
-        resolved = sym_resolve_field(tab, mem, cur_type, fname, flen, &ftype, &foff);
+    if (cur_outer != MEM_TYPE_VOID && cur_outer < tab->type_count &&
+        !tab->types[cur_outer].is_consuming && tab->types[cur_outer].field_count > 0) {
+        resolved = sym_resolve_field(tab, mem, cur_outer, fname, flen, &ftype, &foff);
+        if (!resolved) {
+            char st_name[32];
+            sym_type_name(tab, mem, cur_outer, st_name, sizeof(st_name));
+            mem_err(mem, "Struct '%s' has no field '%.*s'", st_name, (int)flen, fname);
+            return MEM_NO_IDX;
+        }
     }
     if (!resolved) {
         for (uint16_t tid = 1; tid < tab->type_count; ++tid) {
@@ -265,6 +259,42 @@ uint16_t parse_mat_literal(Parser *P) {
             P->scope_depth--;
             P->in_ternary_then = saved_ternary;
             return MEM_NO_IDX;
+        }
+
+        /* Pre-infer loop variable element type from `iter` before parsing `map_expr` */
+        {
+            uint16_t saved_ast  = mem->ast_count;
+            uint16_t saved_pool = mem->pool_top;
+            uint16_t saved_src  = mem->src_len;
+            Parser   tmp        = *P;
+            (void)parser_parse_expr(&tmp, 2);
+            if (!mem->has_error &&
+                hardcode_is_for_kw(mem, tab, tmp.lex.src + tmp.lex.cur.off, tmp.lex.cur.len)) {
+                lex_next(&tmp.lex);
+                if (idx_slot >= 0) {
+                    lex_next(&tmp.lex);
+                    if (tmp.lex.cur.kind == TOK_COMMA) lex_next(&tmp.lex);
+                }
+                lex_next(&tmp.lex);
+                if (hardcode_is_in_kw(mem, tab, tmp.lex.src + tmp.lex.cur.off, tmp.lex.cur.len)) {
+                    lex_next(&tmp.lex);
+                    uint16_t tmp_iter = parser_parse_expr(&tmp, 2);
+                    if (!mem->has_error && tmp_iter != MEM_NO_IDX) {
+                        uint16_t iter_t = ast_infer_struct_or_fn_type(&tmp, tmp_iter);
+                        uint16_t elem_t = sym_unpack_elem_type(mem, iter_t);
+                        if (elem_t != MEM_TYPE_VOID && elem_t != SYM_TYPE_ANY) {
+                            P->slot_types[var_slot] = elem_t;
+                            if (P->vis_count > 0) {
+                                P->locals[P->vis_count - 1].type_id = elem_t;
+                            }
+                        }
+                    }
+                }
+            }
+            mem->ast_count = saved_ast;
+            mem->pool_top  = saved_pool;
+            mem->src_len   = saved_src;
+            mem_clear_err(mem);
         }
 
         uint16_t map_expr = parser_parse_expr(P, 2);
@@ -592,8 +622,9 @@ static void prescan_and_alloc_param_slots(Parser *P, uint16_t paren_content_off)
         uint16_t id_len = (uint16_t)(p - id_start);
         (void)parser_add_local(P, src + id_start, id_len, P->lex.mem->fast_real_type);
         if (P->lex.mem->has_error) return;
-        /* Skip optional :Type and = default_expr to next top-level ',' or ')' */
-        int depth = 0;
+        /* Skip optional :Type<...> and = default_expr to next top-level ',' or ')' */
+        int  depth    = 0;
+        bool in_annot = false;
         while (p < len) {
             char c = src[p];
             if (c == '"') {
@@ -602,6 +633,22 @@ static void prescan_and_alloc_param_slots(Parser *P, uint16_t paren_content_off)
                     if (src[p] == '\\' && p + 1 < len) p++;
                     p++;
                 }
+                if (p < len) p++;
+                continue;
+            }
+            if (depth == 0 && c == ':' && !(p + 1 < len && src[p + 1] == '=')) {
+                in_annot = true;
+                p++;
+                continue;
+            }
+            if (depth == 0 && c == '=') {
+                in_annot = false;
+                p++;
+                continue;
+            }
+            if (in_annot && c == '<') {
+                p++;
+                while (p < len && src[p] != '>') p++;
                 if (p < len) p++;
                 continue;
             }
@@ -657,14 +704,60 @@ static bool parse_fn_param_list_in_scope(Parser *P, uint8_t *out_pcnt, uint16_t 
                     mem_err(mem, "Expected type name after ':' in parameter");
                     return false;
                 }
-                uint16_t tid = sym_find_type(tab, mem, P->lex.src + P->lex.cur.off, P->lex.cur.len);
+                const char *tn_str = P->lex.src + P->lex.cur.off;
+                uint16_t    tn_len = P->lex.cur.len;
+                uint16_t    tid    = sym_find_type(tab, mem, tn_str, tn_len);
                 if (tid == MEM_TYPE_VOID) {
-                    mem_err(mem, "Unknown parameter type '%.*s'",
-                            (int)P->lex.cur.len, P->lex.src + P->lex.cur.off);
+                    mem_err(mem, "Unknown parameter type '%.*s'", (int)tn_len, tn_str);
                     return false;
                 }
-                ptype = (tid == SYM_TYPE_ANY) ? mem->fast_real_type : tid;
                 lex_next(&P->lex);
+
+                bool is_vec_like = (mem->vec_type_id != 0 && tid == mem->vec_type_id) ||
+                                   (tn_len == 3 && memcmp(tn_str, "vec", 3) == 0) ||
+                                   (tn_len == 4 && memcmp(tn_str, "list", 4) == 0) ||
+                                   (tn_len == 5 && memcmp(tn_str, "stack", 5) == 0) ||
+                                   (tn_len == 5 && memcmp(tn_str, "queue", 5) == 0);
+                bool is_map_like = (mem->map_type_id != 0 && tid == mem->map_type_id) ||
+                                   (tn_len == 3 && memcmp(tn_str, "map", 3) == 0) ||
+                                   (tn_len == 4 && memcmp(tn_str, "dict", 4) == 0);
+                bool is_mat_like = (mem->mat_type_id != 0 && tid == mem->mat_type_id) ||
+                                   (tn_len == 3 && memcmp(tn_str, "mat", 3) == 0);
+
+                if ((is_vec_like || is_map_like || is_mat_like) &&
+                    P->lex.cur.kind == TOK_OP && P->lex.cur.len == 1 &&
+                    P->lex.src[P->lex.cur.off] == '<') {
+                    lex_next(&P->lex); /* consume '<' */
+                    if (P->lex.cur.kind != TOK_IDENT &&
+                        !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                        mem_err(mem, "Expected element type or unit inside '<...>'");
+                        return false;
+                    }
+                    const char *p1_str = P->lex.src + P->lex.cur.off;
+                    uint16_t    p1_len = P->lex.cur.len;
+                    uint16_t    etid   = sym_find_type(tab, mem, p1_str, p1_len);
+                    lex_next(&P->lex);
+                    if (P->lex.cur.kind == TOK_COMMA) {
+                        lex_next(&P->lex);
+                        if (P->lex.cur.kind != TOK_IDENT &&
+                            !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                            mem_err(mem, "Expected unit name after ',' inside '<...>'");
+                            return false;
+                        }
+                        lex_next(&P->lex);
+                    } else if (etid == MEM_TYPE_VOID) {
+                        etid = mem->fast_real_type ? mem->fast_real_type : 1u;
+                    }
+                    if (!(P->lex.cur.kind == TOK_OP && P->lex.cur.len == 1 && P->lex.src[P->lex.cur.off] == '>')) {
+                        mem_err(mem, "Expected '>' after container parameter");
+                        return false;
+                    }
+                    lex_next(&P->lex);
+                    if (etid != MEM_TYPE_VOID) {
+                        tid = sym_pack_container_type(mem, tid, etid);
+                    }
+                }
+                ptype = (tid == SYM_TYPE_ANY) ? mem->fast_real_type : tid;
             }
 
             int s = parser_add_local(P, pname, plen, ptype);
@@ -887,4 +980,3 @@ uint16_t parse_inline_fn_def(Parser *P, const char *fn_name, uint16_t fn_len) {
     uint16_t lam_ast    = mem_alloc_ast(mem, AST_LAMBDA, pcnt, body_ast, slot_range, def_head);
     return build_store_or_compound(P, op_sym_id, lhs_ast, lam_ast);
 }
-

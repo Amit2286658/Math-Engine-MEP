@@ -127,6 +127,18 @@ size_t ext_save_mathc_mem(MemArena *mem, const SymTable *tab,
     return total_bytes;
 }
 
+static bool mathc_typespec_valid(uint16_t tspec, const MathcHeader *hdr, bool allow_any) {
+    if (tspec == 0) return false;
+    if (allow_any && tspec == SYM_TYPE_ANY) return true;
+    if (tspec < hdr->type_count) return true;
+    if (sym_type_is_parameterized(tspec)) {
+        uint8_t elem6 = (uint8_t)(tspec & SYM_TY_ELEM_MASK);
+        if (elem6 == SYM_ELEM_ANY) return true;
+        return elem6 > 0 && elem6 < hdr->type_count;
+    }
+    return false;
+}
+
 static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hdr) {
     /* 1. Validate special bootstrap type IDs & project entry metadata in header */
     if (hdr->fast_real_type >= hdr->type_count ||
@@ -210,7 +222,7 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
         FieldDef fd;
         memcpy(&fd, fields_ptr + (size_t)i * sizeof(FieldDef), sizeof(FieldDef));
         if ((uint32_t)fd.name.off + (uint32_t)fd.name.len > hdr->perm_src_len) return false;
-        if (fd.type_id == 0 || fd.type_id >= hdr->type_count) return false;
+        if (!mathc_typespec_valid(fd.type_id, hdr, false)) return false;
         if (fd.flat_offset >= 256u) {
             return false;
         }
@@ -224,10 +236,20 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
             for (uint8_t f = 0; f < td.field_count; ++f) {
                 FieldDef fd;
                 memcpy(&fd, fields_ptr + (size_t)(td.start_idx + f) * sizeof(FieldDef), sizeof(FieldDef));
-                if (fd.type_id == i) return false;
-                TypeDef ftd;
-                memcpy(&ftd, types_ptr + (size_t)fd.type_id * sizeof(TypeDef), sizeof(TypeDef));
-                uint32_t fsz = ftd.is_consuming ? 1u : (uint32_t)ftd.flat_size;
+                uint16_t outer_ftid = fd.type_id;
+                if (sym_type_is_parameterized(outer_ftid)) {
+                    uint8_t kind = (uint8_t)(outer_ftid & SYM_TY_KIND_MASK);
+                    if (kind == SYM_TY_VEC_BIT) outer_ftid = hdr->vec_type_id;
+                    else if (kind == SYM_TY_MAT_BIT) outer_ftid = hdr->mat_type_id;
+                    else outer_ftid = 0;
+                }
+                if (outer_ftid == i) return false;
+                uint32_t fsz = 4u;
+                if (outer_ftid > 0 && outer_ftid < hdr->type_count) {
+                    TypeDef ftd;
+                    memcpy(&ftd, types_ptr + (size_t)outer_ftid * sizeof(TypeDef), sizeof(TypeDef));
+                    fsz = ftd.is_consuming ? 1u : (uint32_t)ftd.flat_size;
+                }
                 if (fsz == 0 || (uint32_t)fd.flat_offset + fsz > (uint32_t)td.flat_size) return false;
             }
         }
@@ -251,11 +273,11 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
         if (ov.param_count > SYM_MAX_OV_PARAMS || ov.local_count > PARSER_MAX_LOCALS) return false;
         if (ov.local_count < ov.param_count) return false;
         if ((ov.meta_tag & SYM_META_LAZY_MASK) == 0 && ov.meta_tag >= INTR_COUNT) return false;
-        if (ov.ret_type >= hdr->type_count && ov.ret_type != SYM_TYPE_ANY) return false;
+        if (ov.ret_type != 0 && !mathc_typespec_valid(ov.ret_type, hdr, true)) return false;
         if (ov.ret_unit < SYM_UNIT_LOCK_NONE && ov.ret_unit >= eff_units) return false;
-        if (ov.prec > 100u || (ov.reserved & ~SYM_OV_PRIVATE) != 0) return false;
+        if (ov.prec > 100u || (ov.reserved & ~(SYM_OV_PRIVATE | SYM_OV_HAS_LABELS | SYM_OV_LABELS_CHECKED)) != 0) return false;
         for (uint8_t p = 0; p < ov.param_count; ++p) {
-            if (ov.param_types[p] >= hdr->type_count && ov.param_types[p] != SYM_TYPE_ANY) return false;
+            if (!mathc_typespec_valid(ov.param_types[p], hdr, true)) return false;
             if (ov.param_units[p] < SYM_UNIT_LOCK_NONE && ov.param_units[p] >= eff_units) return false;
         }
         for (uint8_t p = ov.param_count; p < SYM_MAX_OV_PARAMS; ++p) {
@@ -301,13 +323,13 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
 
             case AST_SLOT_LOAD:
                 if ((n.sub & AST_SLOT_IDX_MASK) >= PARSER_MAX_LOCALS) return false;
-                if (n.left != MEM_NO_IDX && n.left != SYM_TYPE_ANY &&
-                    (n.left & 0x4000u) == 0 && n.left >= hdr->type_count) return false;
+                if (n.left != MEM_NO_IDX && n.left != 0 &&
+                    (n.left & 0x4000u) == 0 && !mathc_typespec_valid(n.left, hdr, true)) return false;
                 if (n.right != MEM_NO_IDX && n.right < SYM_UNIT_LOCK_NONE && n.right >= eff_units) return false;
                 break;
 
             case AST_FIELD_LOAD:
-                if (n.sub >= hdr->type_count) return false;
+                if (n.sub != 0 && !mathc_typespec_valid(n.sub, hdr, false)) return false;
                 if (n.ref >= 256u) return false;
                 if (!AST_REQ_OK(n.left)) return false;
                 if (n.right != MEM_NO_IDX && (n.right & AST_SLOT_IDX_MASK) >= PARSER_MAX_LOCALS) return false;
@@ -326,9 +348,9 @@ static bool validate_mathc_payload(const uint8_t *payload, const MathcHeader *hd
                 if (n.ref >= hdr->sym_count || !AST_OPT_OK(n.left)) return false;
                 if (n.right != MEM_NO_IDX) {
                     if ((n.right & 0x8000u) != 0) {
-                        uint8_t c_tid = (uint8_t)(n.right & 0x3Fu);
-                        uint8_t c_uid = (uint8_t)((n.right >> 6u) & 0x3Fu);
-                        if (c_tid >= hdr->type_count || c_uid >= eff_units) return false;
+                        uint8_t c_tid = (uint8_t)(n.right & 0x7Fu);
+                        uint8_t c_uid = (uint8_t)((n.right >> 7u) & 0x7Fu);
+                        if ((c_tid >= hdr->type_count && c_tid != SYM_ELEM_ANY) || c_uid >= eff_units) return false;
                     } else if ((n.right & AST_CALL_QUAL_MOD_BIT) != 0) {
                         if ((n.right & 0x3FFFu) >= hdr->mod_count) return false;
                     } else if (!AST_OPT_OK(n.right)) {
@@ -597,6 +619,7 @@ bool ext_load_mathc_mem(MemArena *mem, SymTable *tab,
     sym_sync_consts_to_vars(tab, mem);
     sym_rebuild_index(tab);
     mem_snapshot_perm(mem);
+    mem_rebuild_str_hash(mem);
     if (tab->mod_count == tab->base_mod_count || (was_blank && tab->base_type_count == 0)) {
         uint16_t saved_base_mods = tab->base_mod_count;
         sym_snapshot_base(tab, mem);

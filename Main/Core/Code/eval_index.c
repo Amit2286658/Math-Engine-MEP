@@ -112,7 +112,7 @@ Value eval_index_op(MemArena *mem, SymTable *tab,
                             (unsigned)slice_cnt, (unsigned)rlen);
                     return val_void();
                 }
-                if (elem_tid != 0 && (elem_tid != rtid || elem_uid != ruid)) {
+                if (elem_tid != 0 && elem_tid != SYM_TYPE_ANY && (elem_tid != rtid || elem_uid != ruid)) {
                     char exp_t[32], got_t[32];
                     sym_type_name(tab, mem, elem_tid, exp_t, sizeof(exp_t));
                     sym_type_name(tab, mem, rtid, got_t, sizeof(got_t));
@@ -126,7 +126,7 @@ Value eval_index_op(MemArena *mem, SymTable *tab,
                 }
             } else {
                 uint8_t rhs_uid = val_get_unit(mem, rhs);
-                if (elem_tid != 0 && (elem_tid != rhs_tid || elem_uid != rhs_uid)) {
+                if (elem_tid != 0 && elem_tid != SYM_TYPE_ANY && (elem_tid != rhs_tid || elem_uid != rhs_uid)) {
                     char exp_t[32], got_t[32];
                     sym_type_name(tab, mem, elem_tid, exp_t, sizeof(exp_t));
                     sym_type_name(tab, mem, rhs_tid, got_t, sizeof(got_t));
@@ -396,7 +396,7 @@ Value eval_index_op(MemArena *mem, SymTable *tab,
             }
             const FieldDef *fd = &tab->fields[td->start_idx + (uint16_t)fk];
             cur_pidx = (uint16_t)(cur_pidx + fd->flat_offset);
-            cur_tid  = fd->type_id;
+            cur_tid  = sym_unpack_outer_type(mem, fd->type_id);
         }
         if (!is_write) {
             if (!tab->types[cur_tid].is_consuming) {
@@ -430,7 +430,7 @@ Value eval_index_op(MemArena *mem, SymTable *tab,
             }
             const FieldDef *fd = &tab->fields[td->start_idx + (uint16_t)fk];
             cur_pidx = (uint16_t)(cur_pidx + fd->flat_offset);
-            cur_tid  = fd->type_id;
+            cur_tid  = sym_unpack_outer_type(mem, fd->type_id);
         }
 
         if (!is_write) {
@@ -513,6 +513,13 @@ Value eval_mat_lit_ast(MemArena *mem, SymTable *tab,
                 mem_err(mem, "Matrix rows/sub-tensors must have matching dimensions");
                 return val_void();
             }
+            if (val_get_unit(mem, items[i]) != common_u) {
+                char exp_u[32], got_u[32];
+                sym_unit_name(tab, mem, common_u, exp_u, sizeof(exp_u));
+                sym_unit_name(tab, mem, val_get_unit(mem, items[i]), got_u, sizeof(got_u));
+                mem_err(mem, "Matrix literal unit mismatch: expected '%s', got '%s'", exp_u, got_u);
+                return val_void();
+            }
             for (uint8_t k = 0; k < sub_rank; ++k) {
                 if (dims_i[k] != sub_dims[k]) {
                     mem_err(mem, "Matrix rows/sub-tensors must have matching dimensions");
@@ -541,10 +548,24 @@ Value eval_mat_lit_ast(MemArena *mem, SymTable *tab,
     }
 
     bool has_non_num = false;
-    bool mixed_types = false;
     for (uint8_t i = 0; i < actual; ++i) {
         uint16_t tid = val_get_type(mem, items[i]);
-        if (tid != first_tid) mixed_types = true;
+        uint8_t  uid = val_get_unit(mem, items[i]);
+        if (tid != first_tid) {
+            char exp_t[32], got_t[32];
+            sym_type_name(tab, mem, first_tid, exp_t, sizeof(exp_t));
+            sym_type_name(tab, mem, tid, got_t, sizeof(got_t));
+            mem_err(mem, "Vector/matrix literal type mismatch: expected '%s', got '%s' (use vec<any>(...) for heterogeneous vectors)",
+                    exp_t, got_t);
+            return val_void();
+        }
+        if (uid != common_u) {
+            char exp_u[32], got_u[32];
+            sym_unit_name(tab, mem, common_u, exp_u, sizeof(exp_u));
+            sym_unit_name(tab, mem, uid, got_u, sizeof(got_u));
+            mem_err(mem, "Vector/matrix literal unit mismatch: expected '%s', got '%s'", exp_u, got_u);
+            return val_void();
+        }
         if (tid == 0 || tid >= tab->type_count || !tab->types[tid].is_consuming || tid == mem->str_type_id) {
             has_non_num = true;
         }
@@ -554,7 +575,7 @@ Value eval_mat_lit_ast(MemArena *mem, SymTable *tab,
             mem_err(mem, "Matrix elements must be numeric scalars or sub-matrices");
             return val_void();
         }
-        uint16_t elem_tid = mixed_types ? (uint16_t)SYM_TYPE_ANY : first_tid;
+        uint16_t elem_tid = first_tid;
         uint16_t stride   = (elem_tid != SYM_TYPE_ANY && elem_tid > 0 && elem_tid < tab->type_count)
                             ? tab->types[elem_tid].flat_size : 1u;
         uint16_t saved_tr = mem->temp_root_count;
@@ -566,6 +587,8 @@ Value eval_mat_lit_ast(MemArena *mem, SymTable *tab,
             mem_pop_temp_roots(mem, saved_tr);
             return val_void();
         }
+        uint16_t packed_hdr0 = (uint16_t)((elem_tid & 0xFFu) | (((uint16_t)common_u & 0x7Fu) << 8u));
+        mem_write_pool(mem, (uint16_t)(hdr_idx + 0), (double)packed_hdr0);
         uint16_t data_idx = (uint16_t)mem_read_pool(mem, (uint16_t)(hdr_idx + 3));
         for (uint8_t i = 0; i < actual; ++i) {
             delegate_vec_write_elem(mem, tab, elem_tid, data_idx, (uint32_t)i * (uint32_t)stride, items[i]);
@@ -583,8 +606,3 @@ Value eval_mat_lit_ast(MemArena *mem, SymTable *tab,
     }
     return val_with_unit(mem, val_make_comp(mem, mem->mat_type_id, hdr_idx, MEM_MAT_HDR_SLOTS), common_u);
 }
-
-/* ============================================================================
- * 3b. SANDBOXED FILE I/O & RFC 8259 JSON PARSER / SERIALIZER
- * ============================================================================ */
-

@@ -228,7 +228,7 @@ static Value json_parse_val_rec(MemArena *mem, SymTable *tab, const char *s,
     /* 2. Object -> $map */
     if (c == '{') {
         (*pos)++;
-        uint16_t hdr_idx = mem_map_alloc_hdr(mem, 0, 4);
+        uint16_t hdr_idx = mem_map_alloc_hdr(mem, SYM_TYPE_ANY, 4);
         if (mem->has_error) return val_void();
         Value mval = val_make_comp(mem, mem->map_type_id, hdr_idx, MEM_MAP_HDR_SLOTS);
         uint16_t saved_tr = mem_push_temp_root(mem, &mval);
@@ -236,9 +236,13 @@ static Value json_parse_val_rec(MemArena *mem, SymTable *tab, const char *s,
         json_skip_ws(s, len, pos);
         if (*pos < len && s[*pos] == '}') {
             (*pos)++;
+            mem_write_pool(mem, (uint16_t)(val_get_pool_idx(mval) + 0), 0.0);
             mem_pop_temp_roots(mem, saved_tr);
             return mval;
         }
+        uint16_t common_tid  = 0;
+        bool     mixed_types = false;
+        uint16_t entry_cnt   = 0;
         while (*pos < len && !mem->has_error) {
             json_skip_ws(s, len, pos);
             StrSlice kslice = { 0, 0 };
@@ -262,6 +266,14 @@ static Value json_parse_val_rec(MemArena *mem, SymTable *tab, const char *s,
                 mem_pop_temp_roots(mem, saved_tr);
                 return val_void();
             }
+            uint16_t vtid = val_get_type(mem, vval);
+            if (entry_cnt == 0) {
+                common_tid = vtid;
+            } else if (vtid != common_tid) {
+                mixed_types = true;
+            }
+            entry_cnt++;
+
             (void)delegate_eval_intrinsic(mem, tab, INTR_MAP_SET, mval, kval, vval, 0);
             mem->temp_root_count = (uint16_t)(saved_tr + 1u);
             if (mem->has_error) {
@@ -276,6 +288,8 @@ static Value json_parse_val_rec(MemArena *mem, SymTable *tab, const char *s,
             }
             if (*pos < len && s[*pos] == '}') {
                 (*pos)++;
+                uint16_t final_tid = mixed_types ? (uint16_t)SYM_TYPE_ANY : common_tid;
+                mem_write_pool(mem, (uint16_t)(val_get_pool_idx(mval) + 0), (double)final_tid);
                 mem_pop_temp_roots(mem, saved_tr);
                 return mval;
             }
@@ -506,8 +520,6 @@ static void json_format_val_rec(MemArena *mem, const SymTable *tab, Value v,
             if (indent_step > 0) {
                 jbuf_append_cstr(jb, "\n");
                 jbuf_append_indent(jb, cur_indent + indent_step);
-            } else if (i > 0) {
-                /* compact JSON: no extra space or optional space */
             }
             Value ev = delegate_vec_read_elem(mem, tab, elem_tid, elem_uid, data_idx, i * (uint32_t)stride);
             json_format_val_rec(mem, tab, ev, indent_step, cur_indent + indent_step, jb, (uint8_t)(depth + 1));
@@ -591,18 +603,19 @@ static void json_format_val_rec(MemArena *mem, const SymTable *tab, Value v,
                 jbuf_append_indent(jb, cur_indent + indent_step);
             }
             const FieldDef *fd = &tab->fields[td->start_idx + i];
+            uint16_t ftid = sym_unpack_outer_type(mem, fd->type_id);
             jbuf_append_escaped_str(jb, mem_str_ptr(mem, fd->name), fd->name.len);
             jbuf_append_cstr(jb, indent_step > 0 ? ": " : ":");
             uint16_t fpidx = (uint16_t)(pidx + fd->flat_offset);
             Value fv;
-            if (fd->type_id == mem->str_type_id && mem->str_type_id != 0) {
+            if (ftid == mem->str_type_id && mem->str_type_id != 0) {
                 uint32_t pk = (uint32_t)mem_read_pool(mem, fpidx);
                 StrSlice fs = { (uint16_t)(pk >> 16u), (uint16_t)(pk & 0xFFFFu) };
-                fv = val_make_str(mem, fd->type_id, fs);
-            } else if (!tab->types[fd->type_id].is_consuming) {
-                fv = val_make_comp(mem, fd->type_id, fpidx, tab->types[fd->type_id].flat_size);
+                fv = val_make_str(mem, ftid, fs);
+            } else if (!tab->types[ftid].is_consuming) {
+                fv = val_make_comp(mem, ftid, fpidx, tab->types[ftid].flat_size);
             } else {
-                fv = val_make_f64(mem, fd->type_id, mem_read_pool(mem, fpidx));
+                fv = val_make_f64(mem, ftid, mem_read_pool(mem, fpidx));
             }
             json_format_val_rec(mem, tab, fv, indent_step, cur_indent + indent_step, jb, (uint8_t)(depth + 1));
         }
@@ -647,8 +660,3 @@ Value eval_json_stringify_op(MemArena *mem, const SymTable *tab, Value a, Value 
     if (mem->has_error) return val_void();
     return val_make_str(mem, mem->str_type_id, s);
 }
-
-/* ============================================================================
- * 4. RECURSIVE AST EVALUATOR
- * ============================================================================ */
-

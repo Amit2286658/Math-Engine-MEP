@@ -34,9 +34,13 @@ int find_active_meta_sym(const SymTable *tab, uint8_t target_meta);
 bool lex_is_multi_lhs(const Parser *P);
 bool sym_has_non_lazy_func_ov(const SymTable *tab, uint16_t sym_id);
 int find_active_sub_sym(const MemArena *mem, const SymTable *tab);
+uint16_t resolve_annot_type_ext(const SymTable *tab, const MemArena *mem,
+                                const char *name, uint16_t len);
 bool parse_var_type_unit_annot(Parser *P, uint8_t *out_lock_type, uint8_t *out_lock_unit);
 bool ast_is_fn_expr_rec(const MemArena *mem, const SymTable *tab,
                         const Parser *P, uint16_t idx, uint8_t depth);
+uint16_t ast_infer_struct_or_fn_type(const Parser *P, uint16_t idx);
+void parser_try_infer_container_push(Parser *P, uint16_t vec_ast, uint16_t item_ast);
 uint16_t build_store_or_compound(Parser *P, uint16_t op_sym_id,
                                  uint16_t lhs_ast, uint16_t rhs_ast);
 uint16_t build_distributed_comp(Parser *P, OpFixity fix, uint16_t comp_sym,

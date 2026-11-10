@@ -19,8 +19,10 @@ void mem_free_all_heap(MemArena *mem) {
         mem->heap_blocks[i].in_use    = 0;
         mem->heap_blocks[i].marked    = 0;
     }
-    mem->heap_active_count = 0;
-    mem->heap_total_slots  = 0;
+    mem->heap_active_count    = 0;
+    mem->heap_total_slots     = 0;
+    mem->active_closure_count = 0;
+    mem->closure_list_overflow = 0;
 }
 
 void mem_free_ast_heap(MemArena *mem) {
@@ -140,7 +142,7 @@ void mem_snapshot_base(MemArena *mem) {
     mem->base_fast_real_type = mem->fast_real_type;
     mem->base_str_type_id    = mem->str_type_id;
     mem->base_vec_type_id    = mem->vec_type_id;
-    mem->base_mat_type_id    = mem->mat_type_id;
+    mem->base_mat_type_id    = mem->base_mat_type_id;
     mem->base_fn_type_id     = mem->fn_type_id;
     mem->base_map_type_id    = mem->map_type_id;
 }
@@ -205,10 +207,23 @@ void mem_rewind_scratch(MemArena *mem) {
     for (uint8_t i = 0; i < MEM_MAX_LABELS; ++i) {
         mem->label_ast[i] = MEM_NO_IDX;
     }
-    for (uint16_t i = 0; i < MEM_MAX_HEAP_BLOCKS; ++i) {
-        if (mem->heap_blocks[i].in_use == 2u) {
-            mem->heap_blocks[i].in_use = 3u;
+    if (mem->active_closure_count > 0 || mem->closure_list_overflow) {
+        if (!mem->closure_list_overflow) {
+            for (uint8_t i = 0; i < mem->active_closure_count; ++i) {
+                uint8_t hid = mem->active_closure_hids[i];
+                if (mem->heap_blocks[hid].in_use == 2u) {
+                    mem->heap_blocks[hid].in_use = 3u;
+                }
+            }
+        } else {
+            for (uint16_t i = 0; i < MEM_MAX_HEAP_BLOCKS; ++i) {
+                if (mem->heap_blocks[i].in_use == 2u) {
+                    mem->heap_blocks[i].in_use = 3u;
+                }
+            }
         }
+        mem->active_closure_count  = 0;
+        mem->closure_list_overflow = 0;
     }
 
     if (mem->sym_tab != NULL && mem->sym_tab->var_count > 0) {
@@ -222,16 +237,85 @@ void mem_rewind_scratch(MemArena *mem) {
 }
 
 /* ============================================================================
- * 2. UTF-8 STRING INTERNING & SLICES
+ * 2. UTF-8 STRING INTERNING & O(1) OPEN-ADDRESSED HASH INDEX
  * ============================================================================ */
 
-StrSlice mem_intern_str(MemArena *mem, const char *str, uint16_t len) {
-    for (uint16_t i = 0; i + len <= mem->src_len; ++i) {
-        if (memcmp(mem->src_buf + i, str, len) == 0) {
-            StrSlice s = { i, len };
-            return s;
+static inline uint32_t hash_str_bytes(const char *str, uint16_t len) {
+    uint32_t h = 2166136261u;
+    for (uint16_t i = 0; i < len; ++i) {
+        h ^= (uint8_t)str[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+void mem_str_hash_insert(MemArena *mem, StrSlice s) {
+    if (!mem || s.len == 0 || (uint32_t)s.off + (uint32_t)s.len > (uint32_t)mem->src_len) return;
+    const char *ptr = mem->src_buf + s.off;
+    uint32_t h = hash_str_bytes(ptr, s.len);
+    uint32_t mask = MEM_STR_HASH_BUCKETS - 1u;
+    for (uint32_t probe = 0; probe < 8u; ++probe) {
+        uint32_t idx = (h + probe) & mask;
+        StrSlice cur = mem->str_hash[idx];
+        if (cur.len == 0 || (uint32_t)cur.off + (uint32_t)cur.len > (uint32_t)mem->src_len) {
+            mem->str_hash[idx] = s;
+            return;
+        }
+        if (cur.len == s.len && (cur.off == s.off || memcmp(mem->src_buf + cur.off, ptr, s.len) == 0)) {
+            return;
         }
     }
+    mem->str_hash[h & mask] = s;
+}
+
+void mem_rebuild_str_hash(MemArena *mem) {
+    if (!mem) return;
+    memset(mem->str_hash, 0, sizeof(mem->str_hash));
+}
+
+static int find_substr_in_src(const char *haystack, uint16_t hay_len, const char *needle, uint16_t needle_len) {
+    if (needle_len == 0) return 0;
+    if (needle_len > hay_len) return -1;
+    uint16_t limit = (uint16_t)(hay_len - needle_len);
+    uint8_t first = (uint8_t)needle[0];
+    uint16_t pos = 0;
+    while (pos <= limit) {
+        const char *hit = (const char *)memchr(haystack + pos, first, (size_t)(limit - pos + 1u));
+        if (!hit) return -1;
+        uint16_t off = (uint16_t)(hit - haystack);
+        if (needle_len == 1u || memcmp(hit + 1, needle + 1, (size_t)(needle_len - 1u)) == 0) {
+            return (int)off;
+        }
+        pos = (uint16_t)(off + 1u);
+    }
+    return -1;
+}
+
+StrSlice mem_intern_str(MemArena *mem, const char *str, uint16_t len) {
+    if (len == 0) {
+        StrSlice empty = { 0, 0 };
+        return empty;
+    }
+
+    uint32_t h = hash_str_bytes(str, len);
+    uint32_t mask = MEM_STR_HASH_BUCKETS - 1u;
+    for (uint32_t probe = 0; probe < 4u; ++probe) {
+        uint32_t idx = (h + probe) & mask;
+        StrSlice cur = mem->str_hash[idx];
+        if (cur.len == 0) break;
+        if (cur.len == len && (uint32_t)cur.off + (uint32_t)cur.len <= (uint32_t)mem->src_len &&
+            memcmp(mem->src_buf + cur.off, str, len) == 0) {
+            return cur;
+        }
+    }
+
+    int existing_off = find_substr_in_src(mem->src_buf, mem->src_len, str, len);
+    if (existing_off >= 0) {
+        StrSlice s = { (uint16_t)existing_off, len };
+        mem_str_hash_insert(mem, s);
+        return s;
+    }
+
     if ((uint32_t)mem->src_len + (uint32_t)len >= (uint32_t)MEM_SRC_BUF_CAP) {
         char *tmp_copy = NULL;
         const char *eff_str = str;
@@ -243,12 +327,12 @@ StrSlice mem_intern_str(MemArena *mem, const char *str, uint16_t len) {
             }
         }
         mem_compact_strings(mem);
-        for (uint16_t i = 0; i + len <= mem->src_len; ++i) {
-            if (memcmp(mem->src_buf + i, eff_str, len) == 0) {
-                if (tmp_copy) free(tmp_copy);
-                StrSlice s = { i, len };
-                return s;
-            }
+        int comp_off = find_substr_in_src(mem->src_buf, mem->src_len, eff_str, len);
+        if (comp_off >= 0) {
+            if (tmp_copy) free(tmp_copy);
+            StrSlice s = { (uint16_t)comp_off, len };
+            mem_str_hash_insert(mem, s);
+            return s;
         }
         if ((uint32_t)mem->src_len + (uint32_t)len >= (uint32_t)MEM_SRC_BUF_CAP) {
             if (tmp_copy) free(tmp_copy);
@@ -260,11 +344,13 @@ StrSlice mem_intern_str(MemArena *mem, const char *str, uint16_t len) {
         memcpy(mem->src_buf + mem->src_len, eff_str, len);
         mem->src_len = (uint16_t)(mem->src_len + len);
         if (tmp_copy) free(tmp_copy);
+        mem_str_hash_insert(mem, s);
         return s;
     }
     StrSlice s = { mem->src_len, len };
     memcpy(mem->src_buf + mem->src_len, str, len);
     mem->src_len = (uint16_t)(mem->src_len + len);
+    mem_str_hash_insert(mem, s);
     return s;
 }
 
@@ -274,6 +360,7 @@ const char *mem_str_ptr(const MemArena *mem, StrSlice s) {
 
 bool mem_slice_eq(const MemArena *mem, StrSlice a, StrSlice b) {
     if (a.len != b.len) return false;
+    if (a.off == b.off) return true;
     return memcmp(mem->src_buf + a.off, mem->src_buf + b.off, a.len) == 0;
 }
 
@@ -446,5 +533,3 @@ void mem_data_write(MemArena *mem, uint16_t data_idx, uint32_t offset, double va
         *p = canonicalize_f64(val);
     }
 }
-
-/* Should a container payload of `total_slots` be placed in the SBO `f64_pool`? */

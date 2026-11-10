@@ -55,8 +55,19 @@ vec3_mag(v:vec3)          = hypot(hypot(v.x, v.y), v.z)
 vec3_dist(a:vec3, b:vec3) = vec3_mag(b - a)
 lerp(a, b, t)             = a + (b - a) * t
 
-# Total 3D trajectory path length across a dynamic `vec<vec3>` of waypoints
-vec3_path_len(pts:vec) = {
+# Static Element-Typed 2D & 3D Point-Cloud / Trajectory Helpers (`vec<vec2>` vs `vec<vec3>`)
+vec2_path_len(pts:vec<vec2>) = {
+    total := 0
+    n     := pts.len()
+    if (n > 1) {
+        (idx in 1..<n) {
+            total += vec2_dist(pts[idx - 1], pts[idx])
+        }
+    }
+    total
+}
+
+vec3_path_len(pts:vec<vec3>) = {
     total := 0
     n     := pts.len()
     if (n > 1) {
@@ -65,6 +76,94 @@ vec3_path_len(pts:vec) = {
         }
     }
     total
+}
+
+# Overloaded `path_len`, `vec_sum`, `sum`, `mean`, `centroid`, `bbox_min`, `bbox_max` by static element type!
+path_len(pts:vec<vec2>) = vec2_path_len(pts)
+path_len(pts:vec<vec3>) = vec3_path_len(pts)
+
+vec_sum(pts:vec<vec2>) -> vec2 = {
+    s := vec2(0, 0)
+    (p in pts) { s = s + p }
+    s
+}
+
+vec_sum(pts:vec<vec3>) -> vec3 = {
+    s := vec3(0, 0, 0)
+    (p in pts) { s = s + p }
+    s
+}
+
+sum(pts:vec<vec2>)      -> vec2 = vec_sum(pts)
+sum(pts:vec<vec3>)      -> vec3 = vec_sum(pts)
+mean(pts:vec<vec2>)     -> vec2 = vec_sum(pts) / pts.len()
+mean(pts:vec<vec3>)     -> vec3 = vec_sum(pts) / pts.len()
+centroid(pts:vec<vec2>) -> vec2 = mean(pts)
+centroid(pts:vec<vec3>) -> vec3 = mean(pts)
+
+bbox_min(pts:vec<vec2>) -> vec2 = {
+    if (pts.len() == 0) { error("Cannot compute bbox_min of an empty vec<vec2>") }
+    mx := pts[0].x
+    my := pts[0].y
+    (p in pts) {
+        mx = min(mx, p.x)
+        my = min(my, p.y)
+    }
+    vec2(mx, my)
+}
+
+bbox_max(pts:vec<vec2>) -> vec2 = {
+    if (pts.len() == 0) { error("Cannot compute bbox_max of an empty vec<vec2>") }
+    mx := pts[0].x
+    my := pts[0].y
+    (p in pts) {
+        mx = max(mx, p.x)
+        my = max(my, p.y)
+    }
+    vec2(mx, my)
+}
+
+bbox_min(pts:vec<vec3>) -> vec3 = {
+    if (pts.len() == 0) { error("Cannot compute bbox_min of an empty vec<vec3>") }
+    mx := pts[0].x
+    my := pts[0].y
+    mz := pts[0].z
+    (p in pts) {
+        mx = min(mx, p.x)
+        my = min(my, p.y)
+        mz = min(mz, p.z)
+    }
+    vec3(mx, my, mz)
+}
+
+bbox_max(pts:vec<vec3>) -> vec3 = {
+    if (pts.len() == 0) { error("Cannot compute bbox_max of an empty vec<vec3>") }
+    mx := pts[0].x
+    my := pts[0].y
+    mz := pts[0].z
+    (p in pts) {
+        mx = max(mx, p.x)
+        my = max(my, p.y)
+        mz = max(mz, p.z)
+    }
+    vec3(mx, my, mz)
+}
+
+polygon_perimeter(pts:vec<vec2>) = {
+    n := pts.len()
+    if (n < 2) { return 0 }
+    vec2_path_len(pts) + vec2_dist(pts[n - 1], pts[0])
+}
+
+polygon_area(pts:vec<vec2>) = {
+    n := pts.len()
+    if (n < 3) { return 0 }
+    acc := 0
+    (i in 0..<n) {
+        j := (i + 1) % n
+        acc += pts[i].x * pts[j].y - pts[j].x * pts[i].y
+    }
+    0.5 * abs(acc)
 }
 
 # 4. Circle & Sphere Geometry

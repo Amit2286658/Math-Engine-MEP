@@ -78,7 +78,7 @@ ends_with(s:str, suffix:str) = {
     s[(n - ns)..<n] == suffix
 }
 
-chars(s:str) -> vec = [c for c in s]
+chars(s:str) -> vec<str> = [c for c in s]
 
 str_join(v:vec, sep:str = "") -> str = {
     out := ""
@@ -164,7 +164,7 @@ pad_right(s:str, width, ch:str = " ") -> str = {
     s + str_repeat(ch[0], width - n)
 }
 
-split(s:str, sep:str = " ") -> vec = {
+split(s:str, sep:str = " ") -> vec<str> = {
     out := vec<str>()
     n   := len(s)
     m   := len(sep)
@@ -207,23 +207,23 @@ str_count(s:str, sub:str) = {
     parts.len() - 1
 }
 
-lines(s:str)                        -> vec = split(s, "
+lines(s:str)                        -> vec<str> = split(s, "
 ")
-words(s:str)                        -> vec = @regex_find_all(s, "\S+")
+words(s:str)                        -> vec<str> = @regex_find_all(s, "\S+")
 
 # 4. Regular Expression Matching, Search, Extraction, Replacement & Splitting
 regex_match(s:str, pat:str)                  = @regex_match(s, pat)
 regex_find(s:str, pat:str)            -> str = @regex_find(s, pat)
-regex_find_all(s:str, pat:str)        -> vec = @regex_find_all(s, pat)
+regex_find_all(s:str, pat:str)        -> vec<str> = @regex_find_all(s, pat)
 regex_replace(s:str, pat:str, rep:str)-> str = @regex_replace(s, pat, rep)
-regex_split(s:str, pat:str)           -> vec = @regex_split(s, pat)
+regex_split(s:str, pat:str)           -> vec<str> = @regex_split(s, pat)
 
 # 5. Sandboxed File I/O, RFC 8259 JSON Parsing/Serialization & CSV Utilities
 read_file(path:str)                 -> str = @file_read(path)
 write_file(path:str, content:T)            = @file_write(path, content)
 append_file(path:str, content:T)           = @file_append(path, content)
 file_exists(path:str)                      = @file_exists(path)
-read_lines(path:str)                -> vec = lines(@file_read(path))
+read_lines(path:str)                -> vec<str> = lines(@file_read(path))
 write_lines(path:str, v:vec)               = @file_write(path, str_join(v, "\n") + "\n")
 
 json_parse(s:str)                   -> T   = @json_parse(s)
@@ -233,12 +233,12 @@ json_pretty(v:T, indent = 2)        -> str = @json_stringify(v, indent)
 read_json(path:str)                 -> T   = @json_parse(@file_read(path))
 write_json(path:str, v:T, indent = 2)      = @file_write(path, @json_stringify(v, indent))
 
-csv_parse_row(line:str, sep:str = ",") -> vec = [trim(cell) for cell in split(line, sep)]
+csv_parse_row(line:str, sep:str = ",") -> vec<str> = [trim(cell) for cell in split(line, sep)]
 
 csv_parse(text:str, sep:str = ",") -> vec =
     [csv_parse_row(ln, sep) for ln in lines(trim(text)) if len(trim(ln)) > 0]
 
-csv_to_maps(text:str, sep:str = ",") -> vec = {
+csv_to_maps(text:str, sep:str = ",") -> vec<map> = {
     rows := csv_parse(text, sep)
     n    := rows.len()
     if (n <= 1) { return vec() }
@@ -259,3 +259,7 @@ csv_to_maps(text:str, sep:str = ",") -> vec = {
 
 csv_stringify(rows:vec, sep:str = ",") -> str =
     str_join([str_join(r, sep) for r in rows], "\n")
+
+# Overloaded `vec_sum` and `sum` on `vec<str>` (concatenates all strings)
+vec_sum(v:vec<str>) -> str = str_join(v, "")
+sum(v:vec<str>)     -> str = str_join(v, "")

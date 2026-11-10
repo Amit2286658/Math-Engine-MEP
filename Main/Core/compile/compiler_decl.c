@@ -89,6 +89,60 @@ int ext_find_duplicate_overload(const SymTable *tab, uint16_t sym_id, uint16_t m
     return -1;
 }
 
+static bool ext_is_parameterizable_type(const MemArena *mem, uint16_t base_tid,
+                                        const char *s, uint16_t len) {
+    if (mem->vec_type_id != 0 && base_tid == mem->vec_type_id) return true;
+    if (mem->map_type_id != 0 && base_tid == mem->map_type_id) return true;
+    if (mem->mat_type_id != 0 && base_tid == mem->mat_type_id) return true;
+    if (len == 3 && (memcmp(s, "vec", 3) == 0 || memcmp(s, "map", 3) == 0 || memcmp(s, "mat", 3) == 0)) return true;
+    if (len == 4 && (memcmp(s, "list", 4) == 0 || memcmp(s, "dict", 4) == 0)) return true;
+    if (len == 5 && (memcmp(s, "stack", 5) == 0 || memcmp(s, "queue", 5) == 0)) return true;
+    return false;
+}
+
+static bool ext_try_parse_type_param(ExtLoader *L, uint16_t base_tid,
+                                     const char *base_str, uint16_t base_len,
+                                     uint16_t *io_tid, uint8_t *io_uid) {
+    MemArena *mem = L->mem;
+    SymTable *tab = L->tab;
+    if (!ext_is_parameterizable_type(mem, base_tid, base_str, base_len)) return true;
+    if (!ext_match_char(L, '<')) return true;
+
+    StrSlice p1 = ext_read_ident(L);
+    if (p1.len == 0) {
+        mem_err(mem, "Expected element type or unit inside '<...>'");
+        return false;
+    }
+    const char *p1_s = mem_str_ptr(mem, p1);
+    uint16_t etid = sym_find_type(tab, mem, p1_s, p1.len);
+
+    if (ext_match_char(L, ',')) {
+        if (etid == MEM_TYPE_VOID) {
+            mem_err(mem, "Unknown element type '%.*s' inside '<...>'", (int)p1.len, p1_s);
+            return false;
+        }
+        StrSlice p2 = ext_read_ident(L);
+        if (p2.len == 0) {
+            mem_err(mem, "Expected unit name after ',' inside '<...>'");
+            return false;
+        }
+        uint8_t uid = sym_find_or_add_unit(tab, mem, mem_str_ptr(mem, p2), p2.len);
+        if (io_uid) *io_uid = uid;
+    } else if (etid == MEM_TYPE_VOID) {
+        /* Single unit name inside `<...>` implies `real` elements with that unit */
+        uint8_t uid = sym_find_or_add_unit(tab, mem, p1_s, p1.len);
+        if (io_uid) *io_uid = uid;
+        etid = mem->fast_real_type ? mem->fast_real_type : 1u;
+    }
+
+    if (!ext_match_char(L, '>')) {
+        mem_err(mem, "Expected '>' after container type parameter");
+        return false;
+    }
+    *io_tid = sym_pack_container_type(mem, base_tid, etid);
+    return !mem->has_error;
+}
+
 bool ext_peek_is_kw_type_decl(const ExtLoader *L, uint16_t pos) {
     if (pos >= L->len || !lex_is_ident_start((unsigned char)L->src[pos])) return false;
     uint16_t p = pos;
@@ -282,14 +336,18 @@ void ext_parse_type_decl(ExtLoader *L, uint8_t decl_flags) {
                     mem_err(mem, "Unknown field type '%.*s'", (int)ftype_s.len, mem_str_ptr(mem, ftype_s));
                     return;
                 }
+                if (!ext_try_parse_type_param(L, ftid, mem_str_ptr(mem, ftype_s), ftype_s.len, &ftid, NULL)) {
+                    return;
+                }
             }
-            if (ftid == tid) {
+            uint16_t outer_ftid = sym_unpack_outer_type(mem, ftid);
+            if (outer_ftid == tid) {
                 mem_err(mem, "Self-referential struct field '%.*s' in '$%.*s' is not allowed",
                         (int)fname.len, mem_str_ptr(mem, fname),
                         (int)tname.len, mem_str_ptr(mem, tname));
                 return;
             }
-            if (ftid >= tab->type_count || tab->types[ftid].flat_size == 0) {
+            if (outer_ftid >= tab->type_count || tab->types[outer_ftid].flat_size == 0) {
                 mem_err(mem, "Incomplete or invalid field type in '$%.*s'",
                         (int)tname.len, mem_str_ptr(mem, tname));
                 return;
@@ -303,7 +361,7 @@ void ext_parse_type_decl(ExtLoader *L, uint8_t decl_flags) {
             fd->type_id     = ftid;
             fd->flat_offset = flat_off;
 
-            flat_off = (uint16_t)(flat_off + tab->types[ftid].flat_size);
+            flat_off = (uint16_t)(flat_off + tab->types[outer_ftid].flat_size);
             fcount++;
             ext_match_char(L, ',');
         }
@@ -360,6 +418,63 @@ static bool ext_resolve_type_and_unit(ExtLoader *L, StrSlice first_id,
     return !mem->has_error;
 }
 
+static bool ext_peek_ident_is_unit_annot(ExtLoader *L) {
+    ext_skip_ws(L);
+    uint16_t p = L->pos;
+    if (p >= L->len || !lex_is_ident_start((unsigned char)L->src[p])) return false;
+    uint16_t id_start = p;
+    while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
+    uint16_t id_len = (uint16_t)(p - id_start);
+    while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t' || L->src[p] == '\r' || L->src[p] == '\n')) p++;
+    if (p < L->len && (L->src[p] == ':' || L->src[p] == '=')) return false;
+    return sym_find_unit(L->tab, L->mem, L->src + id_start, id_len) != MEM_UNIT_NONE;
+}
+
+static bool ext_parse_type_and_unit_spec(ExtLoader *L, bool in_param_list,
+                                         uint16_t *out_type, uint8_t *out_unit) {
+    MemArena *mem = L->mem;
+    SymTable *tab = L->tab;
+    StrSlice tname = ext_read_ident(L);
+    if (tname.len == 0) {
+        mem_err(mem, "Expected type or unit name in declaration");
+        return false;
+    }
+    const char *tn_str = mem_str_ptr(mem, tname);
+    uint16_t    base_t = sym_find_type(tab, mem, tn_str, tname.len);
+
+    ext_skip_ws(L);
+    if (base_t != MEM_TYPE_VOID && L->pos < L->len && L->src[L->pos] == '<' &&
+        ext_is_parameterizable_type(mem, base_t, tn_str, tname.len)) {
+        uint8_t param_uid = SYM_UNIT_OMITTED;
+        if (!ext_try_parse_type_param(L, base_t, tn_str, tname.len, &base_t, &param_uid)) {
+            return false;
+        }
+        if (ext_match_char(L, ',')) {
+            if (!in_param_list || ext_peek_ident_is_unit_annot(L)) {
+                StrSlice un = ext_read_ident(L);
+                param_uid = sym_find_or_add_unit(tab, mem, mem_str_ptr(mem, un), un.len);
+            } else {
+                L->pos--; /* put ',' back for next parameter */
+            }
+        }
+        *out_type = base_t;
+        *out_unit = param_uid;
+        return !mem->has_error;
+    }
+
+    bool     has_u = false;
+    StrSlice uname = { 0, 0 };
+    if (ext_match_char(L, ',')) {
+        if (!in_param_list || ext_peek_ident_is_unit_annot(L)) {
+            has_u = true;
+            uname = ext_read_ident(L);
+        } else {
+            L->pos--; /* put ',' back for next parameter */
+        }
+    }
+    return ext_resolve_type_and_unit(L, tname, has_u, uname, out_type, out_unit);
+}
+
 bool ext_parse_one_param(ExtLoader *L, StrSlice *out_name,
                                 uint16_t *out_type, uint8_t *out_unit) {
     if (!ext_match_char(L, '(')) return false;
@@ -378,14 +493,7 @@ bool ext_parse_one_param(ExtLoader *L, StrSlice *out_name,
         }
         return true;
     }
-    StrSlice tname = ext_read_ident(L);
-    bool has_unit  = false;
-    StrSlice uname = { 0, 0 };
-    if (ext_match_char(L, ',')) {
-        has_unit = true;
-        uname    = ext_read_ident(L);
-    }
-    if (!ext_resolve_type_and_unit(L, tname, has_unit, uname, out_type, out_unit)) {
+    if (!ext_parse_type_and_unit_spec(L, false, out_type, out_unit)) {
         return false;
     }
     if (!ext_match_char(L, ')')) {
@@ -393,18 +501,6 @@ bool ext_parse_one_param(ExtLoader *L, StrSlice *out_name,
         return false;
     }
     return true;
-}
-
-static bool ext_peek_ident_is_unit_annot(ExtLoader *L) {
-    ext_skip_ws(L);
-    uint16_t p = L->pos;
-    if (p >= L->len || !lex_is_ident_start((unsigned char)L->src[p])) return false;
-    uint16_t id_start = p;
-    while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
-    uint16_t id_len = (uint16_t)(p - id_start);
-    while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t' || L->src[p] == '\r' || L->src[p] == '\n')) p++;
-    if (p < L->len && (L->src[p] == ':' || L->src[p] == '=')) return false;
-    return sym_find_unit(L->tab, L->mem, L->src + id_start, id_len) != MEM_UNIT_NONE;
 }
 
 bool ext_parse_return_spec(ExtLoader *L, uint16_t *out_rtype, uint8_t *out_runit) {
@@ -417,14 +513,7 @@ bool ext_parse_return_spec(ExtLoader *L, uint16_t *out_rtype, uint8_t *out_runit
     if (L->pos + 1 < L->len && L->src[L->pos] == '-' && L->src[L->pos + 1] == '>') {
         L->pos = (uint16_t)(L->pos + 2);
     }
-    StrSlice rtype_s = ext_read_ident(L);
-    bool has_unit    = false;
-    StrSlice runit_s = { 0, 0 };
-    if (ext_match_char(L, ',')) {
-        has_unit = true;
-        runit_s  = ext_read_ident(L);
-    }
-    return ext_resolve_type_and_unit(L, rtype_s, has_unit, runit_s, out_rtype, out_runit);
+    return ext_parse_type_and_unit_spec(L, false, out_rtype, out_runit);
 }
 
 static void ext_skip_default_expr(ExtLoader *L, uint16_t *out_start, uint16_t *out_end) {
@@ -614,12 +703,16 @@ void ext_parse_sym_decl_ex(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags,
 
         uint16_t fbase = (P.local_count > 0) ? mem_push_frame(mem, P.local_count) : 0;
         if (mem->has_error) return;
-        Value ev = eval_ast(mem, tab, c_ast, fbase, (uint8_t)rtid);
+        uint16_t outer_rtid = sym_unpack_outer_type(mem, rtid);
+        Value ev = eval_ast(mem, tab, c_ast, fbase, (uint8_t)outer_rtid);
         if (P.local_count > 0) mem_pop_frame(mem, fbase);
         if (mem->has_error) return;
 
         uint8_t lock_unit = (ruid != SYM_UNIT_OMITTED && ruid != SYM_UNIT_GENERIC) ? ruid : 0;
-        if (lock_unit != 0 && lock_unit < SYM_UNIT_LOCK_NONE && val_get_unit(mem, ev) == MEM_UNIT_NONE) {
+        uint16_t ev_tid   = val_get_type(mem, ev);
+        if (lock_unit != 0 && lock_unit < SYM_UNIT_LOCK_NONE &&
+            ev_tid != mem->vec_type_id && ev_tid != mem->map_type_id &&
+            val_get_unit(mem, ev) == MEM_UNIT_NONE) {
             ev = val_with_unit(mem, ev, lock_unit);
         }
         (void)sym_set_or_add_var(tab, mem, sym_id, L->cur_mod, ev, lock_type, lock_unit, decl_flags, true);
@@ -659,16 +752,7 @@ void ext_parse_sym_decl_ex(ExtLoader *L, uint16_t sym_id, uint8_t decl_flags,
             break;
         }
         if (ext_match_char(L, ':')) {
-            StrSlice tn = ext_read_ident(L);
-            bool has_u  = false;
-            StrSlice un = { 0, 0 };
-            if (ext_match_char(L, ',')) {
-                if (ext_peek_ident_is_unit_annot(L)) {
-                    has_u = true;
-                    un    = ext_read_ident(L);
-                }
-            }
-            if (!ext_resolve_type_and_unit(L, tn, has_u, un, &ptypes[pcount], &punits[pcount])) {
+            if (!ext_parse_type_and_unit_spec(L, true, &ptypes[pcount], &punits[pcount])) {
                 break;
             }
         } else {
@@ -919,6 +1003,12 @@ static bool ext_scan_one_param_parens(const char *src, uint16_t pos, uint16_t le
         if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
         while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
         p = ext_skip_ws_at(src, p, len);
+        if (p < len && src[p] == '<') {
+            p++;
+            while (p < len && src[p] != '>' && src[p] != '\n' && src[p] != ';') p++;
+            if (p >= len || src[p] != '>') return false;
+            p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+        }
         if (p < len && src[p] == ',') {
             p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
             if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
@@ -976,6 +1066,12 @@ static bool ext_scan_decl_param_list(const char *src, uint16_t pos, uint16_t len
             if (p >= len || !lex_is_ident_start((unsigned char)src[p])) return false;
             while (p < len && lex_is_ident_cont((unsigned char)src[p])) p++;
             p = ext_skip_ws_at(src, p, len);
+            if (p < len && src[p] == '<') {
+                p++;
+                while (p < len && src[p] != '>' && src[p] != '\n' && src[p] != ';') p++;
+                if (p >= len || src[p] != '>') return false;
+                p = ext_skip_ws_at(src, (uint16_t)(p + 1), len);
+            }
         }
         if (p < len && src[p] == '=' &&
             !(p + 1 < len && (src[p + 1] == '=' || src[p + 1] == '>'))) {
@@ -1109,6 +1205,13 @@ bool ext_peek_is_var_decl(const ExtLoader *L, uint16_t pos) {
         if (p >= L->len || !lex_is_ident_start((unsigned char)L->src[p])) return false;
         while (p < L->len && lex_is_ident_cont((unsigned char)L->src[p])) p++;
         while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+        if (p < L->len && L->src[p] == '<') {
+            p++;
+            while (p < L->len && L->src[p] != '>' && L->src[p] != '\n' && L->src[p] != ';') p++;
+            if (p >= L->len || L->src[p] != '>') return false;
+            p++;
+            while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
+        }
         if (p < L->len && L->src[p] == ',') {
             p++;
             while (p < L->len && (L->src[p] == ' ' || L->src[p] == '\t')) p++;
@@ -1135,4 +1238,3 @@ bool ext_peek_is_import_decl(const ExtLoader *L, uint16_t pos) {
     if (p >= L->len) return false;
     return (L->src[p] == '"' || L->src[p] == '(' || lex_is_ident_start((unsigned char)L->src[p]));
 }
-

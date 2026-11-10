@@ -6,10 +6,12 @@
  *   consuming lexical types, physical/dimensional unit types (`distance`,
  *   `angle`, `mass`, `time`, `speed`, ...), flat C-style structs, dynamic
  *   vectors (`$vec`), multidimensional matrices (`$mat`), first-class lambdas
- *   (`$fn`), generic entity & unit wildcards (`T` / `any`), operator/function
- *   overloads (with O(1) per-symbol chain indexing), module-scoped variables &
- *   constants (with privacy, scoping, mutability & concrete type/unit locks),
- *   private C intrinsic IDs, and host-registered extern callbacks (`@<extern_name>`).
+ *   (`$fn`), generic entity & unit wildcards (`T` / `any`), static container
+ *   element types (`vec<T, U>`, `map<T, U>`, `mat<T, U>`) with inferred defaults,
+ *   operator/function overloads (with O(1) per-symbol chain indexing),
+ *   module-scoped variables & constants (with privacy, scoping, mutability &
+ *   concrete type/unit locks), private C intrinsic IDs, and host-registered
+ *   extern callbacks (`@<extern_name>`).
  */
 
 #ifndef SYM_TABLE_H
@@ -47,6 +49,59 @@ extern "C" {
 #define SYM_UNIT_GENERIC    0xFEu   /* Explicit generic unit `T` / `any`         */
 #define SYM_UNIT_LOCK_NONE  0xFDu   /* Explicit concrete unitless `none`         */
 
+/*
+ * Static Parameterized Container Type Encoding (`uint8_t` / `uint16_t` TypeSpec):
+ *   - 0x00         : MEM_TYPE_VOID (unlocked / omitted)
+ *   - 0x01 .. 0x3C : Concrete entity type ID (`1..60`, e.g. `real`, `vec`, `map`, `mat`, `vec2`)
+ *   - 0x3D         : SYM_ELEM_ANY (`T` / `any` element wildcard inside `<...>`)
+ *   - 0x40 | elem6 : Parameterized `vec<elem6>` / `list<elem6>` / `stack<elem6>` / `queue<elem6>`
+ *   - 0x80 | elem6 : Parameterized `map<elem6>` / `dict<elem6>`
+ *   - 0xC0 | elem6 : Parameterized `mat<elem6>` (`0xC0 .. 0xFD`)
+ *   - 0xFE         : SYM_TYPE_ANY (top-level generic entity type `T` / `any`)
+ */
+#define SYM_ELEM_ANY        0x3Du
+#define SYM_TY_KIND_MASK    0xC0u
+#define SYM_TY_VEC_BIT      0x40u
+#define SYM_TY_MAP_BIT      0x80u
+#define SYM_TY_MAT_BIT      0xC0u
+#define SYM_TY_ELEM_MASK    0x3Fu
+
+static inline bool sym_type_is_parameterized(uint16_t type_spec) {
+    uint8_t b = (uint8_t)(type_spec & 0xFFu);
+    return (b >= 0x40u && b < SYM_TYPE_ANY);
+}
+
+static inline uint8_t sym_pack_container_type(const MemArena *mem, uint16_t outer_tid, uint16_t elem_tid) {
+    uint8_t e = (elem_tid == SYM_TYPE_ANY || elem_tid == SYM_ELEM_ANY)
+                ? SYM_ELEM_ANY
+                : (uint8_t)(elem_tid & SYM_TY_ELEM_MASK);
+    if (mem && outer_tid != 0) {
+        if (outer_tid == mem->vec_type_id) return (uint8_t)(SYM_TY_VEC_BIT | e);
+        if (outer_tid == mem->map_type_id) return (uint8_t)(SYM_TY_MAP_BIT | e);
+        if (outer_tid == mem->mat_type_id) return (uint8_t)(SYM_TY_MAT_BIT | e);
+    }
+    return (uint8_t)(outer_tid & 0xFFu);
+}
+
+static inline uint16_t sym_unpack_outer_type(const MemArena *mem, uint16_t type_spec) {
+    uint8_t b = (uint8_t)(type_spec & 0xFFu);
+    if (b < 0x40u || b >= SYM_TYPE_ANY) return b;
+    if (!mem) return 0;
+    uint8_t kind = (uint8_t)(b & SYM_TY_KIND_MASK);
+    if (kind == SYM_TY_VEC_BIT) return mem->vec_type_id;
+    if (kind == SYM_TY_MAP_BIT) return mem->map_type_id;
+    if (kind == SYM_TY_MAT_BIT) return mem->mat_type_id;
+    return b;
+}
+
+static inline uint16_t sym_unpack_elem_type(const MemArena *mem, uint16_t type_spec) {
+    (void)mem;
+    uint8_t b = (uint8_t)(type_spec & 0xFFu);
+    if (b < 0x40u || b >= SYM_TYPE_ANY) return 0;
+    uint8_t e = (uint8_t)(b & SYM_TY_ELEM_MASK);
+    return (e == SYM_ELEM_ANY) ? SYM_TYPE_ANY : e;
+}
+
 /* Module Variable, Constant, Overload & Type Privacy / Mutability Flags */
 #define SYM_VAR_MUTABLE        0x01u /* 1 = mutable (`:=`/`mut`), 0 = immutable (`=`/`const`) */
 #define SYM_VAR_PRIVATE        0x02u /* 1 = module-private (`priv`), 0 = public (`pub`)       */
@@ -57,6 +112,8 @@ extern "C" {
 #define AST_CALL_QUAL_MOD_BIT  0x4000u /* AST_CALL right bit: explicit module qualifier       */
 
 #define SYM_OV_PRIVATE         0x02u /* OpOverload.reserved bit: private to `ov->mod_id`      */
+#define SYM_OV_HAS_LABELS      0x04u /* Cached: body_ast contains at least one AST_TAGGED_SCOPE */
+#define SYM_OV_LABELS_CHECKED  0x08u /* Cached: body_ast has been scanned for AST_TAGGED_SCOPE  */
 #define SYM_TYPE_PRIVATE       0x02u /* TypeDef.reserved bit: private to `td->mod_id`         */
 
 /* High-bit `OpOverload.meta_tag` flags for `.math` lazy bound-variable (`var_x`) functions */
@@ -196,8 +253,8 @@ typedef enum {
 
     /* Type & Unit Introspection / String Conversion Intrinsics */
     INTR_RAW,       /* @raw(x[, donor]) -> raw value (optionally adopting donor's unit) */
-    INTR_TYPE_NAME, /* @type_name(x) -> $str */
-    INTR_UNIT_NAME, /* @unit_name(x[, axis]) -> $str or SI dim exponent */
+    INTR_TYPE_NAME, /* @type_name(x[, mode]) -> $str (0=outer, 1=elem, 2=full sig)      */
+    INTR_UNIT_NAME, /* @unit_name(x[, axis]) -> $str or SI dim exponent                 */
     INTR_TOSTR,     /* @tostr(x)   -> $str (postfix `_` operator) */
     INTR_FROMSTR,   /* @fromstr(s) -> T    (prefix `_` operator)  */
     INTR_STR_FMT,       /* @str_fmt(tmpl, a, b)                   */
@@ -322,9 +379,9 @@ typedef struct {
     uint8_t  param_count;
     uint8_t  local_count;
     uint8_t  ret_type;
-    uint8_t  ret_unit;       /* SYM_UNIT_OMITTED, SYM_UNIT_GENERIC, SYM_UNIT_LOCK_NONE, or 1..63 */
-    uint8_t  meta_tag;       /* 1 = inlined alias, meta IntrinsicId, or SYM_META_LAZY_MASK       */
-    uint8_t  reserved;       /* SYM_OV_PRIVATE when declared with `priv`                         */
+    uint8_t  ret_unit;       /* SYM_UNIT_OMITTED, SYM_UNIT_GENERIC, SYM_UNIT_LOCK_NONE, or 1..127 */
+    uint8_t  meta_tag;       /* 1 = inlined alias, meta IntrinsicId, or SYM_META_LAZY_MASK        */
+    uint8_t  reserved;       /* SYM_OV_PRIVATE when declared with `priv`                          */
     uint8_t  param_types[SYM_MAX_OV_PARAMS];
     uint8_t  param_units[SYM_MAX_OV_PARAMS];
     uint16_t body_ast;
@@ -344,8 +401,8 @@ typedef struct {
 typedef struct {
     uint16_t sym_id;         /* Interned symbol ID in SymTable.syms                              */
     uint16_t mod_id;         /* Owning module ID in SymTable                                     */
-    uint16_t lock_type;      /* 0 = unlocked, 1..63 = concrete entity type lock                  */
-    uint8_t  lock_unit;      /* 0/SYM_UNIT_OMITTED = unlocked, 1..63 or SYM_UNIT_LOCK_NONE       */
+    uint16_t lock_type;      /* Low byte = concrete TypeSpec lock, high byte = inferred TypeSpec */
+    uint8_t  lock_unit;      /* 0/SYM_UNIT_OMITTED = unlocked, 1..127 or SYM_UNIT_LOCK_NONE      */
     uint8_t  flags;          /* SYM_VAR_MUTABLE | SYM_VAR_PRIVATE | SYM_VAR_EXPLICIT_CONST       */
     Value    val;            /* Live 8-byte NaN-boxed Value (scalar, $str, $vec, $mat, $map, $fn)*/
 } ModVarDef;
@@ -550,6 +607,7 @@ void        sym_sync_consts_to_vars(SymTable *tab, MemArena *mem);
 int         sym_find_own_var(const SymTable *tab, uint16_t sym_id, uint16_t mod_id);
 int         sym_find_var(const SymTable *tab, uint16_t sym_id, uint16_t caller_mod,
                          uint16_t *out_priv_mod);
+bool        sym_validate_and_stamp_lock(const SymTable *tab, MemArena *mem, uint16_t sym_id, const char *ctx_label, uint16_t req_type, uint8_t req_unit, Value *io_val);
 int         sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t mod_id,
                                Value val, uint16_t lock_type, uint8_t lock_unit,
                                uint8_t flags, bool is_decl);

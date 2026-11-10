@@ -21,7 +21,10 @@
 5. **Symbolic CAS & Numerical Calculus**:
    - Symbolic simplification (`sym_simplify`), symbolic differentiation (`sym_diff`), symbolic integration (`sym_integ`), Taylor series (`sym_taylor`), and polynomial root solving (`sym_solve`).
    - Numerical differentiation (`diff`), adaptive Simpson integration (`integrate`), limits (`lim`), root finding (`solve`), optimization (`fmin`, `fmax`), and RK4 ODE solvers (`ode_rk4`, `ode_rk4_vec`, `ode_coupled2`, `ode_coupled3`, `ode_rk4_sys`, `ode_rk4_sys_traj`).
-6. **OTA Patch Pipeline (`eng_apply_patches` / `nativeApplyPatch`)**:
+6. **True Static Element Typing with Inferred Defaults (`vec<T>`, `vec<T, U>`, `map<T>`, `mat<T, U>`)**:
+   - Unparameterized containers (`vec()`, `map()`) infer a default `real` element type (`type_sig_of(vec()) == "vec<real>"`) while automatically locking to the first inserted element/unit (`v := vec() ; v.push(vec2(1, 2))` -> `vec<vec2>`).
+   - Explicit concrete annotations (`v : vec<vec2> := vec()`, `d : vec<real, length> := vec()`, `d : vec<length> := ...`, `m : map<vec2> := map()`, struct fields, lambdas, and function parameters) enable compile-time struct field resolution (`pts[0].x`, `(p in pts) { p.x }`) and element-type multiple dispatch (`centroid(pts:vec<vec2>)` vs. `centroid(pts:vec<vec3>)`), with `vec<any>` / `map<any>` for heterogeneous containers.
+7. **OTA Patch Pipeline (`eng_apply_patches` / `nativeApplyPatch`)**:
    - Incremental `.math` patches (such as `patches/currency.math`) can both register new modules (`[currency]`) and hotfix existing `stdlib` functions (`allow_redef = true`), promoting patched modules into `base_mod_count` so project resets preserve applied patches.
 
 ---
@@ -106,9 +109,9 @@ Math-Engine-MEP/
     │   └── generate_patch_manifest.py # Patch manifest generator with topological sorting
     └── Test/
         ├── test_harness.h             # Shared declarations for the verification suite & CLI
-        ├── test_cases.c               # Host @extern callbacks & 574-expression test table
+        ├── test_cases.c               # Host @extern callbacks & 599-expression test table
         ├── test_cli.c                 # Interactive REPL, CLI evaluator (-e / .math) & benchmarks
-        ├── main.c                     # 17-section architectural verification suite
+        ├── main.c                     # 19-section architectural verification suite
         └── user_physics.math          # Sample user extension module ([user_physics])
 ```
 
@@ -124,7 +127,7 @@ cd Main
 # 1. Compile Library/*.math -> precompiled/stdlib.mathc
 make stdlib
 
-# 2. Build Debug binary (with ASan + UBSan) and run the 574-test + 17-section verification suite
+# 2. Build Debug binary (with ASan + UBSan) and run the 599-test + 19-section verification suite
 make build
 ./DebugBuild/myapp
 

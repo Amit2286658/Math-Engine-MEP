@@ -102,3 +102,20 @@ Every `Value` is an IEEE-754 `uint64_t`:
    - `Core/Headers/sym_table.h`: `SYM_MAX_UNITS` raised `64` -> `128`; owned named unit-group slots are now `1..111`, and `SYM_EPHEM_UNIT_BASE` moved `48` -> `112` (ephemeral 7D SI compound units occupy slots `112..127`). All call sites route through these two defines (sym_table, delegate_core, delegate_numeric, mathc_bin), so no other code changed.
    - `Core/compile/mathc_bin.h`: `MATHC_MAX_IMAGE_BYTES` raised `524288` -> `1048576`; the cumulative `.mathc` image (stdlib + every linked patch) now caps at 1 MiB.
    - Motivation: the 55-currency OTA patch family (base `currency.math` + generated `currency_pairs_1..6.math`) owns all 55 currency unit groups and spells the full 55×55 `into` matrix (~3,000 additional overloads; total load lands ~89 unit groups / ~4,563 overloads, comfortably inside the SBO+heap overload table). `precompiled/stdlib.mathc` stays **byte-identical** — group *count* and content are unchanged, so nothing needed a re-seat.
+
+6. **Compact 1-Byte `TypeSpec` Encoding for Static Element Typing & Multiple Dispatch (`Core/Headers/sym_table.h`)**
+   - Parameterized container types (`vec<T>`, `map<T>`, `mat<T>`) are encoded directly inside the existing 1-byte (`uint8_t`) and 2-byte (`uint16_t`) `TypeSpec` fields using high-bit container tags (`SYM_TY_VEC_BIT = 0x40`, `SYM_TY_MAP_BIT = 0x80`, `SYM_TY_MAT_BIT = 0xC0`) paired with a 6-bit element type ID (`0x01..0x3C` for concrete types, `SYM_ELEM_ANY = 0x3D` for `<any>` / `<T>`).
+   - Preserves exact binary layout and zero memory bloat: `sizeof(Value) == 8`, `sizeof(AstNode) == 8`, `sizeof(FieldDef) == 8`, `sizeof(OpOverload) == 46`, and `sizeof(MathcHeader) == 48`.
+   - Overload dispatch (`Core/Code/eval_dispatch.c`) scores exact parameterized element matches (`vec<vec2>` on `vec<vec2>`) at `+8`, default `vec<real>` matches on empty unlocked `vec()` at `+7`, explicit wildcard `vec<T>` at `+6`, and unparameterized `vec` at `+4`.
+
+
+## Balanced Memory & Runtime Performance Architecture
+
+1. **Lossless Inline 32-Bit NaN-Boxing (`NB_TAG_I32 = 0xFFFB`, `NB_TAG_F32 = 0xFFFC`)**:
+   - In addition to unboxed unitless `real` (`double`), any exact signed 32-bit integer (`[-2^31, 2^31 - 1]`) or lossless IEEE-754 `binary32` scalar (`(double)(float)d == d`) with an entity type (`int`, `real`, etc.) and/or physical unit (`m`, `s`, `kg`, etc.) is encoded directly inside the low 32 bits of the 8-byte `Value` without allocating a slot in `MemArena.f64_pool`.
+2. **Packed 4-Bit `gc_mark` Nibbles & O(1) String Interning Cache (`str_hash[512]`)**:
+   - `MemArena.gc_mark` packs two 4-bit mark tags (`0..5`) per byte (`4,096 B` instead of `8,192 B`), while `MemArena.str_hash[512]` (`2,048 B`) memoizes interned `StrSlice` entries with `memchr`-accelerated substring lookup, reducing `sizeof(MemArena)` by `2,032 B` net while accelerating string and symbol interning.
+3. **Frame-Free Direct Intrinsic Bypass & Lazy Label Scanning (`SYM_OV_HAS_LABELS`)**:
+   - Single-node `AST_INTRINSIC` operator and stdlib wrappers execute directly via `delegate_eval_intrinsic()` without allocating call frames or scanning ASTs for tagged scopes; user functions cache `SYM_OV_LABELS_CHECKED | SYM_OV_HAS_LABELS` on first call.
+4. **Active Closure Environment Tracking (`active_closure_hids[16]`)**:
+   - Tracks active-frame lexical closure `HeapBlock` IDs directly so local variable stores and `mem_pop_frame()` skip 256-slot `heap_blocks` scans when no closure upvalues are active.

@@ -225,6 +225,50 @@ The `into` operator converts any unit-tagged scalar or vector into a compatible 
 
 ---
 
+## 6b. True Static Element Typing with Inferred Defaults (`vec<T>`, `vec<T, U>`, `map<T>`, `mat<T, U>`)
+
+Math-Engine-MEP supports **true static element typing with an inferred `real` default** across all collection types (`vec`, `list`, `stack`, `queue`, `map`, `dict`, `mat`), bridging concise untyped scripting and concrete static type safety:
+
+### 1. Inferred Default (`real`) & Simple Writing (Automatic Inference on First Insert)
+When no explicit `<T>` is written on an empty constructor (`vec()`, `list()`, `stack()`, `queue()`, `map()`, `dict()`), its static element type defaults to `real` (`elem_type_of(vec()) == "real"`, `type_sig_of(vec()) == "vec<real>"`), while remaining unlocked until the first element or key-value pair is inserted:
+- **Expression-Initial Inference**: `pts := vec(vec2(1, 2), vec2(3, 4))` or `d := vec(1.5 km, 500 m)` immediately locks the container and local slot to `vec<vec2>` or `vec<real, length>`.
+- **First-Insert Inference**: `v := vec() ; v.push(vec2(3, 4))` (or `vec2(3, 4) into v`, or `m := map() ; m["k"] = vec2(7, 8)`) locks the container at runtime and propagates `vec<vec2>` / `map<vec2>` into the parser's static slot table so subsequent expressions (`v[0].x`, `m["k"].y`) resolve struct fields at compile time.
+
+### 2. Concrete Writing (Parameterized Declarations, Fields, Parameters, Returns & Lambdas)
+Explicit angle-bracket element and unit specifications `<ElemType>`, `<ElemType, UnitGroup>`, and shorthand `<UnitGroup>` (which infers `real` for the element type) are supported everywhere a type is written:
+- **Variables**:
+  - `v : vec<vec2> := vec()` (stamps the empty `vec()` to `vec<vec2>` immediately)
+  - `d : vec<real, length> := vec()` or shorthand `d : vec<length> := vec(100 m, 50 cm)`
+  - `m : map<vec2> := map()` or `m : map<real, time> := dict()`
+  - `M : mat<real, force> := [3 N, 4 N ; 5 N, 6 N]`
+- **Struct Fields**: `$mesh2d(verts: vec<vec2>, weights: map<real>)`
+- **Functions & Overloaded Dispatch**:
+  - `path_len(pts: vec<vec2>)` vs. `path_len(pts: vec<vec3>)`
+  - `centroid(pts: vec<vec2>) -> vec2` vs. `centroid(pts: vec<vec3>) -> vec3`
+  - `sum(pts: vec<vec2>) -> vec2`, `sum(pts: vec<vec3>) -> vec3`, `sum(v: vec<str>) -> str`, `sum(v: vec) -> real`
+- **Lambda Closures**: `f := (pts: vec<vec2>) => pts[0].x * 10 + pts[1].y`
+- **Explicit Heterogeneous Opt-In (`<any>` / `<T>`)**:
+  - Homogeneous containers and `[...]` bracket literals reject mismatched element types at compile/eval time.
+  - Write `vec<any>(10, "hello", vec2(3, 4))` or `m : map<any> := map<any>()` to explicitly opt into heterogeneous storage (`type_sig_of` reports `"vec<any>"` / `"map<any>"`).
+
+### 3. Compile-Time Field Resolution & Type Introspection (`elem_type_of`, `type_sig_of`)
+When a container carries a static struct element type (either declared via `vec<vec2>` or inferred from `vec(vec2(...))` / `v.push(vec2(...))`), the compiler resolves element types across:
+- **Subscript Indexing**: `pts[0].x` compiles to a direct `AST_FIELD_LOAD` offset read and rejects non-existent fields (`pts[0].z` -> compile error `"Struct 'vec2' has no field 'z'"`).
+- **Loops & Comprehensions**: `(p in pts) { p.x }` and `[p.x for p in pts]` bind `p` with static type `vec2`.
+- **Destructuring & Pattern Matching**: `p1, p2 := pts` and `switch (pts) { case [a, b]: a.x + b.y }` bind `p1, p2, a, b` with static type `vec2`.
+
+| Expression | Verified Result | Description |
+| :--- | :--- | :--- |
+| `elem_type_of(vec())` | `"real"` | Inferred default element type on unparameterized `vec()` |
+| `type_sig_of(vec())` | `"vec<real>"` | Full static type signature with inferred default |
+| `v := vec() ; v.push(vec2(3, 4)) ; type_sig_of(v)` | `"vec<vec2>"` | Simple writing: first `.push()` locks `vec<vec2>` |
+| `d : vec<length> := vec(1 km, 500 m) ; type_sig_of(d)` | `"vec<real, length>"` | Shorthand `<length>` infers `real` element type + `length` unit |
+| `centroid(vec(vec2(0, 0), vec2(6, 0), vec2(0, 9)))` | `vec2(x=2, y=3)` | Dispatches to `centroid(pts: vec<vec2>) -> vec2` |
+| `centroid(vec(vec3(1, 2, 3), vec3(5, 6, 9)))` | `vec3(x=3, y=4, z=6)` | Dispatches to `centroid(pts: vec<vec3>) -> vec3` |
+| `h := vec<any>(10, "hi", vec2(3, 4)) ; type_sig_of(h)` | `"vec<any>"` | Explicit heterogeneous container opt-in |
+
+---
+
 ## 7. Symbolic CAS & Numerical Calculus (`Library/calculus.math`)
 
 | Operation | Tested Expression | Verified Output |
@@ -244,7 +288,7 @@ The `into` operator converts any unit-tagged scalar or vector into a compatible 
 
 | File | Module(s) | Purpose |
 | :--- | :--- | :--- |
-| `bootstrap.math` | `[boot_syntax]`, `[boot_types]`, `[boot_control]` | Core delimiters, `$real`/`$iota`/`$str`/`$vec`/`$mat`/`$map`/`$fn` types, control flow, `type_of`, `unit_of`, `unit_dim`, file & JSON helpers |
+| `bootstrap.math` | `[boot_syntax]`, `[boot_types]`, `[boot_control]` | Core delimiters, `$real`/`$iota`/`$str`/`$vec`/`$mat`/`$map`/`$fn` types, control flow, `type_of`, `elem_type_of`, `type_sig_of`, `unit_of`, `unit_dim` |
 | `arith.math` | `[arith]` | Arithmetic operators, bitwise ops, combinatorics (`ncr`, `npr`), `gcd`, `lcm`, `is_prime`, complex numbers (`i`) |
 | `trig.math` | `[trig]` | Trigonometric, inverse, and hyperbolic functions (`sin`, `cos`, `tan`, `sec`, `cosec`, `cot`, `asin`, `sinh`, etc.) |
 | `complex.math` | `[complex_ext]` | Complex conjugates, polar `cis`, `phase`, complex `exp`/`ln`/`sin`/`cos`/`sqrt` |
@@ -257,7 +301,7 @@ The `into` operator converts any unit-tagged scalar or vector into a compatible 
 | `physics.math` | `[physics]` | Physical constants (`c_light`, `G_grav`, `h_planck`, `k_boltz`, `N_avogadro`) and mechanics/electromagnetism/relativity formulas |
 | `chemistry.math` | `[chemistry]` | Ideal gas law, pH/pOH, Arrhenius, Nernst, half-life, molarity, and `@extern` periodic table hooks |
 | `biology.math` | `[biology]` | Logistic growth, Michaelis-Menten kinetics, Hardy-Weinberg, Shannon diversity, and BMI/BMR equations |
-| `geom.math` | `[geom_ext]` | `$vec2`, `$vec3`, `$mat2`, `$circle`, `$line2`, `$plane3`, `$sphere` structs and geometric intersection/projection ops |
+| `geom.math` | `[geom_ext]` | `$vec2`, `$vec3`, `$circle` structs, `vec<vec2>`/`vec<vec3>` overloaded `path_len`, `centroid`, `bbox_min`, `bbox_max`, `polygon_perimeter`, `polygon_area` |
 | `string.math` | `[string]` | String manipulation (`len`, `trim`, `upper`, `lower`, `split`, `join`, `replace`), regex (`regex_match`, `regex_find`, `regex_replace`), `csv_to_maps` |
 
 ## String Interpolation & Currency Sugar (`"{25$ into RS}"`)

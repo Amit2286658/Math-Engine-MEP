@@ -319,8 +319,8 @@ bool lex_is_multi_lhs(const Parser *P) {
     return (m == INTR_STORE || m == INTR_COLON);
 }
 
-static uint16_t resolve_annot_type(const SymTable *tab, const MemArena *mem,
-                                   const char *name, uint16_t len) {
+uint16_t resolve_annot_type_ext(const SymTable *tab, const MemArena *mem,
+                                const char *name, uint16_t len) {
     int sid = sym_find(tab, mem, name, len);
     if (sid >= 0) {
         if (mem->vec_type_id != 0 && hardcode_is_vec_ctor_sym(mem, tab, (uint16_t)sid)) {
@@ -360,7 +360,7 @@ int find_active_sub_sym(const MemArena *mem, const SymTable *tab) {
 }
 
 bool parse_var_type_unit_annot(Parser *P, uint8_t *out_lock_type, uint8_t *out_lock_unit) {
-    MemArena       *mem = P->lex.mem;
+    MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
     *out_lock_type = 0;
     *out_lock_unit = 0;
@@ -375,20 +375,89 @@ bool parse_var_type_unit_annot(Parser *P, uint8_t *out_lock_type, uint8_t *out_l
     uint16_t    s1_len = P->lex.cur.len;
     lex_next(&P->lex);
 
-    /* Optional `<T>` on container variable type annotation `v : vec<real> := ...` */
+    /* Parameterized `<T>`, `<T, U>`, or `<U>` on container variable type annotation `v : vec<vec2> := ...` */
     if (P->lex.cur.kind == TOK_OP &&
         tab->syms[P->lex.cur.sym_id].len == 1 &&
         mem_str_ptr(mem, tab->syms[P->lex.cur.sym_id])[0] == '<') {
-        lex_next(&P->lex); /* consume '<' */
-        while (!mem->has_error && P->lex.cur.kind != TOK_EOF) {
-            if (P->lex.cur.kind == TOK_OP &&
-                tab->syms[P->lex.cur.sym_id].len == 1 &&
-                mem_str_ptr(mem, tab->syms[P->lex.cur.sym_id])[0] == '>') {
-                lex_next(&P->lex);
-                break;
-            }
-            lex_next(&P->lex);
+        uint16_t outer_tid = resolve_annot_type_ext(tab, mem, s1_ptr, s1_len);
+        if (outer_tid == MEM_TYPE_VOID ||
+            (outer_tid != mem->vec_type_id && outer_tid != mem->map_type_id && outer_tid != mem->mat_type_id)) {
+            mem_err(mem, "Type '%.*s' does not take '<...>' element type parameters", (int)s1_len, s1_ptr);
+            return false;
         }
+        lex_next(&P->lex); /* consume '<' */
+        if (P->lex.cur.kind != TOK_IDENT &&
+            !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+            mem_err(mem, "Expected element type or unit name inside '%.*s<...>'", (int)s1_len, s1_ptr);
+            return false;
+        }
+        const char *e1_ptr = P->lex.src + P->lex.cur.off;
+        uint16_t    e1_len = P->lex.cur.len;
+        lex_next(&P->lex);
+
+        uint16_t elem_tid = 0;
+        uint8_t  elem_uid = 0;
+        if (P->lex.cur.kind == TOK_COMMA) {
+            lex_next(&P->lex); /* consume ',' inside '<...>' */
+            if (P->lex.cur.kind != TOK_IDENT &&
+                !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                mem_err(mem, "Expected unit name after ',' inside '%.*s<...>'", (int)s1_len, s1_ptr);
+                return false;
+            }
+            const char *e2_ptr = P->lex.src + P->lex.cur.off;
+            uint16_t    e2_len = P->lex.cur.len;
+            lex_next(&P->lex);
+
+            elem_tid = resolve_annot_type_ext(tab, mem, e1_ptr, e1_len);
+            if (elem_tid == MEM_TYPE_VOID) {
+                mem_err(mem, "Unknown element type '%.*s' in '%.*s<...>'",
+                        (int)e1_len, e1_ptr, (int)s1_len, s1_ptr);
+                return false;
+            }
+            elem_uid = sym_find_or_add_unit(tab, mem, e2_ptr, e2_len);
+            if (mem->has_error) return false;
+        } else {
+            elem_tid = resolve_annot_type_ext(tab, mem, e1_ptr, e1_len);
+            if (elem_tid == MEM_TYPE_VOID) {
+                elem_uid = sym_find_unit(tab, mem, e1_ptr, e1_len);
+                if (elem_uid == MEM_UNIT_NONE) {
+                    mem_err(mem, "Unknown element type '%.*s' in '%.*s<...>'",
+                            (int)e1_len, e1_ptr, (int)s1_len, s1_ptr);
+                    return false;
+                }
+                elem_tid = mem->fast_real_type;
+            }
+        }
+
+        if (P->lex.cur.kind != TOK_OP ||
+            tab->syms[P->lex.cur.sym_id].len != 1 ||
+            mem_str_ptr(mem, tab->syms[P->lex.cur.sym_id])[0] != '>') {
+            mem_err(mem, "Expected closing '>' in '%.*s<...>'", (int)s1_len, s1_ptr);
+            return false;
+        }
+        lex_next(&P->lex); /* consume '>' */
+
+        if (outer_tid == mem->mat_type_id && elem_tid != 0 &&
+            elem_tid != SYM_TYPE_ANY && elem_tid != mem->fast_real_type) {
+            mem_err(mem, "Matrix type 'mat<...>' only supports 'real' elements");
+            return false;
+        }
+
+        if (P->lex.cur.kind == TOK_COMMA) {
+            lex_next(&P->lex); /* optional trailing `, unit` after `vec<real>` */
+            if (P->lex.cur.kind != TOK_IDENT &&
+                !(P->lex.cur.kind == TOK_OP && lex_is_ident_start((unsigned char)P->lex.src[P->lex.cur.off]))) {
+                mem_err(mem, "Expected unit name after ',' in variable type annotation");
+                return false;
+            }
+            elem_uid = sym_find_or_add_unit(tab, mem, P->lex.src + P->lex.cur.off, P->lex.cur.len);
+            lex_next(&P->lex);
+            if (mem->has_error) return false;
+        }
+
+        *out_lock_type = sym_pack_container_type(mem, outer_tid, elem_tid);
+        *out_lock_unit = (elem_uid == SYM_UNIT_GENERIC || elem_uid == SYM_UNIT_OMITTED) ? 0 : elem_uid;
+        return !mem->has_error;
     }
 
     if (P->lex.cur.kind == TOK_COMMA) {
@@ -402,7 +471,7 @@ bool parse_var_type_unit_annot(Parser *P, uint8_t *out_lock_type, uint8_t *out_l
         uint16_t    s2_len = P->lex.cur.len;
         lex_next(&P->lex);
 
-        uint16_t tid = resolve_annot_type(tab, mem, s1_ptr, s1_len);
+        uint16_t tid = resolve_annot_type_ext(tab, mem, s1_ptr, s1_len);
         if (tid == MEM_TYPE_VOID) {
             mem_err(mem, "Unknown entity type '%.*s' in variable declaration", (int)s1_len, s1_ptr);
             return false;
@@ -413,7 +482,7 @@ bool parse_var_type_unit_annot(Parser *P, uint8_t *out_lock_type, uint8_t *out_l
         return !mem->has_error;
     }
 
-    uint16_t tid = resolve_annot_type(tab, mem, s1_ptr, s1_len);
+    uint16_t tid = resolve_annot_type_ext(tab, mem, s1_ptr, s1_len);
     if (tid == SYM_TYPE_ANY) {
         *out_lock_type = 0;
         *out_lock_unit = 0;
@@ -442,7 +511,7 @@ bool ast_is_fn_expr_rec(const MemArena *mem, const SymTable *tab,
         case AST_SLOT_LOAD:
             if (P != NULL) {
                 uint8_t s = (uint8_t)(n->sub & AST_SLOT_IDX_MASK);
-                return (P->slot_types[s] == mem->fn_type_id);
+                return (sym_unpack_outer_type(mem, P->slot_types[s]) == mem->fn_type_id);
             }
             return false;
         case AST_CONST_SYM: {
@@ -457,13 +526,14 @@ bool ast_is_fn_expr_rec(const MemArena *mem, const SymTable *tab,
                 if (mv_tid == MEM_TYPE_VOID) {
                     mv_tid = (mv->lock_type & 0xFFu) ? (uint16_t)(mv->lock_type & 0xFFu)
                                                      : (uint16_t)((mv->lock_type >> 8u) & 0xFFu);
+                    mv_tid = sym_unpack_outer_type(mem, mv_tid);
                 }
                 return (mv_tid == mem->fn_type_id);
             }
             return false;
         }
         case AST_FIELD_LOAD:
-            return (n->sub == mem->fn_type_id);
+            return (sym_unpack_outer_type(mem, n->sub) == mem->fn_type_id);
         case AST_RETURN:
             return (n->sub == 0 && ast_is_fn_expr_rec(mem, tab, P, n->left, (uint8_t)(depth + 1)));
         case AST_BREAK:
@@ -497,7 +567,7 @@ bool ast_is_fn_expr_rec(const MemArena *mem, const SymTable *tab,
                 const OpOverload *ov = &sym_overloads(tab)[i];
                 if (ov->fixity != FIX_FUNC || ov->param_count != n->sub ||
                     !sym_mod_enabled(tab, ov->mod_id)) continue;
-                if (ov->ret_type == mem->fn_type_id) return true;
+                if (sym_unpack_outer_type(mem, ov->ret_type) == mem->fn_type_id) return true;
                 if (ov->body_ast != MEM_NO_IDX &&
                     ast_is_fn_expr_rec(mem, tab, NULL, ov->body_ast, (uint8_t)(depth + 1))) {
                     return true;
@@ -510,30 +580,220 @@ bool ast_is_fn_expr_rec(const MemArena *mem, const SymTable *tab,
     }
 }
 
-static uint16_t ast_infer_struct_or_fn_type(const Parser *P, uint16_t idx) {
+static uint16_t ast_infer_type_rec(const Parser *P, uint16_t idx, uint8_t depth) {
     const MemArena *mem = P->lex.mem;
     const SymTable *tab = P->lex.tab;
-    if (idx == MEM_NO_IDX) return 0;
+    if (idx == MEM_NO_IDX || depth > 8) return 0;
     const AstNode *rn = mem_get_ast(mem, idx);
+
     if (rn->kind == AST_CONSTRUCT) return rn->ref;
     if (rn->kind == AST_FIELD_LOAD && rn->sub != 0) return rn->sub;
+    if (rn->kind == AST_LIT && rn->sub != 0) return rn->sub;
     if (ast_is_fn_expr_rec(mem, tab, P, idx, 0)) return mem->fn_type_id;
-    if (rn->kind == AST_CALL && rn->ref < tab->sym_count) {
-        for (uint16_t i = tab->sym_first_ov[rn->ref]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
-            const OpOverload *ov = &sym_overloads(tab)[i];
-            if (ov->fixity == FIX_FUNC && ov->param_count == rn->sub &&
-                sym_mod_enabled(tab, ov->mod_id) && ov->ret_type != 0 &&
-                ov->ret_type < tab->type_count && !tab->types[ov->ret_type].is_consuming) {
-                return ov->ret_type;
+
+    if (rn->kind == AST_SLOT_LOAD) {
+        uint8_t s = (uint8_t)(rn->sub & AST_SLOT_IDX_MASK);
+        if (s < PARSER_MAX_LOCALS) return P->slot_types[s];
+        return 0;
+    }
+
+    if (rn->kind == AST_CONST_SYM) {
+        uint16_t cmod = (rn->right != MEM_NO_IDX && rn->right < tab->mod_count)
+                        ? rn->right : P->cur_mod;
+        int mv_idx = ((rn->sub & SYM_VAR_QUAL_MOD) != 0)
+                     ? sym_find_own_var(tab, rn->ref, cmod)
+                     : sym_find_var(tab, rn->ref, cmod, NULL);
+        if (mv_idx >= 0) {
+            const ModVarDef *mv = &sym_vars(tab)[mv_idx];
+            uint8_t l_low = (uint8_t)(mv->lock_type & 0xFFu);
+            uint8_t l_hi  = (uint8_t)((mv->lock_type >> 8u) & 0xFFu);
+            if (sym_type_is_parameterized(l_low)) return l_low;
+            if (sym_type_is_parameterized(l_hi))  return l_hi;
+            if (l_low != 0) return l_low;
+            if (l_hi != 0)  return l_hi;
+            uint16_t vtid = val_get_type(mem, mv->val);
+            if ((vtid == mem->vec_type_id && mem->vec_type_id != 0) ||
+                (vtid == mem->map_type_id && mem->map_type_id != 0)) {
+                uint16_t raw0 = (uint16_t)mem_read_pool(mem, (uint16_t)(val_get_pool_idx(mv->val) + 0));
+                uint16_t etid = (uint16_t)(raw0 & 0xFFu);
+                return (etid != 0) ? sym_pack_container_type(mem, vtid, etid) : vtid;
+            }
+            return vtid;
+        }
+        return 0;
+    }
+
+    if (rn->kind == AST_INDEX && rn->sub == 1) {
+        uint16_t base_t = ast_infer_type_rec(P, rn->left, (uint8_t)(depth + 1));
+        uint16_t elem_t = sym_unpack_elem_type(mem, base_t);
+        if (elem_t != 0 && elem_t != SYM_TYPE_ANY) return elem_t;
+        return 0;
+    }
+
+    if (rn->kind == AST_MAT_LIT) {
+        if (rn->sub > 0 && rn->left != MEM_NO_IDX) {
+            uint16_t first_item = mem_get_ast(mem, rn->left)->left;
+            uint16_t it_t       = ast_infer_type_rec(P, first_item, (uint8_t)(depth + 1));
+            uint16_t it_outer   = sym_unpack_outer_type(mem, it_t);
+            if (it_outer != 0 && it_outer != mem->mat_type_id && it_outer != mem->fast_real_type) {
+                return sym_pack_container_type(mem, mem->vec_type_id, it_outer);
             }
         }
+        return mem->mat_type_id;
+    }
+
+    if (rn->kind == AST_FOR_IN && (rn->ref & 0x8000u) != 0) {
+        const AstNode *pair = mem_get_ast(mem, rn->right);
+        uint16_t map_t     = ast_infer_type_rec(P, pair->left, (uint8_t)(depth + 1));
+        uint16_t map_outer = sym_unpack_outer_type(mem, map_t);
+        if (map_outer != 0 && map_outer != SYM_TYPE_ANY) {
+            return sym_pack_container_type(mem, mem->vec_type_id, map_outer);
+        }
+        return mem->vec_type_id;
+    }
+
+    if (rn->kind == AST_BINARY) {
+        uint8_t mtag = sym_active_meta_tag(tab, rn->ref, (OpFixity)rn->sub);
+        if (mtag == INTR_SEQ || mtag == INTR_STORE) {
+            return ast_infer_type_rec(P, rn->right, (uint8_t)(depth + 1));
+        }
+        if (hardcode_is_into_op_sym(mem, tab, rn->ref)) {
+            uint16_t rhs_t = ast_infer_type_rec(P, rn->right, (uint8_t)(depth + 1));
+            if (sym_unpack_outer_type(mem, rhs_t) == mem->vec_type_id) {
+                uint16_t item_t = sym_unpack_outer_type(mem, ast_infer_type_rec(P, rn->left, (uint8_t)(depth + 1)));
+                if (item_t != 0 && item_t != SYM_TYPE_ANY && sym_unpack_elem_type(mem, rhs_t) == 0) {
+                    return sym_pack_container_type(mem, mem->vec_type_id, item_t);
+                }
+                return rhs_t;
+            }
+        }
+    }
+
+    if (rn->kind == AST_CALL && rn->ref < tab->sym_count) {
+        bool has_spec = (rn->right != 0 && rn->right != MEM_NO_IDX && (rn->right & 0x8000u) != 0);
+        if (has_spec) {
+            uint8_t  raw_ltid = (uint8_t)(rn->right & 0x7Fu);
+            uint16_t elem_t   = (raw_ltid == SYM_ELEM_ANY) ? SYM_TYPE_ANY
+                                : (raw_ltid != 0 ? raw_ltid : mem->fast_real_type);
+            if (hardcode_is_map_ctor_sym(mem, tab, rn->ref)) {
+                return sym_pack_container_type(mem, mem->map_type_id, elem_t);
+            }
+            if (hardcode_is_vec_ctor_sym(mem, tab, rn->ref)) {
+                return sym_pack_container_type(mem, mem->vec_type_id, elem_t);
+            }
+        }
+        if (hardcode_is_vec_ctor_sym(mem, tab, rn->ref)) {
+            if (rn->sub == 0) return mem->vec_type_id;
+            const AstNode *l0 = (rn->left != MEM_NO_IDX) ? mem_get_ast(mem, rn->left) : NULL;
+            if (l0) {
+                const AstNode *a0_n = mem_get_ast(mem, l0->left);
+                if (rn->sub == 1 && a0_n && a0_n->kind == AST_LIT && a0_n->sub == mem->fast_real_type) {
+                    return mem->vec_type_id; /* `vec(cap)` */
+                }
+                if (rn->sub == 2 && l0->right != MEM_NO_IDX && a0_n &&
+                    a0_n->kind == AST_LIT && a0_n->sub == mem->fast_real_type) {
+                    const AstNode *l1 = mem_get_ast(mem, l0->right);
+                    uint16_t t1 = sym_unpack_outer_type(mem, ast_infer_type_rec(P, l1->left, (uint8_t)(depth + 1)));
+                    if (t1 != 0 && t1 != SYM_TYPE_ANY) {
+                        return sym_pack_container_type(mem, mem->vec_type_id, t1);
+                    }
+                }
+                uint16_t t0 = sym_unpack_outer_type(mem, ast_infer_type_rec(P, l0->left, (uint8_t)(depth + 1)));
+                if (t0 != 0 && t0 != SYM_TYPE_ANY) {
+                    return sym_pack_container_type(mem, mem->vec_type_id, t0);
+                }
+            }
+            return mem->vec_type_id;
+        }
+        if (hardcode_is_map_ctor_sym(mem, tab, rn->ref)) {
+            if (rn->sub == 0) return mem->map_type_id;
+            if ((rn->sub & 1u) == 0 && rn->left != MEM_NO_IDX) {
+                const AstNode *lk = mem_get_ast(mem, rn->left);
+                const AstNode *lv = (lk->right != MEM_NO_IDX) ? mem_get_ast(mem, lk->right) : NULL;
+                if (lv) {
+                    uint16_t tv = sym_unpack_outer_type(mem, ast_infer_type_rec(P, lv->left, (uint8_t)(depth + 1)));
+                    if (tv != 0 && tv != SYM_TYPE_ANY && tv != mem->fn_type_id) {
+                        return sym_pack_container_type(mem, mem->map_type_id, tv);
+                    }
+                }
+            }
+        }
+
+        uint16_t arg0_t = 0;
+        if (rn->sub >= 1 && rn->left != MEM_NO_IDX) {
+            arg0_t = ast_infer_type_rec(P, mem_get_ast(mem, rn->left)->left, (uint8_t)(depth + 1));
+        }
+
+        uint16_t fallback_ret = 0;
+        for (uint16_t i = tab->sym_first_ov[rn->ref]; i != MEM_NO_IDX; i = sym_ov_next(tab)[i]) {
+            const OpOverload *ov = &sym_overloads(tab)[i];
+            if (ov->fixity != FIX_FUNC || ov->param_count != rn->sub ||
+                !sym_mod_enabled(tab, ov->mod_id) || ov->ret_type == 0) continue;
+
+            if (rn->sub >= 1 && arg0_t != 0) {
+                uint16_t p0_t = ov->param_types[0];
+                if (p0_t == arg0_t && ov->ret_type != SYM_TYPE_ANY) {
+                    return ov->ret_type;
+                }
+                if (sym_unpack_outer_type(mem, p0_t) == sym_unpack_outer_type(mem, arg0_t)) {
+                    if (ov->ret_type == SYM_TYPE_ANY) {
+                        uint16_t elem_t = sym_unpack_elem_type(mem, arg0_t);
+                        if (elem_t != 0 && elem_t != SYM_TYPE_ANY) return elem_t;
+                    } else if (ov->ret_type == mem->vec_type_id &&
+                               sym_unpack_outer_type(mem, arg0_t) == mem->vec_type_id &&
+                               ov->param_count == 1) {
+                        return arg0_t;
+                    }
+                }
+            }
+            if (ov->ret_type != SYM_TYPE_ANY && fallback_ret == 0) {
+                fallback_ret = ov->ret_type;
+            }
+        }
+        return fallback_ret;
     }
     return 0;
 }
 
+uint16_t ast_infer_struct_or_fn_type(const Parser *P, uint16_t idx) {
+    return ast_infer_type_rec(P, idx, 0);
+}
+
+void parser_try_infer_container_push(Parser *P, uint16_t vec_ast, uint16_t item_ast) {
+    if (!P || vec_ast == MEM_NO_IDX || item_ast == MEM_NO_IDX) return;
+    const MemArena *mem = P->lex.mem;
+    SymTable       *tab = P->lex.tab;
+    if (mem->vec_type_id == 0) return;
+
+    uint16_t item_t = sym_unpack_outer_type(mem, ast_infer_struct_or_fn_type(P, item_ast));
+    if (item_t == 0 || item_t == SYM_TYPE_ANY) return;
+
+    const AstNode *vn = mem_get_ast(mem, vec_ast);
+    if (vn->kind == AST_SLOT_LOAD) {
+        uint8_t sidx = (uint8_t)(vn->sub & AST_SLOT_IDX_MASK);
+        if (sidx < PARSER_MAX_LOCALS && P->slot_types[sidx] == mem->vec_type_id) {
+            P->slot_types[sidx] = sym_pack_container_type(mem, mem->vec_type_id, item_t);
+        }
+    } else if (vn->kind == AST_CONST_SYM) {
+        uint16_t tmod = (vn->right != MEM_NO_IDX && vn->right < tab->mod_count)
+                        ? vn->right : P->cur_mod;
+        int own_idx = sym_find_own_var(tab, vn->ref, tmod);
+        if (own_idx >= 0) {
+            ModVarDef *mv = &sym_vars_mut(tab)[own_idx];
+            uint8_t l_low = (uint8_t)(mv->lock_type & 0xFFu);
+            uint8_t l_hi  = (uint8_t)((mv->lock_type >> 8u) & 0xFFu);
+            if (!sym_type_is_parameterized(l_low) &&
+                (l_hi == 0 || l_hi == mem->vec_type_id)) {
+                uint8_t packed = sym_pack_container_type(mem, mem->vec_type_id, item_t);
+                mv->lock_type = (uint16_t)(((uint16_t)packed << 8u) | (uint16_t)l_low);
+            }
+        }
+    }
+}
+
 uint16_t build_store_or_compound(Parser *P, uint16_t op_sym_id,
                                         uint16_t lhs_ast, uint16_t rhs_ast) {
-    MemArena       *mem = P->lex.mem;
+    MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
     if (lhs_ast == MEM_NO_IDX || rhs_ast == MEM_NO_IDX) return MEM_NO_IDX;
 
@@ -541,10 +801,15 @@ uint16_t build_store_or_compound(Parser *P, uint16_t op_sym_id,
     if (hardcode_is_plain_store_sym(mem, tab, op_sym_id, &is_colon_eq)) {
         const AstNode *ln = mem_get_ast(mem, lhs_ast);
         uint16_t inferred_t = ast_infer_struct_or_fn_type(P, rhs_ast);
-        if (ln->kind == AST_SLOT_LOAD && ln->left == 0) {
+        if (ln->kind == AST_SLOT_LOAD) {
             uint8_t sidx = (uint8_t)(ln->sub & AST_SLOT_IDX_MASK);
             if (inferred_t != 0) {
-                P->slot_types[sidx] = inferred_t;
+                if (ln->left == 0 ||
+                    (!sym_type_is_parameterized(P->slot_types[sidx]) &&
+                     sym_type_is_parameterized(inferred_t) &&
+                     sym_unpack_outer_type(mem, P->slot_types[sidx]) == sym_unpack_outer_type(mem, inferred_t))) {
+                    P->slot_types[sidx] = inferred_t;
+                }
             }
         } else if (ln->kind == AST_CONST_SYM && inferred_t != 0) {
             uint16_t tmod = (ln->right != MEM_NO_IDX && ln->right < tab->mod_count)

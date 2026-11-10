@@ -152,16 +152,31 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
         if (intr == INTR_MAP_SET) {
             uint16_t v_tid = val_get_type(mem, c);
             uint8_t  v_uid = val_get_unit(mem, c);
-            if (lock_tid != 0 && lock_tid != v_tid) {
-                char exp_t[32], got_t[32];
-                sym_type_name(tab, mem, lock_tid, exp_t, sizeof(exp_t));
-                sym_type_name(tab, mem, v_tid, got_t, sizeof(got_t));
-                mem_err(mem, "Map value type mismatch: expected '%s', got '%s'", exp_t, got_t);
-                return val_void();
-            }
-            if (lock_uid != 0 && lock_uid != v_uid) {
-                mem_err(mem, "Map value unit mismatch");
-                return val_void();
+            if (lock_tid == 0) {
+                if (lock_uid != 0 && lock_uid != v_uid) {
+                    mem_err(mem, "Map value unit mismatch");
+                    return val_void();
+                }
+                lock_tid = v_tid;
+                lock_uid = v_uid;
+                uint16_t packed_t = (uint16_t)(((uint32_t)lock_uid << 8u) | ((uint32_t)lock_tid & 0xFFu));
+                mem_write_pool(mem, hdr_idx + 0, (double)packed_t);
+            } else if (lock_tid != SYM_TYPE_ANY) {
+                if (lock_tid != v_tid) {
+                    char exp_t[32], got_t[32];
+                    sym_type_name(tab, mem, lock_tid, exp_t, sizeof(exp_t));
+                    sym_type_name(tab, mem, v_tid, got_t, sizeof(got_t));
+                    mem_err(mem, "Map value type mismatch: expected '%s', got '%s'", exp_t, got_t);
+                    return val_void();
+                }
+                if (len == 0 && lock_uid == 0 && v_uid != 0) {
+                    lock_uid = v_uid;
+                    uint16_t packed_t = (uint16_t)(((uint32_t)lock_uid << 8u) | ((uint32_t)lock_tid & 0xFFu));
+                    mem_write_pool(mem, hdr_idx + 0, (double)packed_t);
+                } else if (lock_uid != v_uid) {
+                    mem_err(mem, "Map value unit mismatch");
+                    return val_void();
+                }
             }
             Value stored_v = c;
             if (v_tid != 0 && v_tid < tab->type_count && !tab->types[v_tid].is_consuming &&
@@ -440,12 +455,25 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
                 stride   = (elem_tid < tab->type_count) ? tab->types[elem_tid].flat_size : 1;
                 uint16_t packed_t = (uint16_t)(((uint32_t)elem_uid << 8u) | ((uint32_t)elem_tid & 0xFFu));
                 mem_write_pool(mem, hdr_idx + 0, (double)packed_t);
-            } else if (elem_tid != SYM_TYPE_ANY && (elem_tid != item_tid || elem_uid != item_uid)) {
-                char exp_t[32], got_t[32];
-                sym_type_name(tab, mem, elem_tid, exp_t, sizeof(exp_t));
-                sym_type_name(tab, mem, item_tid, got_t, sizeof(got_t));
-                mem_err(mem, "Vector type mismatch: cannot push '%s' into vec<%s>", got_t, exp_t);
-                return val_void();
+            } else if (elem_tid != SYM_TYPE_ANY) {
+                if (elem_tid != item_tid) {
+                    char exp_t[32], got_t[32];
+                    sym_type_name(tab, mem, elem_tid, exp_t, sizeof(exp_t));
+                    sym_type_name(tab, mem, item_tid, got_t, sizeof(got_t));
+                    mem_err(mem, "Vector type mismatch: cannot push '%s' into vec<%s>", got_t, exp_t);
+                    return val_void();
+                }
+                if (len == 0 && elem_uid == 0 && item_uid != 0) {
+                    elem_uid = item_uid;
+                    uint16_t packed_t = (uint16_t)(((uint32_t)elem_uid << 8u) | ((uint32_t)elem_tid & 0xFFu));
+                    mem_write_pool(mem, hdr_idx + 0, (double)packed_t);
+                } else if (elem_uid != item_uid) {
+                    char exp_u[32], got_u[32];
+                    sym_unit_name(tab, mem, elem_uid, exp_u, sizeof(exp_u));
+                    sym_unit_name(tab, mem, item_uid, got_u, sizeof(got_u));
+                    mem_err(mem, "Vector unit mismatch: cannot push '[%s]' into vec<[%s]>", got_u, exp_u);
+                    return val_void();
+                }
             }
             if (!mem_vec_reserve(mem, hdr_idx, stride, len + 1u)) {
                 return val_void();
@@ -519,7 +547,7 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
             }
             uint16_t item_tid = val_get_type(mem, c);
             uint8_t  item_uid = val_get_unit(mem, c);
-            if (elem_tid != 0 && (elem_tid != item_tid || elem_uid != item_uid)) {
+            if (elem_tid != 0 && elem_tid != SYM_TYPE_ANY && (elem_tid != item_tid || elem_uid != item_uid)) {
                 char exp_t[32], got_t[32];
                 sym_type_name(tab, mem, elem_tid, exp_t, sizeof(exp_t));
                 sym_type_name(tab, mem, item_tid, got_t, sizeof(got_t));
@@ -544,7 +572,8 @@ Value delegate_eval_vec_intrinsic(MemArena *mem, SymTable *tab,
             if (elem_tid == 0) {
                 elem_tid = mem->fast_real_type;
                 stride   = 1;
-                mem_write_pool(mem, hdr_idx + 0, (double)elem_tid);
+                uint16_t packed_t = (uint16_t)(((uint32_t)elem_uid << 8u) | ((uint32_t)elem_tid & 0xFFu));
+                mem_write_pool(mem, hdr_idx + 0, (double)packed_t);
             }
             if (new_len > len) {
                 if (!mem_vec_reserve(mem, hdr_idx, stride, new_len)) return val_void();
@@ -811,6 +840,7 @@ static void delegate_format_vec_at(const MemArena *mem, const SymTable *tab,
 static void delegate_format_struct_at(const MemArena *mem, const SymTable *tab,
                                       uint16_t type_id, uint16_t pool_idx,
                                       uint8_t depth, char *buf, size_t cap) {
+    type_id = sym_unpack_outer_type(mem, type_id);
     if (depth > 16 || cap == 0) {
         if (cap > 0) snprintf(buf, cap, "<...>");
         return;
@@ -875,11 +905,12 @@ static void delegate_format_struct_at(const MemArena *mem, const SymTable *tab,
     delegate_buf_append(buf, cap, &used, "%s(", tname);
     for (uint8_t i = 0; i < td->field_count && used + 1 < cap; ++i) {
         const FieldDef *fd = &tab->fields[td->start_idx + i];
+        uint16_t ftid      = sym_unpack_outer_type(mem, fd->type_id);
         char f_str[64];
-        if (!tab->types[fd->type_id].is_consuming) {
-            delegate_format_struct_at(mem, tab, fd->type_id, (uint16_t)(pool_idx + fd->flat_offset),
+        if (!tab->types[ftid].is_consuming) {
+            delegate_format_struct_at(mem, tab, ftid, (uint16_t)(pool_idx + fd->flat_offset),
                                       (uint8_t)(depth + 1), f_str, sizeof(f_str));
-        } else if (fd->type_id == mem->str_type_id && mem->str_type_id != 0) {
+        } else if (ftid == mem->str_type_id && mem->str_type_id != 0) {
             uint32_t packed = (uint32_t)mem_read_pool(mem, (uint16_t)(pool_idx + fd->flat_offset));
             StrSlice s = { (uint16_t)(packed >> 16u), (uint16_t)(packed & 0xFFFFu) };
             snprintf(f_str, sizeof(f_str), "\"%.*s\"", (int)s.len, mem_str_ptr(mem, s));
@@ -916,4 +947,3 @@ void delegate_format_value(const MemArena *mem, const SymTable *tab,
         delegate_format_struct_at(mem, tab, tid, val_get_pool_idx(val), 0, buf, buf_cap);
     }
 }
-

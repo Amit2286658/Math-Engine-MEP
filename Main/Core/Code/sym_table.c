@@ -425,17 +425,23 @@ int sym_find_var(const SymTable *tab, uint16_t sym_id, uint16_t caller_mod,
     return -1;
 }
 
-static bool sym_check_var_locks(const SymTable *tab, MemArena *mem,
-                                uint16_t sym_id, uint16_t req_type, uint8_t req_unit,
-                                Value val) {
-    if (val_get_type(mem, val) == MEM_TYPE_VOID) return true;
+bool sym_validate_and_stamp_lock(const SymTable *tab, MemArena *mem,
+                                 uint16_t sym_id, const char *ctx_label,
+                                 uint16_t req_type, uint8_t req_unit,
+                                 Value *io_val) {
+    if (!io_val || val_get_type(mem, *io_val) == MEM_TYPE_VOID) return true;
     req_type &= 0xFFu;
-    if (req_type != 0 && req_type != SYM_TYPE_ANY) {
-        uint16_t rhs_type = val_get_type(mem, val);
-        if (rhs_type != req_type) {
-            char exp_t[32], got_t[32];
-            sym_type_name(tab, mem, req_type, exp_t, sizeof(exp_t));
-            sym_type_name(tab, mem, rhs_type, got_t, sizeof(got_t));
+    uint16_t req_outer = sym_unpack_outer_type(mem, req_type);
+    uint16_t req_elem  = sym_unpack_elem_type(mem, req_type);
+    uint16_t rhs_type  = val_get_type(mem, *io_val);
+
+    if (req_outer != 0 && req_outer != SYM_TYPE_ANY && rhs_type != req_outer) {
+        char exp_t[32], got_t[32];
+        sym_type_name(tab, mem, req_type, exp_t, sizeof(exp_t));
+        sym_type_name(tab, mem, rhs_type, got_t, sizeof(got_t));
+        if (ctx_label != NULL) {
+            mem_err(mem, "%s expects '%s', got '%s'", ctx_label, exp_t, got_t);
+        } else {
             StrSlice s = (sym_id < tab->sym_count) ? tab->syms[sym_id] : (StrSlice){0, 0};
             if (s.len > 0) {
                 mem_err(mem, "Type mismatch: variable '%.*s' holds concrete type '%s', cannot assign '%s'",
@@ -444,18 +450,110 @@ static bool sym_check_var_locks(const SymTable *tab, MemArena *mem,
                 mem_err(mem, "Type mismatch: variable holds concrete type '%s', cannot assign '%s'",
                         exp_t, got_t);
             }
-            return false;
         }
+        return false;
     }
+
+    /* Container (`$vec` / `$map`) static element type and element unit lock validation & stamping */
+    if ((rhs_type == mem->vec_type_id && mem->vec_type_id != 0) ||
+        (rhs_type == mem->map_type_id && mem->map_type_id != 0)) {
+        uint16_t hdr_idx  = val_get_pool_idx(*io_val);
+        uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
+        uint16_t imm_bit  = (uint16_t)(raw_hdr0 & MEM_HDR_IMMUTABLE_BIT);
+        uint16_t c_etid   = (uint16_t)(raw_hdr0 & 0xFFu);
+        uint8_t  c_euid   = (uint8_t)((raw_hdr0 >> 8u) & 0x7Fu);
+        uint32_t c_len    = (uint32_t)mem_read_pool(mem, hdr_idx + 1);
+
+        if (req_elem != 0) {
+            if (req_elem == SYM_TYPE_ANY) {
+                if (c_etid == 0 && c_len == 0) {
+                    c_etid = SYM_TYPE_ANY;
+                }
+            } else {
+                if (c_etid == 0 && c_len == 0) {
+                    c_etid = req_elem;
+                } else if (c_etid != req_elem) {
+                    char exp_t[32], got_t[32];
+                    sym_type_name(tab, mem, req_type, exp_t, sizeof(exp_t));
+                    uint16_t got_spec = sym_pack_container_type(mem, rhs_type, c_etid ? c_etid : mem->fast_real_type);
+                    sym_type_name(tab, mem, got_spec, got_t, sizeof(got_t));
+                    if (ctx_label != NULL) {
+                        mem_err(mem, "%s expects '%s', got '%s'", ctx_label, exp_t, got_t);
+                    } else {
+                        StrSlice s = (sym_id < tab->sym_count) ? tab->syms[sym_id] : (StrSlice){0, 0};
+                        if (s.len > 0) {
+                            mem_err(mem, "Type mismatch: variable '%.*s' holds concrete type '%s', cannot assign '%s'",
+                                    (int)s.len, mem_str_ptr(mem, s), exp_t, got_t);
+                        } else {
+                            mem_err(mem, "Type mismatch: variable holds concrete type '%s', cannot assign '%s'",
+                                    exp_t, got_t);
+                        }
+                    }
+                    return false;
+                }
+            }
+        }
+
+        if (req_unit != 0 && req_unit != SYM_UNIT_GENERIC && req_unit != SYM_UNIT_OMITTED) {
+            uint8_t expected_u = (req_unit == SYM_UNIT_LOCK_NONE) ? MEM_UNIT_NONE : req_unit;
+            if (c_len == 0 && (c_euid == 0 || c_euid == expected_u)) {
+                c_euid = expected_u;
+                if (c_etid == 0 && expected_u != 0) {
+                    c_etid = mem->fast_real_type;
+                }
+            } else if (c_euid != expected_u) {
+                char exp_u[32], got_u[32];
+                sym_unit_name(tab, mem, expected_u, exp_u, sizeof(exp_u));
+                sym_unit_name(tab, mem, c_euid,     got_u, sizeof(got_u));
+                if (ctx_label != NULL) {
+                    mem_err(mem, "%s expects element unit '%s', got '%s'", ctx_label, exp_u, got_u);
+                } else {
+                    StrSlice s = (sym_id < tab->sym_count) ? tab->syms[sym_id] : (StrSlice){0, 0};
+                    if (s.len > 0) {
+                        mem_err(mem, "Unit mismatch: variable '%.*s' holds concrete unit '%s', cannot assign '%s'",
+                                (int)s.len, mem_str_ptr(mem, s), exp_u, got_u);
+                    } else {
+                        mem_err(mem, "Unit mismatch: variable holds concrete unit '%s', cannot assign '%s'",
+                                exp_u, got_u);
+                    }
+                }
+                return false;
+            }
+        }
+
+        uint16_t new_hdr0 = (uint16_t)(imm_bit | (((uint32_t)c_euid & 0x7Fu) << 8u) | (c_etid & 0xFFu));
+        if (new_hdr0 != raw_hdr0) {
+            mem_write_pool(mem, hdr_idx + 0, (double)new_hdr0);
+        }
+        return true;
+    }
+
+    /* Matrix (`$mat`) static element type check (`mat` elements are always `real`) */
+    if (rhs_type == mem->mat_type_id && mem->mat_type_id != 0 &&
+        req_elem != 0 && req_elem != SYM_TYPE_ANY && req_elem != mem->fast_real_type) {
+        char exp_t[32], got_t[32];
+        sym_type_name(tab, mem, req_type, exp_t, sizeof(exp_t));
+        uint16_t got_spec = sym_pack_container_type(mem, mem->mat_type_id, mem->fast_real_type);
+        sym_type_name(tab, mem, got_spec, got_t, sizeof(got_t));
+        if (ctx_label != NULL) {
+            mem_err(mem, "%s expects '%s', got '%s'", ctx_label, exp_t, got_t);
+        } else {
+            mem_err(mem, "Type mismatch: variable holds concrete type '%s', cannot assign '%s'", exp_t, got_t);
+        }
+        return false;
+    }
+
     if (req_unit != 0 && req_unit != SYM_UNIT_GENERIC && req_unit != SYM_UNIT_OMITTED) {
         uint8_t expected_u = (req_unit == SYM_UNIT_LOCK_NONE) ? MEM_UNIT_NONE : req_unit;
-        uint8_t rhs_unit   = val_get_unit(mem, val);
+        uint8_t rhs_unit   = val_get_unit(mem, *io_val);
         if (rhs_unit != expected_u) {
             char exp_u[32], got_u[32];
             sym_unit_name(tab, mem, expected_u, exp_u, sizeof(exp_u));
             sym_unit_name(tab, mem, rhs_unit,   got_u, sizeof(got_u));
             StrSlice s = (sym_id < tab->sym_count) ? tab->syms[sym_id] : (StrSlice){0, 0};
-            if (s.len > 0) {
+            if (ctx_label != NULL) {
+                mem_err(mem, "%s expects unit '%s', got '%s'", ctx_label, exp_u, got_u);
+            } else if (s.len > 0) {
                 mem_err(mem, "Unit mismatch: variable '%.*s' holds concrete unit '%s', cannot assign '%s'",
                         (int)s.len, mem_str_ptr(mem, s), exp_u, got_u);
             } else {
@@ -466,6 +564,24 @@ static bool sym_check_var_locks(const SymTable *tab, MemArena *mem,
         }
     }
     return true;
+}
+
+static uint16_t sym_compose_var_lock_type(const MemArena *mem, uint16_t low_lock, uint16_t prev_lock, Value val) {
+    uint8_t low = (uint8_t)(low_lock & 0xFFu);
+    uint8_t hi  = (uint8_t)((prev_lock >> 8u) & 0xFFu);
+    uint16_t vtid = val_get_type(mem, val);
+    if (vtid != MEM_TYPE_VOID) {
+        if ((vtid == mem->vec_type_id && mem->vec_type_id != 0) ||
+            (vtid == mem->map_type_id && mem->map_type_id != 0)) {
+            uint16_t hdr_idx  = val_get_pool_idx(val);
+            uint16_t raw_hdr0 = (uint16_t)mem_read_pool(mem, hdr_idx + 0);
+            uint16_t etid     = (uint16_t)(raw_hdr0 & 0xFFu);
+            hi = (etid != 0) ? sym_pack_container_type(mem, vtid, etid) : (uint8_t)vtid;
+        } else {
+            hi = (uint8_t)vtid;
+        }
+    }
+    return (uint16_t)(((uint16_t)hi << 8u) | (uint16_t)low);
 }
 
 static void sym_sync_var_to_const(SymTable *tab, MemArena *mem, ModVarDef *mv) {
@@ -550,13 +666,14 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
                                  : (uint16_t)(mv->lock_type & 0xFFu);
             uint8_t  eff_lunit = (lock_unit != 0) ? lock_unit : mv->lock_unit;
             if (is_uninit && eff_lunit != 0 && eff_lunit < SYM_UNIT_LOCK_NONE &&
-                vtid != MEM_TYPE_VOID && val_get_unit(mem, val) == MEM_UNIT_NONE) {
+                vtid != MEM_TYPE_VOID && vtid != mem->vec_type_id && vtid != mem->map_type_id &&
+                val_get_unit(mem, val) == MEM_UNIT_NONE) {
                 val = val_with_unit(mem, val, eff_lunit);
             }
-            if (!sym_check_var_locks(tab, mem, sym_id, eff_ltype, eff_lunit, val)) {
+            if (!sym_validate_and_stamp_lock(tab, mem, sym_id, NULL, eff_ltype, eff_lunit, &val)) {
                 return -1;
             }
-            mv->lock_type = eff_ltype;
+            mv->lock_type = sym_compose_var_lock_type(mem, eff_ltype, mv->lock_type, val);
             mv->lock_unit = eff_lunit;
             mv->flags     = (uint8_t)(flags & (SYM_VAR_MUTABLE | SYM_VAR_PRIVATE | SYM_VAR_EXPLICIT_CONST));
             mv->val       = val;
@@ -617,10 +734,10 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
                                  ? (uint16_t)(lock_type & 0xFFu)
                                  : (uint16_t)(mv->lock_type & 0xFFu);
             uint8_t  eff_lunit = (lock_unit != 0) ? lock_unit : mv->lock_unit;
-            if (!sym_check_var_locks(tab, mem, sym_id, eff_ltype, eff_lunit, val)) {
+            if (!sym_validate_and_stamp_lock(tab, mem, sym_id, NULL, eff_ltype, eff_lunit, &val)) {
                 return -1;
             }
-            mv->lock_type = eff_ltype;
+            mv->lock_type = sym_compose_var_lock_type(mem, eff_ltype, mv->lock_type, val);
             mv->lock_unit = eff_lunit;
             mv->val       = val;
             sym_sync_var_to_const(tab, mem, mv);
@@ -651,10 +768,10 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
                                  ? (uint16_t)(lock_type & 0xFFu)
                                  : (uint16_t)(mv->lock_type & 0xFFu);
             uint8_t  eff_lunit = (lock_unit != 0) ? lock_unit : mv->lock_unit;
-            if (!sym_check_var_locks(tab, mem, sym_id, eff_ltype, eff_lunit, val)) {
+            if (!sym_validate_and_stamp_lock(tab, mem, sym_id, NULL, eff_ltype, eff_lunit, &val)) {
                 return -1;
             }
-            mv->lock_type = eff_ltype;
+            mv->lock_type = sym_compose_var_lock_type(mem, eff_ltype, mv->lock_type, val);
             mv->lock_unit = eff_lunit;
             if ((flags & SYM_VAR_PRIVATE) != 0 && mv->mod_id == mod_id) {
                 mv->flags |= SYM_VAR_PRIVATE;
@@ -679,10 +796,11 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
 
     /* Creating a new module variable or constant in `mod_id` */
     if (is_decl && lock_unit != 0 && lock_unit < SYM_UNIT_LOCK_NONE &&
-        vtid != MEM_TYPE_VOID && val_get_unit(mem, val) == MEM_UNIT_NONE) {
+        vtid != MEM_TYPE_VOID && vtid != mem->vec_type_id && vtid != mem->map_type_id &&
+        val_get_unit(mem, val) == MEM_UNIT_NONE) {
         val = val_with_unit(mem, val, lock_unit);
     }
-    if (!sym_check_var_locks(tab, mem, sym_id, lock_type, lock_unit, val)) {
+    if (!sym_validate_and_stamp_lock(tab, mem, sym_id, NULL, lock_type, lock_unit, &val)) {
         return -1;
     }
     if (!sym_ensure_var_cap(tab, mem, (uint16_t)(tab->var_count + 1u))) {
@@ -692,7 +810,7 @@ int sym_set_or_add_var(SymTable *tab, MemArena *mem, uint16_t sym_id, uint16_t m
     ModVarDef *mv = &sym_vars_mut(tab)[new_idx];
     mv->sym_id    = sym_id;
     mv->mod_id    = mod_id;
-    mv->lock_type = (uint16_t)(lock_type & 0xFFu);
+    mv->lock_type = sym_compose_var_lock_type(mem, lock_type, 0, val);
     mv->lock_unit = lock_unit;
     mv->flags     = (uint8_t)(flags & (SYM_VAR_MUTABLE | SYM_VAR_PRIVATE | SYM_VAR_EXPLICIT_CONST));
     mv->val       = val;
@@ -926,8 +1044,9 @@ uint8_t sym_find_or_add_unit(SymTable *tab, MemArena *mem, const char *name, uin
 bool sym_resolve_field(const SymTable *tab, const MemArena *mem, uint16_t type_id,
                        const char *fname, uint16_t flen,
                        uint16_t *out_field_type, uint16_t *out_flat_off) {
-    if (type_id == 0 || type_id >= tab->type_count) return false;
-    const TypeDef *td = &tab->types[type_id];
+    uint16_t outer_tid = sym_unpack_outer_type(mem, type_id);
+    if (outer_tid == 0 || outer_tid >= tab->type_count) return false;
+    const TypeDef *td = &tab->types[outer_tid];
     if (td->is_consuming || td->field_count == 0) return false;
     for (uint8_t i = 0; i < td->field_count; ++i) {
         const FieldDef *fd = &tab->fields[td->start_idx + i];
@@ -942,7 +1061,8 @@ bool sym_resolve_field(const SymTable *tab, const MemArena *mem, uint16_t type_i
 
 const char *sym_type_name(const SymTable *tab, const MemArena *mem, uint16_t type_id,
                           char *buf, size_t cap) {
-    if (type_id == SYM_TYPE_ANY) {
+    type_id &= 0xFFu;
+    if (type_id == SYM_TYPE_ANY || type_id == SYM_ELEM_ANY) {
         for (uint16_t i = 1; i < tab->type_count; ++i) {
             if (tab->types[i].parser_intr == INTR_ANY_TYPE) {
                 StrSlice s = tab->types[i].name;
@@ -950,8 +1070,23 @@ const char *sym_type_name(const SymTable *tab, const MemArena *mem, uint16_t typ
                 return buf;
             }
         }
-        snprintf(buf, cap, "void");
+        snprintf(buf, cap, "T");
         return buf;
+    }
+    if (sym_type_is_parameterized(type_id)) {
+        uint16_t outer_tid = sym_unpack_outer_type(mem, type_id);
+        uint16_t elem_tid  = sym_unpack_elem_type(mem, type_id);
+        if (outer_tid > 0 && outer_tid < tab->type_count) {
+            StrSlice os = tab->types[outer_tid].name;
+            if (elem_tid != 0) {
+                char ebuf[20];
+                sym_type_name(tab, mem, elem_tid, ebuf, sizeof(ebuf));
+                snprintf(buf, cap, "%.*s<%s>", (int)os.len, mem_str_ptr(mem, os), ebuf);
+            } else {
+                snprintf(buf, cap, "%.*s", (int)os.len, mem_str_ptr(mem, os));
+            }
+            return buf;
+        }
     }
     if (type_id == 0 || type_id >= tab->type_count) {
         snprintf(buf, cap, "void");

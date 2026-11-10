@@ -59,9 +59,10 @@ bool hardcode_try_eval_variadic_vec(MemArena *mem, SymTable *tab,
             *out_val = val_void();
             return true;
         }
-        uint8_t  locked_tid = has_spec ? (uint8_t)(n->right & 0x3Fu) : 0;
-        uint8_t  locked_uid = has_spec ? (uint8_t)((n->right >> 6u) & 0x3Fu) : 0;
-        uint16_t hdr0       = (uint16_t)(((uint32_t)locked_uid << 8u) | (uint32_t)locked_tid);
+        uint8_t  raw_ltid   = has_spec ? (uint8_t)(n->right & 0x7Fu) : 0;
+        uint16_t locked_tid = (raw_ltid == SYM_ELEM_ANY) ? SYM_TYPE_ANY : raw_ltid;
+        uint8_t  locked_uid = has_spec ? (uint8_t)((n->right >> 7u) & 0x7Fu) : 0;
+        uint16_t hdr0       = (uint16_t)(((uint32_t)locked_uid << 8u) | (uint32_t)(locked_tid & 0xFFu));
         uint16_t m_hdr      = mem_map_alloc_hdr(mem, hdr0, (uint16_t)(n->sub / 2u));
         if (mem->has_error) { *out_val = val_void(); return true; }
         Value mval = val_make_comp(mem, mem->map_type_id, m_hdr, MEM_MAP_HDR_SLOTS);
@@ -94,9 +95,10 @@ bool hardcode_try_eval_variadic_vec(MemArena *mem, SymTable *tab,
         if (is_vec_call && n->sub == 0) return false;
     }
 
-    uint8_t  locked_tid = has_spec ? (uint8_t)(n->right & 0x3Fu) : 0;
-    uint8_t  locked_uid = has_spec ? (uint8_t)((n->right >> 6u) & 0x3Fu) : 0;
-    uint16_t hdr0       = (uint16_t)(((uint32_t)locked_uid << 8u) | (uint32_t)locked_tid);
+    uint8_t  raw_ltid   = has_spec ? (uint8_t)(n->right & 0x7Fu) : 0;
+    uint16_t locked_tid = (raw_ltid == SYM_ELEM_ANY) ? SYM_TYPE_ANY : raw_ltid;
+    uint8_t  locked_uid = has_spec ? (uint8_t)((n->right >> 7u) & 0x7Fu) : 0;
+    uint16_t hdr0       = (uint16_t)(((uint32_t)locked_uid << 8u) | (uint32_t)(locked_tid & 0xFFu));
 
     uint16_t total_args = 0;
     for (uint16_t c = n->left; c != MEM_NO_IDX; c = mem_get_ast(mem, c)->right) {
@@ -1000,17 +1002,18 @@ Value hardcode_eval_unpack_elem_ast(MemArena *mem, const SymTable *tab,
     }
     const FieldDef *fd = &tab->fields[td->start_idx + elem_idx];
     uint16_t f_pidx    = (uint16_t)(val_get_pool_idx(src) + fd->flat_offset);
-    if (!tab->types[fd->type_id].is_consuming) {
+    uint16_t f_tid     = sym_unpack_outer_type(mem, fd->type_id);
+    if (!tab->types[f_tid].is_consuming) {
         return val_with_unit(mem,
-                             val_make_comp(mem, fd->type_id, f_pidx, tab->types[fd->type_id].flat_size),
+                             val_make_comp(mem, f_tid, f_pidx, tab->types[f_tid].flat_size),
                              uid);
     }
-    if (fd->type_id == mem->str_type_id && mem->str_type_id != 0) {
+    if (f_tid == mem->str_type_id && mem->str_type_id != 0) {
         uint32_t packed = (uint32_t)mem_read_pool(mem, f_pidx);
         StrSlice s = { (uint16_t)(packed >> 16u), (uint16_t)(packed & 0xFFFFu) };
-        return val_make_str(mem, fd->type_id, s);
+        return val_make_str(mem, f_tid, s);
     }
-    return val_make_f64_unit(mem, fd->type_id ? fd->type_id : mem->fast_real_type, uid,
+    return val_make_f64_unit(mem, f_tid ? f_tid : mem->fast_real_type, uid,
                              mem_read_pool(mem, f_pidx));
 }
 

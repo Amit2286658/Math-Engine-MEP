@@ -471,7 +471,7 @@ Value delegate_eval_intrinsic(MemArena *mem, SymTable *tab,
     }
 
     /*Below section is the C's native for operator delegates @type_name, @unit_name, @tostr, @fromstr, @err*/
-    /*Construct type_of(x), unit_of(x), x_ (postfix "_"), _s (prefix "_"), error(msg)*/
+    /*Construct type_of(x), elem_type_of(x), type_sig_of(x), unit_of(x), x_ (postfix "_"), _s (prefix "_"), error(msg)*/
     if (intr == INTR_GC_COMPACT) {
         uint16_t reclaimed = mem_compact_scratch(mem, NULL, 0);
         return val_make_f64(mem, mem->fast_real_type, (double)reclaimed);
@@ -756,12 +756,82 @@ Value delegate_eval_intrinsic(MemArena *mem, SymTable *tab,
     }
 
     if (intr == INTR_TYPE_NAME) {
-        char tbuf[32];
-        sym_type_name(tab, mem, val_get_type(mem, a), tbuf, sizeof(tbuf));
+        int mode = 0;
+        if (val_get_type(mem, b) != MEM_TYPE_VOID) {
+            mode = (int)val_get_f64(mem, b);
+        }
+        uint16_t atid = val_get_type(mem, a);
+        char tbuf[96];
+        if (mode == 1) {
+            /* `elem_type_of(x)`: static element type (inferred default `real` when untyped/empty) */
+            uint16_t etid = atid;
+            if ((atid == mem->vec_type_id && mem->vec_type_id != 0) ||
+                (atid == mem->map_type_id && mem->map_type_id != 0)) {
+                uint16_t raw0 = (uint16_t)mem_read_pool(mem, (uint16_t)(val_get_pool_idx(a) + 0));
+                etid = (uint16_t)(raw0 & 0xFFu);
+                if (etid == 0) etid = mem->fast_real_type;
+            } else if (atid == mem->mat_type_id && mem->mat_type_id != 0) {
+                etid = mem->fast_real_type;
+            }
+            if (etid == SYM_ELEM_ANY || etid == SYM_TYPE_ANY) snprintf(tbuf, sizeof(tbuf), "any"); else sym_type_name(tab, mem, etid, tbuf, sizeof(tbuf));
+            return val_from_cstr(mem, tbuf);
+        }
+        if (mode == 2) {
+            /* `type_sig_of(x)`: full static type signature (`vec<real>`, `vec<real, length>`, `vec<vec2>`, `map<real>`) */
+            if ((atid == mem->vec_type_id && mem->vec_type_id != 0) ||
+                (atid == mem->map_type_id && mem->map_type_id != 0)) {
+                uint16_t raw0 = (uint16_t)mem_read_pool(mem, (uint16_t)(val_get_pool_idx(a) + 0));
+                uint16_t etid = (uint16_t)(raw0 & 0xFFu);
+                uint8_t  euid = (uint8_t)((raw0 >> 8u) & 0x7Fu);
+                if (etid == 0) etid = mem->fast_real_type;
+                char oname[20], ename[20], uname[24];
+                sym_type_name(tab, mem, atid, oname, sizeof(oname));
+                if (etid == SYM_ELEM_ANY || etid == SYM_TYPE_ANY) snprintf(ename, sizeof(ename), "any"); else sym_type_name(tab, mem, etid, ename, sizeof(ename));
+                if (euid != 0 && euid < SYM_UNIT_LOCK_NONE) {
+                    sym_unit_name(tab, mem, euid, uname, sizeof(uname));
+                    snprintf(tbuf, sizeof(tbuf), "%s<%s, %s>", oname, ename, uname);
+                } else {
+                    snprintf(tbuf, sizeof(tbuf), "%s<%s>", oname, ename);
+                }
+                return val_from_cstr(mem, tbuf);
+            }
+            if (atid == mem->mat_type_id && mem->mat_type_id != 0) {
+                uint8_t muid = val_get_unit(mem, a);
+                char oname[20], ename[20], uname[24];
+                sym_type_name(tab, mem, atid, oname, sizeof(oname));
+                sym_type_name(tab, mem, mem->fast_real_type, ename, sizeof(ename));
+                if (muid != 0 && muid < SYM_UNIT_LOCK_NONE) {
+                    sym_unit_name(tab, mem, muid, uname, sizeof(uname));
+                    snprintf(tbuf, sizeof(tbuf), "%s<%s, %s>", oname, ename, uname);
+                } else {
+                    snprintf(tbuf, sizeof(tbuf), "%s<%s>", oname, ename);
+                }
+                return val_from_cstr(mem, tbuf);
+            }
+            uint8_t suid = val_get_unit(mem, a);
+            char oname[24], uname[24];
+            sym_type_name(tab, mem, atid, oname, sizeof(oname));
+            if (suid != 0 && suid < SYM_UNIT_LOCK_NONE) {
+                sym_unit_name(tab, mem, suid, uname, sizeof(uname));
+                snprintf(tbuf, sizeof(tbuf), "%s, %s", oname, uname);
+            } else {
+                snprintf(tbuf, sizeof(tbuf), "%s", oname);
+            }
+            return val_from_cstr(mem, tbuf);
+        }
+        sym_type_name(tab, mem, atid, tbuf, sizeof(tbuf));
         return val_from_cstr(mem, tbuf);
     }
     if (intr == INTR_UNIT_NAME) {
         uint8_t uid = val_get_unit(mem, a);
+        if (uid == MEM_UNIT_NONE) {
+            uint16_t atid = val_get_type(mem, a);
+            if ((atid == mem->vec_type_id && mem->vec_type_id != 0) ||
+                (atid == mem->map_type_id && mem->map_type_id != 0)) {
+                uint16_t raw0 = (uint16_t)mem_read_pool(mem, (uint16_t)(val_get_pool_idx(a) + 0));
+                uid = (uint8_t)((raw0 >> 8u) & 0x7Fu);
+            }
+        }
         if (val_get_type(mem, b) != MEM_TYPE_VOID) {
             int ax = 0;
             if (!delegate_val_to_exact_int(mem, tab, b, "SI dimension axis", &ax)) {

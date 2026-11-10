@@ -165,7 +165,7 @@ static bool is_pattern_bind_ident(const Parser *P, const char *name, uint16_t le
 
 static uint16_t parse_single_switch_pattern(Parser *P, uint16_t slot_ast, uint8_t sw_slot,
                                             int cand_sym) {
-    MemArena       *mem = P->lex.mem;
+    MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
 
     /* 1. Relational guard pattern: `case > 10 :`, `case <= 0 :`, `case != 5 :`, `case ~ 3.14 :` */
@@ -243,7 +243,11 @@ static uint16_t parse_single_switch_pattern(Parser *P, uint16_t slot_ast, uint8_
     if (P->lex.cur.kind == TOK_LBRACK) {
         lex_next(&P->lex); /* consume '[' */
         uint16_t elem_checks[16];
-        uint8_t  elem_cnt = 0;
+        uint8_t  elem_cnt   = 0;
+        uint16_t pat_iter_t = ast_infer_struct_or_fn_type(P, slot_ast);
+        uint16_t pat_elem_t = sym_unpack_elem_type(mem, pat_iter_t);
+        uint16_t bind_tid   = (pat_elem_t != MEM_TYPE_VOID && pat_elem_t != SYM_TYPE_ANY)
+                              ? pat_elem_t : mem->fast_real_type;
 
         while (!mem->has_error && P->lex.cur.kind != TOK_RBRACK && elem_cnt < 16) {
             uint16_t k_pidx = mem_alloc_pool(mem, 1);
@@ -261,7 +265,7 @@ static uint16_t parse_single_switch_pattern(Parser *P, uint16_t slot_ast, uint8_
                 if (vlen == 1 && vname[0] == '_') {
                     elem_checks[elem_cnt] = MEM_NO_IDX;
                 } else {
-                    int pslot = parser_add_local(P, vname, vlen, mem->fast_real_type);
+                    int pslot = parser_add_local(P, vname, vlen, bind_tid);
                     if (mem->has_error) return MEM_NO_IDX;
                     elem_checks[elem_cnt] = mem_alloc_ast(mem, AST_SWITCH_EQ, 2, (uint16_t)pslot, elem_ast, MEM_NO_IDX);
                 }
@@ -317,7 +321,7 @@ static uint16_t parse_single_switch_pattern(Parser *P, uint16_t slot_ast, uint8_
 }
 
 uint16_t parse_switch_construct(Parser *P) {
-    MemArena       *mem = P->lex.mem;
+    MemArena *mem = P->lex.mem;
     SymTable *tab = P->lex.tab;
 
     int store_sym = find_active_meta_sym(tab, INTR_STORE);
@@ -351,7 +355,8 @@ uint16_t parse_switch_construct(Parser *P) {
     }
     lex_next(&P->lex);
 
-    uint8_t  sw_slot  = parser_alloc_anon_slot(P, mem->fast_real_type);
+    uint16_t sw_tid   = ast_infer_struct_or_fn_type(P, target_expr);
+    uint8_t  sw_slot  = parser_alloc_anon_slot(P, (sw_tid != MEM_TYPE_VOID) ? sw_tid : mem->fast_real_type);
     uint16_t slot_ast = mem_alloc_ast(mem, AST_SLOT_LOAD, sw_slot, 0, 0, 0);
     uint16_t init_ast = mem_alloc_ast(mem, AST_BINARY, (uint8_t)FIX_INFIX_RIGHT,
                                       (uint16_t)store_sym, slot_ast, target_expr);
@@ -843,10 +848,6 @@ uint16_t resolve_var_for_assign(Parser *P, const char *name, uint16_t len,
             } else if (is_colon_eq || (mod_flags & SYM_VAR_MUTABLE) != 0) {
                 ast_flags |= SYM_VAR_MUTABLE;
             } else {
-                /* Plain `=` at module top level:
-                 * - If `name` is already a visible mutable variable and no `pub`/`priv`/`: type`
-                 *   was given, mutate that variable (`SYM_VAR_REASSIGN_ONLY`).
-                 * - Otherwise, define an immutable module constant (or fail if reassigning a constant). */
                 uint16_t priv_mod = MEM_NO_IDX;
                 int vis_idx = sym_find_var(tab, sym_id, P->cur_mod, &priv_mod);
                 if (vis_idx >= 0 && !had_mods && lock_type == 0 && lock_unit == 0) {
@@ -910,7 +911,6 @@ uint16_t resolve_var_for_assign(Parser *P, const char *name, uint16_t len,
     int vidx = find_local_idx(P, name, len);
 
     if (is_plain) {
-        /* If plain `=` (not `:=`) and not a local variable, check if it targets a module variable/constant */
         if (!is_colon_eq && !had_mods && vidx < 0) {
             int sid = sym_find(tab, mem, name, len);
             if (sid >= 0) {
@@ -925,7 +925,6 @@ uint16_t resolve_var_for_assign(Parser *P, const char *name, uint16_t len,
             }
         }
 
-        /* At scope_depth == 0 in stateless eval, prevent `:=` from overwriting an immutable constant of cur_mod */
         if (P->scope_depth == 0) {
             int sid = sym_find(tab, mem, name, len);
             if (sid >= 0) {
@@ -973,7 +972,6 @@ uint16_t resolve_var_for_assign(Parser *P, const char *name, uint16_t len,
         return mem_alloc_ast(mem, AST_SLOT_LOAD, P->locals[vidx].slot, 0, lock_type, lock_unit);
     }
 
-    /* Compound assignment (`+=`, `-=`, etc.) when not in `P->locals`: check module variables */
     int sid = sym_find(tab, mem, name, len);
     if (sid >= 0) {
         uint16_t priv_mod = MEM_NO_IDX;
@@ -991,9 +989,3 @@ uint16_t resolve_var_for_assign(Parser *P, const char *name, uint16_t len,
             (int)len, name);
     return MEM_NO_IDX;
 }
-
-/* ============================================================================
- * 4. PRATT PARSER NUD & LED DRIVERS
- * ============================================================================ */
-
-

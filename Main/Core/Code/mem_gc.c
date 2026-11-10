@@ -12,10 +12,10 @@ static void gc_mark_val_rec(MemArena *mem, Value v, uint16_t perm_top, uint16_t 
 static void gc_mark_vec_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, uint16_t old_top, uint8_t depth) {
     if (depth > 16 || (uint32_t)hdr_idx + MEM_VEC_HDR_SLOTS > old_top) return;
     if (hdr_idx >= perm_top) {
-        if (mem->gc_mark[hdr_idx] == 2u) return;
-        mem->gc_mark[hdr_idx] = 2u;
+        if (mem_gc_get_mark(mem, hdr_idx) == 2u) return;
+        mem_gc_set_mark(mem, hdr_idx, 2u);
         for (uint16_t k = 1; k < MEM_VEC_HDR_SLOTS; ++k) {
-            mem->gc_mark[hdr_idx + k] = 1u;
+            mem_gc_set_mark(mem, (uint16_t)(hdr_idx + k), 1u);
         }
     }
     uint16_t raw_hdr0 = (uint16_t)mem->f64_pool[hdr_idx + 0];
@@ -62,8 +62,9 @@ static void gc_mark_vec_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
                       ? mem->type_stride[elem_tid] : 1u;
     uint32_t total = len * (uint32_t)stride;
     for (uint32_t s = 0; s < total && (data_idx + s) < old_top; ++s) {
-        if (mem->gc_mark[data_idx + s] == 0u) {
-            mem->gc_mark[data_idx + s] = 1u;
+        uint16_t s_idx = (uint16_t)(data_idx + s);
+        if (mem_gc_get_mark(mem, s_idx) == 0u) {
+            mem_gc_set_mark(mem, s_idx, 1u);
         }
     }
     if (elem_tid == 0xFEu) {
@@ -96,10 +97,10 @@ static void gc_mark_vec_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
 static void gc_mark_map_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, uint16_t old_top, uint8_t depth) {
     if (depth > 16 || (uint32_t)hdr_idx + MEM_MAP_HDR_SLOTS > old_top) return;
     if (hdr_idx >= perm_top) {
-        if (mem->gc_mark[hdr_idx] == 3u) return;
-        mem->gc_mark[hdr_idx] = 3u;
+        if (mem_gc_get_mark(mem, hdr_idx) == 3u) return;
+        mem_gc_set_mark(mem, hdr_idx, 3u);
         for (uint16_t k = 1; k < MEM_MAP_HDR_SLOTS; ++k) {
-            mem->gc_mark[hdr_idx + k] = 1u;
+            mem_gc_set_mark(mem, (uint16_t)(hdr_idx + k), 1u);
         }
     }
     uint16_t len      = (uint16_t)mem->f64_pool[hdr_idx + 1];
@@ -135,8 +136,9 @@ static void gc_mark_map_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
 
     uint32_t total = (uint32_t)len * 2u;
     for (uint32_t s = 0; s < total && (data_idx + s) < old_top; ++s) {
-        if (mem->gc_mark[data_idx + s] == 0u) {
-            mem->gc_mark[data_idx + s] = 1u;
+        uint16_t s_idx = (uint16_t)(data_idx + s);
+        if (mem_gc_get_mark(mem, s_idx) == 0u) {
+            mem_gc_set_mark(mem, s_idx, 1u);
         }
     }
     for (uint16_t i = 0; i < len; ++i) {
@@ -148,10 +150,10 @@ static void gc_mark_map_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
 static void gc_mark_mat_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, uint16_t old_top) {
     if ((uint32_t)hdr_idx + MEM_MAT_HDR_SLOTS > old_top) return;
     if (hdr_idx >= perm_top) {
-        if (mem->gc_mark[hdr_idx] == 4u) return;
-        mem->gc_mark[hdr_idx] = 4u;
+        if (mem_gc_get_mark(mem, hdr_idx) == 4u) return;
+        mem_gc_set_mark(mem, hdr_idx, 4u);
         for (uint16_t k = 1; k < MEM_MAT_HDR_SLOTS; ++k) {
-            mem->gc_mark[hdr_idx + k] = 1u;
+            mem_gc_set_mark(mem, (uint16_t)(hdr_idx + k), 1u);
         }
     }
     uint32_t tot_len  = (uint32_t)mem->f64_pool[hdr_idx + 1];
@@ -165,8 +167,9 @@ static void gc_mark_mat_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
     }
     if (tot_len > 0 && data_idx >= perm_top && data_idx < old_top) {
         for (uint32_t s = 0; s < tot_len && (data_idx + s) < old_top; ++s) {
-            if (mem->gc_mark[data_idx + s] == 0u) {
-                mem->gc_mark[data_idx + s] = 1u;
+            uint16_t s_idx = (uint16_t)(data_idx + s);
+            if (mem_gc_get_mark(mem, s_idx) == 0u) {
+                mem_gc_set_mark(mem, s_idx, 1u);
             }
         }
     }
@@ -175,10 +178,10 @@ static void gc_mark_mat_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, 
 static void gc_mark_fn_hdr(MemArena *mem, uint16_t hdr_idx, uint16_t perm_top, uint16_t old_top, uint8_t depth) {
     if (depth > 16 || (uint32_t)hdr_idx + MEM_FN_HDR_SLOTS > old_top) return;
     if (hdr_idx >= perm_top) {
-        if (mem->gc_mark[hdr_idx] == 5u) return;
-        mem->gc_mark[hdr_idx] = 5u;
+        if (mem_gc_get_mark(mem, hdr_idx) == 5u) return;
+        mem_gc_set_mark(mem, hdr_idx, 5u);
         for (uint16_t k = 1; k < MEM_FN_HDR_SLOTS; ++k) {
-            mem->gc_mark[hdr_idx + k] = 1u;
+            mem_gc_set_mark(mem, (uint16_t)(hdr_idx + k), 1u);
         }
     }
     uint32_t packed_slt = (uint32_t)mem->f64_pool[hdr_idx + 2];
@@ -207,7 +210,7 @@ static void gc_mark_struct_fields(MemArena *mem, uint16_t tid, uint16_t idx,
     if (td->is_consuming || td->field_count == 0) return;
     for (uint8_t i = 0; i < td->field_count; ++i) {
         const FieldDef *fd = &mem->sym_tab->fields[td->start_idx + i];
-        uint16_t ftid  = fd->type_id;
+        uint16_t ftid  = sym_unpack_outer_type(mem, fd->type_id);
         uint16_t fpidx = (uint16_t)(idx + fd->flat_offset);
         if (ftid == mem->vec_type_id && ftid != 0) {
             gc_mark_vec_hdr(mem, fpidx, perm_top, old_top, (uint8_t)(depth + 1));
@@ -244,8 +247,9 @@ static void gc_mark_val_rec(MemArena *mem, Value v, uint16_t perm_top, uint16_t 
             uint16_t fsz = (uint16_t)((v >> 16u) & 0xFFFFu);
             if (fsz == 0) fsz = 1u;
             for (uint16_t k = 0; k < fsz && (idx + k) < old_top; ++k) {
-                if (mem->gc_mark[idx + k] == 0u) {
-                    mem->gc_mark[idx + k] = 1u;
+                uint16_t s_idx = (uint16_t)(idx + k);
+                if (mem_gc_get_mark(mem, s_idx) == 0u) {
+                    mem_gc_set_mark(mem, s_idx, 1u);
                 }
             }
         }
@@ -270,7 +274,16 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
     uint16_t old_top  = mem->pool_top;
 
     if (old_top > perm_top) {
-        memset(&mem->gc_mark[perm_top], 0, (size_t)(old_top - perm_top));
+        uint16_t start_slot = perm_top;
+        if (start_slot & 1u) {
+            mem_gc_set_mark(mem, start_slot, 0u);
+            start_slot++;
+        }
+        uint16_t start_byte = (uint16_t)(start_slot >> 1u);
+        uint16_t end_byte   = (uint16_t)((old_top + 1u) >> 1u);
+        if (end_byte > start_byte) {
+            memset(&mem->gc_mark[start_byte], 0, (size_t)(end_byte - start_byte));
+        }
     }
     for (uint16_t i = 0; i < MEM_MAX_HEAP_BLOCKS; ++i) {
         mem->heap_blocks[i].marked = 0u;
@@ -281,7 +294,7 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
         const AstNode *n = &mem_ast_base_mut(mem)[i];
         if (n->kind == 0 /* AST_LIT */ && n->sub != mem->str_type_id && n->sub != MEM_TYPE_VOID) {
             if (n->ref >= perm_top && n->ref < old_top) {
-                mem->gc_mark[n->ref] = 1u;
+                mem_gc_set_mark(mem, n->ref, 1u);
             }
         }
     }
@@ -308,10 +321,18 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
         }
     }
 
-    /* 2b. Sweep unreachable HeapBlocks immediately */
+    /* 2b. Sweep unreachable HeapBlocks immediately and rebuild active_closure_hids */
+    mem->active_closure_count  = 0;
+    mem->closure_list_overflow = 0;
     for (uint16_t i = 0; i < MEM_MAX_HEAP_BLOCKS; ++i) {
         if (mem->heap_blocks[i].in_use && !mem->heap_blocks[i].marked) {
             mem_heap_free_block(mem, (uint16_t)(MEM_HEAP_IDX_BIT | i));
+        } else if (mem->heap_blocks[i].in_use == 2u) {
+            if (mem->active_closure_count < MEM_MAX_ACTIVE_CLOSURES) {
+                mem->active_closure_hids[mem->active_closure_count++] = (uint8_t)i;
+            } else {
+                mem->closure_list_overflow = 1u;
+            }
         }
     }
 
@@ -320,7 +341,7 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
     /* 3. Compute sliding destination addresses in gc_fwd */
     uint16_t write_pos = perm_top;
     for (uint16_t i = perm_top; i < old_top; ++i) {
-        if (mem->gc_mark[i] != 0u) {
+        if (mem_gc_get_mark(mem, i) != 0u) {
             mem->gc_fwd[i] = write_pos++;
         } else {
             mem->gc_fwd[i] = MEM_NO_IDX;
@@ -332,7 +353,7 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
 
     /* 4. Fix up internal container data_idx pointers & map entry Values BEFORE sliding */
     for (uint16_t i = perm_top; i < old_top; ++i) {
-        uint8_t m = mem->gc_mark[i];
+        uint8_t m = mem_gc_get_mark(mem, i);
         if (m == 2u) { /* $vec header */
             uint16_t raw0     = (uint16_t)mem->f64_pool[i + 0];
             uint16_t elem_tid = (uint16_t)(raw0 & 0xFFu);
@@ -420,7 +441,7 @@ uint16_t mem_compact_scratch(MemArena *mem, Value *extra_roots, uint16_t extra_r
 
     /* 5. Slide all live f64_pool slots down contiguously */
     for (uint16_t i = perm_top; i < old_top; ++i) {
-        if (mem->gc_mark[i] != 0u) {
+        if (mem_gc_get_mark(mem, i) != 0u) {
             uint16_t dst = mem->gc_fwd[i];
             if (dst != i) {
                 memcpy(&mem->f64_pool[dst], &mem->f64_pool[i], sizeof(double));
@@ -611,7 +632,7 @@ static void str_gc_visit_struct(MemArena *mem, StrGcCtx *ctx, uint16_t tid, uint
     if (td->is_consuming || td->field_count == 0) return;
     for (uint8_t i = 0; i < td->field_count; ++i) {
         const FieldDef *fd = &mem->sym_tab->fields[td->start_idx + i];
-        uint16_t ftid  = fd->type_id;
+        uint16_t ftid  = sym_unpack_outer_type(mem, fd->type_id);
         uint16_t fpidx = (uint16_t)(pidx + fd->flat_offset);
         if (fpidx >= mem->pool_top) continue;
         if (ftid == mem->str_type_id && mem->str_type_id != 0) {
@@ -700,6 +721,7 @@ void mem_compact_strings(MemArena *mem) {
     if (ctx.overflow) return;
     if (ctx.count == 0) {
         mem->src_len = mem->perm_src_len;
+        mem_rebuild_str_hash(mem);
         return;
     }
 
@@ -739,4 +761,5 @@ void mem_compact_strings(MemArena *mem) {
 
     str_gc_walk_all(mem, &ctx, true);
     mem->src_len = write_pos;
+    mem_rebuild_str_hash(mem);
 }

@@ -57,6 +57,8 @@ extern "C" {
 #define MEM_FN_MAX_PARAMS     16u  /* Max parameters for lambdas & module fns    */
 #define MEM_MAX_TEMP_ROOTS    64u  /* C stack temporary Value* roots for GC      */
 #define MEM_OUT_BUF_CAP     4096u  /* Captured print/println stdout buffer bytes */
+#define MEM_STR_HASH_BUCKETS 512u  /* Open-addressed string interning hash table */
+#define MEM_MAX_ACTIVE_CLOSURES 16u /* Tracked active-frame lexical closure IDs  */
 
 typedef enum {
     JUMP_NONE          = 0,
@@ -184,10 +186,14 @@ typedef struct {
     uint16_t         cur_mod;
     Value            last_mod_val;
 
-    /* Scratch Pool Mark-Sweep / Sliding Compaction State & C Temporary Roots */
+    /* Scratch Pool Mark-Sweep / Sliding Compaction State, String Hash & Active Closure Index */
     Value      *temp_roots[MEM_MAX_TEMP_ROOTS];
     uint16_t    temp_root_count;
-    uint8_t     gc_mark[MEM_MAX_F64_POOL];
+    uint8_t     gc_mark[MEM_MAX_F64_POOL / 2];      /* 4,096 B: packed 4-bit mark nibbles per slot */
+    StrSlice    str_hash[MEM_STR_HASH_BUCKETS];     /* 2,048 B: O(1) interned string lookup table  */
+    uint8_t     active_closure_hids[MEM_MAX_ACTIVE_CLOSURES];
+    uint8_t     active_closure_count;
+    uint8_t     closure_list_overflow;
     uint16_t    gc_fwd[MEM_MAX_F64_POOL];
 
     /* Scratch range metadata cache for `@vrange` -> `@vrange_step` (`a...b by step`) */
@@ -251,6 +257,7 @@ void     mem_rewind_scratch(MemArena *mem);
 
 /* UTF-8 String Interning & Comparison */
 StrSlice mem_intern_str(MemArena *mem, const char *str, uint16_t len);
+void     mem_rebuild_str_hash(MemArena *mem);
 const char *mem_str_ptr(const MemArena *mem, StrSlice s);
 bool     mem_slice_eq(const MemArena *mem, StrSlice a, StrSlice b);
 bool     mem_slice_eq_cstr(const MemArena *mem, StrSlice s, const char *cstr);
