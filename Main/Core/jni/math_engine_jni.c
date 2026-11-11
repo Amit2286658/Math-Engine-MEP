@@ -713,13 +713,13 @@ static void jni_bridge_free_cb(void *user_ctx) {
     JniBridgeCtx *ctx = (JniBridgeCtx *)user_ctx;
     if (!ctx) return;
     JNIEnv *env = NULL;
-    void    *thr_env = NULL;
+    JNIEnv *thr_env = NULL;
     bool attached = false;
     if (ctx->vm) {
         if ((*ctx->vm)->GetEnv(ctx->vm, (void **)&env, JNI_VERSION_1_4) != MEP_JNI_JVM_OK || !env) {
             env = NULL;
             if ((*ctx->vm)->AttachCurrentThread(ctx->vm, &thr_env, NULL) == MEP_JNI_JVM_OK && thr_env) {
-                env = (JNIEnv *)thr_env;
+                env = thr_env;
                 attached = true;
             }
         }
