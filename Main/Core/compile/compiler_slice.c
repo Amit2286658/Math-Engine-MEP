@@ -82,7 +82,7 @@ bool ext_import_module_or_file(MemArena *mem, SymTable *tab,
         return false;
     }
     long fsz = ftell(fp);
-    if (fsz < 0 || fsz > 65534L) {
+    if (fsz < 0 || fsz > 524288L) {
         fclose(fp);
         mem_err(mem, "Imported file '%s' size (%ld) out of range", chosen, fsz);
         return false;
@@ -94,9 +94,34 @@ bool ext_import_module_or_file(MemArena *mem, SymTable *tab,
         mem_err(mem, "Out of memory reading imported file '%s'", chosen);
         return false;
     }
-    size_t nread = fread(fbuf, 1, (size_t)fsz, fp);
+    size_t raw_nread = fread(fbuf, 1, (size_t)fsz, fp);
     fclose(fp);
+    fbuf[raw_nread] = '\0';
+    size_t nread = 0;
+    bool in_q = false;
+    for (size_t i = 0; i < raw_nread; ) {
+        char c = fbuf[i];
+        if (c == '\\' && in_q && i + 1u < raw_nread) {
+            fbuf[nread++] = c;
+            fbuf[nread++] = fbuf[i + 1u];
+            i += 2u;
+            continue;
+        }
+        if (c == '"') {
+            in_q = !in_q;
+        } else if (c == '#' && !in_q) {
+            while (i < raw_nread && fbuf[i] != '\n') i++;
+            continue;
+        }
+        fbuf[nread++] = c;
+        i++;
+    }
     fbuf[nread] = '\0';
+    if (nread > 65534u) {
+        free(fbuf);
+        mem_err(mem, "Imported file '%s' code size (%zu) exceeds 65534 bytes", chosen, nread);
+        return false;
+    }
 
     /* Derive default module stem from filename (e.g. "dir/foo.math" -> "foo") */
     const char *slash = strrchr(chosen, '/');

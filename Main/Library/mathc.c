@@ -32,7 +32,7 @@ static char *read_file_text(const char *path) {
     fseek(fp, 0, SEEK_END);
     long sz = ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    if (sz < 0 || sz > 65535L) { fclose(fp); return NULL; }
+    if (sz < 0 || sz > 524288L) { fclose(fp); return NULL; }
     char *buf = (char *)malloc((size_t)sz + 1);
     if (!buf) { fclose(fp); return NULL; }
     size_t n = fread(buf, 1, (size_t)sz, fp);

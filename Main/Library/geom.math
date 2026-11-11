@@ -28,9 +28,24 @@ $circle(center:vec2, radius)
 (z:real, T) into (v:vec2, T) :>55 -> vec3, T = vec3(v.x, v.y, z)
 (v:vec2, T) into (z:real, T) :>55 -> vec3, T = vec3(v.x, v.y, z)
 
+# @desc Computes the inner dot product of two 1D vectors `a` and `b` or two 2D `$vec2` structs. Formula: dot(a, b) = ∑ aᵢ · bᵢ
+# @param a: vec | vec2 — First vector
+# @param b: vec | vec2 — Second vector of matching dimension
+# @return real — Scalar dot product `a · b`
 dot(a:vec2, b:vec2)       = a.x * b.x + a.y * b.y
+# @desc Computes the 2D perp-dot (signed z-component of the cross product) a_x·b_y − a_y·b_x of two `$vec2` vectors. Formula: cross2(a, b) = a.x · b.y - a.y · b.x
+# @param a: vec2 — First 2D vector `vec2(x, y)`
+# @param b: vec2 — Second 2D vector `vec2(x, y)`
+# @return real — Signed parallelogram area `a.x·b.y − a.y·b.x`
 cross2(a:vec2, b:vec2)    = a.x * b.y - a.y * b.x
+# @desc Computes the Euclidean magnitude √(x² + y²) of a 2D vector `v: vec2`. Formula: vec2_mag(v) = hypot(v.x, v.y)
+# @param v: vec2 — Input 2D vector `vec2(x, y)`
+# @return real — Euclidean length √(x² + y²) ≥ 0
 vec2_mag(v:vec2)          = hypot(v.x, v.y)
+# @desc Computes the Euclidean distance √((b_x − a_x)² + (b_y − a_y)²) between two 2D points `a` and `b`. Formula: vec2_dist(a, b) = hypot(b.x - a.x, b.y - a.y)
+# @param a: vec2 — First 2D point `vec2(x, y)`
+# @param b: vec2 — Second 2D point `vec2(x, y)`
+# @return real — Distance between `a` and `b`
 vec2_dist(a:vec2, b:vec2) = hypot(b.x - a.x, b.y - a.y)
 
 # 3. 3D Vector Operations & `**` Dot Product Operator
@@ -46,16 +61,38 @@ vec2_dist(a:vec2, b:vec2) = hypot(b.x - a.x, b.y - a.y)
 (a:vec3) "!=" (b:vec3) :<30         = (a.x != b.x) || (a.y != b.y) || (a.z != b.z)
 (a:vec3) "~"  (b:vec3) :<30         = (a.x ~ b.x) && (a.y ~ b.y) && (a.z ~ b.z)
 
+# @desc Computes the 3D scalar dot product a_x·b_x + a_y·b_y + a_z·b_z of two `$vec3` vectors. Formula: dot3(a, b) = a.x·b.x + a.y·b.y + a.z·b.z
+# @param a: vec3 — First 3D vector `vec3(x, y, z)`
+# @param b: vec3 — Second 3D vector `vec3(x, y, z)`
+# @return real — 3D scalar dot product
 dot3(a:vec3, b:vec3)   = a ** b
+# @desc Computes the 3D orthogonal cross product vector `a × b` of two `$vec3` vectors. Formula: cross3(a, b) = vec3(a.y·b.z - a.z·b.y, a.z·b.x - a.x·b.z, a.x·b.y - a.y·b.x)
+# @param a: vec3 — First 3D vector `vec3(x, y, z)`
+# @param b: vec3 — Second 3D vector `vec3(x, y, z)`
+# @return vec3 — Orthogonal 3D cross-product vector `a × b`
 cross3(a:vec3, b:vec3) -> vec3 =
     vec3(a.y * b.z - a.z * b.y,
          a.z * b.x - a.x * b.z,
          a.x * b.y - a.y * b.x)
+# @desc Computes the 3D Euclidean magnitude √(x² + y² + z²) of a 3D vector `v: vec3`. Formula: vec3_mag(v) = √(v.x^2 + v.y^2 + v.z^2)
+# @param v: vec3 — Input 3D vector `vec3(x, y, z)`
+# @return real — 3D Euclidean length ≥ 0
 vec3_mag(v:vec3)          = hypot(hypot(v.x, v.y), v.z)
+# @desc Computes the 3D Euclidean distance ‖b − a‖ between two 3D points `a` and `b`. Formula: vec3_dist(a, b) = vec3_mag(b - a)
+# @param a: vec3 — First 3D point `vec3(x, y, z)`
+# @param b: vec3 — Second 3D point `vec3(x, y, z)`
+# @return real — 3D Euclidean distance between `a` and `b`
 vec3_dist(a:vec3, b:vec3) = vec3_mag(b - a)
+# @desc Performs linear interpolation a + (b − a) · t between start value a and end value b by parameter t. Formula: lerp(a, b, t) = a + (b - a) · t
+# @param a: real — Start value at t = 0
+# @param b: real — End value at t = 1
+# @param t: real — Interpolation fraction (t ∈ [0, 1] interpolates; outside [0, 1] extrapolates)
+# @return real — Linearly interpolated value a + (b − a)·t
 lerp(a, b, t)             = a + (b - a) * t
 
-# Static Element-Typed 2D & 3D Point-Cloud / Trajectory Helpers (`vec<vec2>` vs `vec<vec3>`)
+# @desc Static Element-Typed 2D & 3D Point-Cloud / Trajectory Helpers (`vec<vec2>` vs `vec<vec3>`) in [geom_ext].
+# @param pts: vec<vec2> — Vector of 2D/3D point structs (`vec<vec2>` or `vec<vec3>`)
+# @return any — Result returned by `vec2_path_len(pts: vec<vec2>)` in [geom_ext]
 vec2_path_len(pts:vec<vec2>) = {
     total := 0
     n     := pts.len()
@@ -67,6 +104,9 @@ vec2_path_len(pts:vec<vec2>) = {
     total
 }
 
+# @desc Computes `vec3_path_len(pts: vec<vec3>)` in module [geom_ext] (3D Vector Operations & `**` Dot Product Operator).
+# @param pts: vec<vec3> — Vector of 2D/3D point structs (`vec<vec2>` or `vec<vec3>`)
+# @return any — Result returned by `vec3_path_len(pts: vec<vec3>)` in [geom_ext]
 vec3_path_len(pts:vec<vec3>) = {
     total := 0
     n     := pts.len()
@@ -79,9 +119,15 @@ vec3_path_len(pts:vec<vec3>) = {
 }
 
 # Overloaded `path_len`, `vec_sum`, `sum`, `mean`, `centroid`, `bbox_min`, `bbox_max` by static element type!
+# @desc Overloaded `path_len`, `vec_sum`, `sum`, `mean`, `centroid`, `bbox_min`, `bbox_max` by static element type! in [geom_ext]. Formula: path_len(pts:vec<vec2>) = vec2_path_len(pts)
+# @param pts: vec<vec2> — Vector of 2D/3D point structs (`vec<vec2>` or `vec<vec3>`)
+# @return any — Result returned by `path_len(pts: vec<vec2>)` in [geom_ext]
 path_len(pts:vec<vec2>) = vec2_path_len(pts)
 path_len(pts:vec<vec3>) = vec3_path_len(pts)
 
+# @desc Computes the sum of all elements in a vector (supporting numeric vectors, string vectors, `vec<vec2>`, and `vec<vec3>`). Formula: vec_sum(v)
+# @param v: vec — Input vector
+# @return real | str | vec2 | vec3 — Sum of all elements in `v`
 vec_sum(pts:vec<vec2>) -> vec2 = {
     s := vec2(0, 0)
     (p in pts) { s = s + p }
@@ -94,13 +140,25 @@ vec_sum(pts:vec<vec3>) -> vec3 = {
     s
 }
 
+# @desc Computes the sum of all elements in a vector (or concatenates a vector of strings, or sums 2D/3D point vectors). Formula: sum(v)
+# @param v: vec — Input vector of numbers, strings, or 2D/3D points
+# @return real | str | vec2 | vec3 — Total sum of all elements in `v`
 sum(pts:vec<vec2>)      -> vec2 = vec_sum(pts)
 sum(pts:vec<vec3>)      -> vec3 = vec_sum(pts)
+# @desc Calculates the arithmetic mean (average) of a non-empty vector of numbers or 2D/3D points: sum(v) / len(v). Formula: mean(v) = sum(v) / len(v)
+# @param v: vec — Non-empty numeric or point vector
+# @return real | vec2 | vec3 — Arithmetic mean of the elements in `v`
 mean(pts:vec<vec2>)     -> vec2 = vec_sum(pts) / pts.len()
 mean(pts:vec<vec3>)     -> vec3 = vec_sum(pts) / pts.len()
+# @desc Computes `centroid(pts: vec<vec2>)` in module [geom_ext] (3D Vector Operations & `**` Dot Product Operator). Formula: centroid(pts:vec<vec2>) = mean(pts)
+# @param pts: vec<vec2> — Vector of 2D/3D point structs (`vec<vec2>` or `vec<vec3>`)
+# @return vec2 — Result returned by `centroid(pts: vec<vec2>)` in [geom_ext]
 centroid(pts:vec<vec2>) -> vec2 = mean(pts)
 centroid(pts:vec<vec3>) -> vec3 = mean(pts)
 
+# @desc Computes `bbox_min(pts: vec<vec2>)` in module [geom_ext] (3D Vector Operations & `**` Dot Product Operator).
+# @param pts: vec<vec2> — Vector of 2D/3D point structs (`vec<vec2>` or `vec<vec3>`)
+# @return vec2 — Result returned by `bbox_min(pts: vec<vec2>)` in [geom_ext]
 bbox_min(pts:vec<vec2>) -> vec2 = {
     if (pts.len() == 0) { error("Cannot compute bbox_min of an empty vec<vec2>") }
     mx := pts[0].x
@@ -112,6 +170,9 @@ bbox_min(pts:vec<vec2>) -> vec2 = {
     vec2(mx, my)
 }
 
+# @desc Computes `bbox_max(pts: vec<vec2>)` in module [geom_ext] (3D Vector Operations & `**` Dot Product Operator).
+# @param pts: vec<vec2> — Vector of 2D/3D point structs (`vec<vec2>` or `vec<vec3>`)
+# @return vec2 — Result returned by `bbox_max(pts: vec<vec2>)` in [geom_ext]
 bbox_max(pts:vec<vec2>) -> vec2 = {
     if (pts.len() == 0) { error("Cannot compute bbox_max of an empty vec<vec2>") }
     mx := pts[0].x
@@ -149,12 +210,18 @@ bbox_max(pts:vec<vec3>) -> vec3 = {
     vec3(mx, my, mz)
 }
 
+# @desc Calculates the total closed perimeter length of a 2D polygon defined by vertices `pts: vec<vec2>`. Formula: polygon_perimeter(pts)
+# @param pts: vec<vec2> — Ordered vector of 2D polygon vertex coordinates
+# @return real — Total perimeter length of the closed polygon
 polygon_perimeter(pts:vec<vec2>) = {
     n := pts.len()
     if (n < 2) { return 0 }
     vec2_path_len(pts) + vec2_dist(pts[n - 1], pts[0])
 }
 
+# @desc Calculates the enclosed area of a 2D polygon defined by ordered vertices `pts: vec<vec2>` using the Shoelace formula. Formula: polygon_area(pts)
+# @param pts: vec<vec2> — Ordered vector of 2D polygon vertex coordinates
+# @return real — Enclosed polygon area ≥ 0
 polygon_area(pts:vec<vec2>) = {
     n := pts.len()
     if (n < 3) { return 0 }
@@ -167,21 +234,51 @@ polygon_area(pts:vec<vec2>) = {
 }
 
 # 4. Circle & Sphere Geometry
+# @desc Computes `move_circle(c: circle, dx: real, dy: real)` in module [geom_ext] (Circle & Sphere Geometry).
+# @param c: circle — Polynomial coefficient vector `[c0, c1, c2, ...]` or circle struct
+# @param dx: real — Input parameter `dx` for `move_circle`
+# @param dy: real — Input parameter `dy` for `move_circle`
+# @return circle — Result returned by `move_circle(c: circle, dx: real, dy: real)` in [geom_ext]
 move_circle(c:circle, dx, dy) -> circle = {
     c.center.x += dx
     c.center.y += dy
     c
 }
 
+# @desc Computes `circle_area(c: circle)` in module [geom_ext] (Circle & Sphere Geometry). Formula: circle_area(c:circle) = π * c.radius^2
+# @param c: circle — Polynomial coefficient vector `[c0, c1, c2, ...]` or circle struct
+# @return any — Result returned by `circle_area(c: circle)` in [geom_ext]
 circle_area(c:circle)   = π * c.radius^2
+# @desc Computes `circle_circum(c: circle)` in module [geom_ext] (Circle & Sphere Geometry). Formula: circle_circum(c:circle) = 2π * c.radius
+# @param c: circle — Polynomial coefficient vector `[c0, c1, c2, ...]` or circle struct
+# @return any — Result returned by `circle_circum(c: circle)` in [geom_ext]
 circle_circum(c:circle) = 2π * c.radius
+# @desc Calculates the enclosed volume V = (4/3)π·r³ of a sphere of radius r. Formula: sphere_vol(r) = (4 / 3) · π · r^3
+# @param r: real — Radius r of the sphere (in metres or any length unit)
+# @return real — Enclosed volume (4/3)πr³ in cubic length units (e.g. m³)
 sphere_vol(r)           = (4 / 3) * π * (r ^ 3)
+# @desc Calculates the total surface area A = 4π·r² of a sphere of radius r. Formula: sphere_area(r) = 4π · r^2
+# @param r: real — Radius r of the sphere (in metres or any length unit)
+# @return real — Surface area 4πr² in square length units (e.g. m²)
 sphere_area(r)          = 4π * (r ^ 2)
 
 # 5. Qualified Struct Methods (`Type::method(self, ...)`)
+# @desc Computes `mag(self: real)` in module [geom_ext] (Qualified Struct Methods (`Type::method(self, ...)`)). Formula: mag(self) = hypot(self.x, self.y)
+# @param self: real — Input parameter `self` for `mag`
+# @return any — Result returned by `mag(self: real)` in [geom_ext]
 vec2::mag(self)                = hypot(self.x, self.y)
+# @desc Computes `norm2(self: real)` in module [geom_ext] (Qualified Struct Methods (`Type::method(self, ...)`)). Formula: norm2(self) = self.x^2 + self.y^2
+# @param self: real — Input parameter `self` for `norm2`
+# @return any — Result returned by `norm2(self: real)` in [geom_ext]
 vec2::norm2(self)              = self.x^2 + self.y^2
+# @desc Computes `unit(self: real)` in module [geom_ext] (Qualified Struct Methods (`Type::method(self, ...)`)). Formula: unit(self) = self / hypot(self.x, self.y)
+# @param self: real — Input parameter `self` for `unit`
+# @return vec2 — Result returned by `unit(self: real)` in [geom_ext]
 vec2::unit(self)       -> vec2 = self / hypot(self.x, self.y)
+# @desc Computes `dist(self: real, b: vec2)` in module [geom_ext] (Qualified Struct Methods (`Type::method(self, ...)`)). Formula: dist(self, b:vec2) = hypot(b.x - self.x, b.y - self.y)
+# @param self: real — Input parameter `self` for `dist`
+# @param b: vec2 — Second input operand, vector, or matrix
+# @return any — Result returned by `dist(self: real, b: vec2)` in [geom_ext]
 vec2::dist(self, b:vec2)       = hypot(b.x - self.x, b.y - self.y)
 
 vec3::mag(self)                = vec3_mag(self)
@@ -189,6 +286,16 @@ vec3::norm2(self)              = self.x^2 + self.y^2 + self.z^2
 vec3::unit(self)       -> vec3 = self / vec3_mag(self)
 vec3::dist(self, b:vec3)       = vec3_dist(self, b)
 
+# @desc Computes `area(self: real)` in module [geom_ext] (Qualified Struct Methods (`Type::method(self, ...)`)). Formula: area(self) = π * self.radius^2
+# @param self: real — Input parameter `self` for `area`
+# @return any — Result returned by `area(self: real)` in [geom_ext]
 circle::area(self)             = π * self.radius^2
+# @desc Computes `circum(self: real)` in module [geom_ext] (Qualified Struct Methods (`Type::method(self, ...)`)). Formula: circum(self) = 2π * self.radius
+# @param self: real — Input parameter `self` for `circum`
+# @return any — Result returned by `circum(self: real)` in [geom_ext]
 circle::circum(self)           = 2π * self.radius
+# @desc Computes `contains_pt(self: real, pt: vec2)` in module [geom_ext] (Qualified Struct Methods (`Type::method(self, ...)`)). Formula: contains_pt(self, pt:vec2) = (vec2_dist(self.center, pt) <= self.radius)
+# @param self: real — Input parameter `self` for `contains_pt`
+# @param pt: vec2 — Input parameter `pt` for `contains_pt`
+# @return any — Result returned by `contains_pt(self: real, pt: vec2)` in [geom_ext]
 circle::contains_pt(self, pt:vec2) = (vec2_dist(self.center, pt) <= self.radius)

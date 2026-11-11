@@ -23,35 +23,125 @@
 (x:real, length) to_ft   :90 -> real, none = x / 0.3048
 (x:real, length) to_inch :90 -> real, none = x / 0.0254
 
+# @desc Unit conversion from kilometres (km) to metres (m). Formula: km_to_m(x) = x·1000
+# @param x: real — a quantity in kilometres (km)
+# @return real — The equivalent value in metres (m)
 km_to_m(x)  = x * 1000
+# @desc Unit conversion from metres (m) to centimetres (cm). Formula: m_to_cm(x) = x·100
+# @param x: real — a quantity in metres (m)
+# @return real — The equivalent value in centimetres (cm)
 m_to_cm(x)  = x * 100
+# @desc Unit conversion from centimetres (cm) to metres (m). Formula: cm_to_m(x) = x·0.01
+# @param x: real — a quantity in centimetres (cm)
+# @return real — The equivalent value in metres (m)
 cm_to_m(x)  = x * 0.01
+# @desc Unit conversion from metres (m) to millimetres (mm). Formula: m_to_mm(x) = x·1000
+# @param x: real — a quantity in metres (m)
+# @return real — The equivalent value in millimetres (mm)
 m_to_mm(x)  = x * 1000
+# @desc Unit conversion from millimetres (mm) to metres (m). Formula: mm_to_m(x) = x·0.001
+# @param x: real — a quantity in millimetres (mm)
+# @return real — The equivalent value in metres (m)
 mm_to_m(x)  = x * 0.001
+# @desc Unit conversion from metres (m) to micrometres (μm). Formula: m_to_um(x) = x·(10^6)
+# @param x: real — a quantity in metres (m)
+# @return real — The equivalent value in micrometres (μm)
 m_to_um(x)  = x * (10 ^ 6)
+# @desc Unit conversion from micrometres (μm) to metres (m). Formula: um_to_m(x) = x·(10^-6)
+# @param x: real — a quantity in micrometres (μm)
+# @return real — The equivalent value in metres (m)
 um_to_m(x)  = x * (10 ^ -6)
+# @desc Unit conversion from metres (m) to nanometres (nm). Formula: m_to_nm(x) = x·(10^9)
+# @param x: real — a quantity in metres (m)
+# @return real — The equivalent value in nanometres (nm)
 m_to_nm(x)  = x * (10 ^ 9)
+# @desc Unit conversion from nanometres (nm) to metres (m). Formula: nm_to_m(x) = x·(10^-9)
+# @param x: real — a quantity in nanometres (nm)
+# @return real — The equivalent value in metres (m)
 nm_to_m(x)  = x * (10 ^ -9)
+# @desc Unit conversion from kilometres (km) to centimetres (cm). Formula: km_to_cm(x) = x·100000
+# @param x: real — a quantity in kilometres (km)
+# @return real — The equivalent value in centimetres (cm)
 km_to_cm(x) = x * 100000
+# @desc Unit conversion from centimetres (cm) to kilometres (km). Formula: cm_to_km(x) = x / 100000
+# @param x: real — a quantity in centimetres (cm)
+# @return real — The equivalent value in kilometres (km)
 cm_to_km(x) = x / 100000
+# @desc Unit conversion from kilometres (km) to millimetres (mm). Formula: km_to_mm(x) = x·(10^6)
+# @param x: real — a quantity in kilometres (km)
+# @return real — The equivalent value in millimetres (mm)
 km_to_mm(x) = x * (10 ^ 6)
+# @desc Unit conversion from millimetres (mm) to kilometres (km). Formula: mm_to_km(x) = x·(10^-6)
+# @param x: real — a quantity in millimetres (mm)
+# @return real — The equivalent value in kilometres (km)
 mm_to_km(x) = x * (10 ^ -6)
+# @desc Unit conversion from kilometres (km) to nanometres (nm). Formula: km_to_nm(x) = x·(10^12)
+# @param x: real — a quantity in kilometres (km)
+# @return real — The equivalent value in nanometres (nm)
 km_to_nm(x) = x * (10 ^ 12)
+# @desc Unit conversion from nanometres (nm) to kilometres (km). Formula: nm_to_km(x) = x·(10^-12)
+# @param x: real — a quantity in nanometres (nm)
+# @return real — The equivalent value in kilometres (km)
 nm_to_km(x) = x * (10 ^ -12)
+# @desc Unit conversion from centimetres (cm) to millimetres (mm). Formula: cm_to_mm(x) = x·10
+# @param x: real — a quantity in centimetres (cm)
+# @return real — The equivalent value in millimetres (mm)
 cm_to_mm(x) = x * 10
+# @desc Unit conversion from millimetres (mm) to centimetres (cm). Formula: mm_to_cm(x) = x·0.1
+# @param x: real — a quantity in millimetres (mm)
+# @return real — The equivalent value in centimetres (cm)
 mm_to_cm(x) = x * 0.1
+# @desc Unit conversion from millimetres (mm) to micrometres (μm). Formula: mm_to_um(x) = x·1000
+# @param x: real — a quantity in millimetres (mm)
+# @return real — The equivalent value in micrometres (μm)
 mm_to_um(x) = x * 1000
+# @desc Unit conversion from micrometres (μm) to millimetres (mm). Formula: um_to_mm(x) = x·0.001
+# @param x: real — a quantity in micrometres (μm)
+# @return real — The equivalent value in millimetres (mm)
 um_to_mm(x) = x * 0.001
+# @desc Unit conversion from micrometres (μm) to nanometres (nm). Formula: um_to_nm(x) = x·1000
+# @param x: real — a quantity in micrometres (μm)
+# @return real — The equivalent value in nanometres (nm)
 um_to_nm(x) = x * 1000
+# @desc Unit conversion from nanometres (nm) to micrometres (μm). Formula: nm_to_um(x) = x·0.001
+# @param x: real — a quantity in nanometres (nm)
+# @return real — The equivalent value in micrometres (μm)
 nm_to_um(x) = x * 0.001
+# @desc Unit conversion from statute miles (mi) to metres (m). Formula: mi_to_m(x) = x·1609.344
+# @param x: real — a quantity in statute miles (mi)
+# @return real — The equivalent value in metres (m)
 mi_to_m(x)  = x * 1609.344
+# @desc Unit conversion from statute miles (mi) to kilometres (km). Formula: mi_to_km(x) = x·1.609344
+# @param x: real — a quantity in statute miles (mi)
+# @return real — The equivalent value in kilometres (km)
 mi_to_km(x) = x * 1.609344
+# @desc Unit conversion from kilometres (km) to statute miles (mi). Formula: km_to_mi(x) = x / 1.609344
+# @param x: real — a quantity in kilometres (km)
+# @return real — The equivalent value in statute miles (mi)
 km_to_mi(x) = x / 1.609344
+# @desc Unit conversion from yards (yd) to metres (m). Formula: yd_to_m(x) = x·0.9144
+# @param x: real — a quantity in yards (yd)
+# @return real — The equivalent value in metres (m)
 yd_to_m(x)  = x * 0.9144
+# @desc Unit conversion from metres (m) to yards (yd). Formula: m_to_yd(x) = x / 0.9144
+# @param x: real — a quantity in metres (m)
+# @return real — The equivalent value in yards (yd)
 m_to_yd(x)  = x / 0.9144
+# @desc Unit conversion from feet (ft) to inches (in). Formula: ft_to_in(x) = x·12
+# @param x: real — a quantity in feet (ft)
+# @return real — The equivalent value in inches (in)
 ft_to_in(x) = x * 12
+# @desc Unit conversion from inches (in) to feet (ft). Formula: in_to_ft(x) = x / 12
+# @param x: real — a quantity in inches (in)
+# @return real — The equivalent value in feet (ft)
 in_to_ft(x) = x / 12
+# @desc Unit conversion from metres (m) to inches (in). Formula: m_to_in(x) = x / 0.0254
+# @param x: real — a quantity in metres (m)
+# @return real — The equivalent value in inches (in)
 m_to_in(x)  = x / 0.0254
+# @desc Unit conversion from inches (in) to metres (m). Formula: in_to_m(x) = x·0.0254
+# @param x: real — a quantity in inches (in)
+# @return real — The equivalent value in metres (m)
 in_to_m(x)  = x * 0.0254
 
 # 3. Angle Same-Unit Conversions (`angle` group: rad, deg, arcmin, arcsec)
@@ -60,13 +150,37 @@ in_to_m(x)  = x * 0.0254
 (a:real, angle) to_arcmin :90 -> real, none = a * (180 * 60) / π
 (a:real, angle) to_arcsec :90 -> real, none = a * (180 * 3600) / π
 
+# @desc Unit conversion from degrees (°) to radians (rad). Formula: deg_to_rad(x) = d·π / 180
+# @param d: real — a quantity in degrees (°)
+# @return real — The equivalent value in radians (rad)
 deg_to_rad(d)    = d * π / 180
+# @desc Unit conversion from radians (rad) to degrees (°). Formula: rad_to_deg(x) = r·180 / π
+# @param r: real — a quantity in radians (rad)
+# @return real — The equivalent value in degrees (°)
 rad_to_deg(r)    = r * 180 / π
+# @desc Unit conversion from degrees (°) to arcminutes (′). Formula: deg_to_arcmin(x) = d·60
+# @param d: real — a quantity in degrees (°)
+# @return real — The equivalent value in arcminutes (′)
 deg_to_arcmin(d) = d * 60
+# @desc Unit conversion from arcminutes (′) to degrees (°). Formula: arcmin_to_deg(x) = m / 60
+# @param m: real — a quantity in arcminutes (′)
+# @return real — The equivalent value in degrees (°)
 arcmin_to_deg(m) = m / 60
+# @desc Unit conversion from degrees (°) to arcseconds (″). Formula: deg_to_arcsec(x) = d·3600
+# @param d: real — a quantity in degrees (°)
+# @return real — The equivalent value in arcseconds (″)
 deg_to_arcsec(d) = d * 3600
+# @desc Unit conversion from arcseconds (″) to degrees (°). Formula: arcsec_to_deg(x) = s / 3600
+# @param s: real — a quantity in arcseconds (″)
+# @return real — The equivalent value in degrees (°)
 arcsec_to_deg(s) = s / 3600
+# @desc Unit conversion from radians (rad) to arcseconds (″). Formula: rad_to_arcsec(x) = r·(180·3600) / π
+# @param r: real — a quantity in radians (rad)
+# @return real — The equivalent value in arcseconds (″)
 rad_to_arcsec(r) = r * (180 * 3600) / π
+# @desc Unit conversion from arcseconds (″) to radians (rad). Formula: arcsec_to_rad(x) = s·π / (180·3600)
+# @param s: real — a quantity in arcseconds (″)
+# @return real — The equivalent value in radians (rad)
 arcsec_to_rad(s) = s * π / (180 * 3600)
 
 # 4. Mass Same-Unit Conversions (`mass` group: kg, gram, mg, ton, lb, oz)
@@ -77,17 +191,53 @@ arcsec_to_rad(s) = s * π / (180 * 3600)
 (m:real, mass) to_lb   :90 -> real, none = m / 0.45359237
 (m:real, mass) to_oz   :90 -> real, none = m / 0.028349523125
 
+# @desc Unit conversion from kilograms (kg) to grams (g). Formula: kg_to_g(x) = x·1000
+# @param x: real — a quantity in kilograms (kg)
+# @return real — The equivalent value in grams (g)
 kg_to_g(x)   = x * 1000
+# @desc Unit conversion from grams (g) to kilograms (kg). Formula: g_to_kg(x) = x·0.001
+# @param x: real — a quantity in grams (g)
+# @return real — The equivalent value in kilograms (kg)
 g_to_kg(x)   = x * 0.001
+# @desc Unit conversion from kilograms (kg) to milligrams (mg). Formula: kg_to_mg(x) = x·(10^6)
+# @param x: real — a quantity in kilograms (kg)
+# @return real — The equivalent value in milligrams (mg)
 kg_to_mg(x)  = x * (10 ^ 6)
+# @desc Unit conversion from milligrams (mg) to kilograms (kg). Formula: mg_to_kg(x) = x·(10^-6)
+# @param x: real — a quantity in milligrams (mg)
+# @return real — The equivalent value in kilograms (kg)
 mg_to_kg(x)  = x * (10 ^ -6)
+# @desc Unit conversion from grams (g) to milligrams (mg). Formula: g_to_mg(x) = x·1000
+# @param x: real — a quantity in grams (g)
+# @return real — The equivalent value in milligrams (mg)
 g_to_mg(x)   = x * 1000
+# @desc Unit conversion from milligrams (mg) to grams (g). Formula: mg_to_g(x) = x·0.001
+# @param x: real — a quantity in milligrams (mg)
+# @return real — The equivalent value in grams (g)
 mg_to_g(x)   = x * 0.001
+# @desc Unit conversion from metric tonnes (t) to kilograms (kg). Formula: ton_to_kg(x) = x·1000
+# @param x: real — a quantity in metric tonnes (t)
+# @return real — The equivalent value in kilograms (kg)
 ton_to_kg(x) = x * 1000
+# @desc Unit conversion from kilograms (kg) to metric tonnes (t). Formula: kg_to_ton(x) = x·0.001
+# @param x: real — a quantity in kilograms (kg)
+# @return real — The equivalent value in metric tonnes (t)
 kg_to_ton(x) = x * 0.001
+# @desc Unit conversion from pounds (lb) to ounces (oz). Formula: lb_to_oz(x) = x·16
+# @param x: real — a quantity in pounds (lb)
+# @return real — The equivalent value in ounces (oz)
 lb_to_oz(x)  = x * 16
+# @desc Unit conversion from ounces (oz) to pounds (lb). Formula: oz_to_lb(x) = x / 16
+# @param x: real — a quantity in ounces (oz)
+# @return real — The equivalent value in pounds (lb)
 oz_to_lb(x)  = x / 16
+# @desc Unit conversion from grams (g) to ounces (oz). Formula: g_to_oz(x) = x / 28.349523125
+# @param x: real — a quantity in grams (g)
+# @return real — The equivalent value in ounces (oz)
 g_to_oz(x)   = x / 28.349523125
+# @desc Unit conversion from ounces (oz) to grams (g). Formula: oz_to_g(x) = x·28.349523125
+# @param x: real — a quantity in ounces (oz)
+# @return real — The equivalent value in grams (g)
 oz_to_g(x)   = x * 28.349523125
 
 # 5. Time Same-Unit Conversions (`time` group: day, hr, min_t, sec, ms, us, ns)
@@ -99,23 +249,77 @@ oz_to_g(x)   = x * 28.349523125
 (t:real, time) to_hr  :90 -> real, none = t / 3600
 (t:real, time) to_day :90 -> real, none = t / 86400
 
+# @desc Unit conversion from hours to minutes. Formula: hr_to_min(x) = x·60
+# @param x: real — a quantity in hours
+# @return real — The equivalent value in minutes
 hr_to_min(x)  = x * 60
+# @desc Unit conversion from minutes to hours. Formula: min_to_hr(x) = x / 60
+# @param x: real — a quantity in minutes
+# @return real — The equivalent value in hours
 min_to_hr(x)  = x / 60
+# @desc Unit conversion from hours to seconds. Formula: hr_to_sec(x) = x·3600
+# @param x: real — a quantity in hours
+# @return real — The equivalent value in seconds
 hr_to_sec(x)  = x * 3600
+# @desc Unit conversion from seconds to hours. Formula: sec_to_hr(x) = x / 3600
+# @param x: real — a quantity in seconds
+# @return real — The equivalent value in hours
 sec_to_hr(x)  = x / 3600
+# @desc Unit conversion from minutes to seconds. Formula: min_to_sec(x) = x·60
+# @param x: real — a quantity in minutes
+# @return real — The equivalent value in seconds
 min_to_sec(x) = x * 60
+# @desc Unit conversion from seconds to minutes. Formula: sec_to_min(x) = x / 60
+# @param x: real — a quantity in seconds
+# @return real — The equivalent value in minutes
 sec_to_min(x) = x / 60
+# @desc Unit conversion from seconds to milliseconds (ms). Formula: sec_to_ms(x) = x·1000
+# @param x: real — a quantity in seconds
+# @return real — The equivalent value in milliseconds (ms)
 sec_to_ms(x)  = x * 1000
+# @desc Unit conversion from milliseconds (ms) to seconds. Formula: ms_to_sec(x) = x·0.001
+# @param x: real — a quantity in milliseconds (ms)
+# @return real — The equivalent value in seconds
 ms_to_sec(x)  = x * 0.001
+# @desc Unit conversion from milliseconds (ms) to microseconds (μs). Formula: ms_to_us(x) = x·1000
+# @param x: real — a quantity in milliseconds (ms)
+# @return real — The equivalent value in microseconds (μs)
 ms_to_us(x)   = x * 1000
+# @desc Unit conversion from microseconds (μs) to milliseconds (ms). Formula: us_to_ms(x) = x·0.001
+# @param x: real — a quantity in microseconds (μs)
+# @return real — The equivalent value in milliseconds (ms)
 us_to_ms(x)   = x * 0.001
+# @desc Unit conversion from microseconds (μs) to nanoseconds (ns). Formula: us_to_ns(x) = x·1000
+# @param x: real — a quantity in microseconds (μs)
+# @return real — The equivalent value in nanoseconds (ns)
 us_to_ns(x)   = x * 1000
+# @desc Unit conversion from nanoseconds (ns) to microseconds (μs). Formula: ns_to_us(x) = x·0.001
+# @param x: real — a quantity in nanoseconds (ns)
+# @return real — The equivalent value in microseconds (μs)
 ns_to_us(x)   = x * 0.001
+# @desc Unit conversion from seconds to nanoseconds (ns). Formula: sec_to_ns(x) = x·(10^9)
+# @param x: real — a quantity in seconds
+# @return real — The equivalent value in nanoseconds (ns)
 sec_to_ns(x)  = x * (10 ^ 9)
+# @desc Unit conversion from nanoseconds (ns) to seconds. Formula: ns_to_sec(x) = x·(10^-9)
+# @param x: real — a quantity in nanoseconds (ns)
+# @return real — The equivalent value in seconds
 ns_to_sec(x)  = x * (10 ^ -9)
+# @desc Unit conversion from days to hours. Formula: day_to_hr(x) = x·24
+# @param x: real — a quantity in days
+# @return real — The equivalent value in hours
 day_to_hr(x)  = x * 24
+# @desc Unit conversion from hours to days. Formula: hr_to_day(x) = x / 24
+# @param x: real — a quantity in hours
+# @return real — The equivalent value in days
 hr_to_day(x)  = x / 24
+# @desc Unit conversion from days to seconds. Formula: day_to_sec(x) = x·86400
+# @param x: real — a quantity in days
+# @return real — The equivalent value in seconds
 day_to_sec(x) = x * 86400
+# @desc Unit conversion from seconds to days. Formula: sec_to_day(x) = x / 86400
+# @param x: real — a quantity in seconds
+# @return real — The equivalent value in days
 sec_to_day(x) = x / 86400
 
 # 6. Speed Same-Unit Conversions (`speed` group: mps, kph, mph, knots)
@@ -124,13 +328,37 @@ sec_to_day(x) = x / 86400
 (v:real, speed) to_mph   :90 -> real, none = v / 0.44704
 (v:real, speed) to_knots :90 -> real, none = v * (3600 / 1852)
 
+# @desc Unit conversion from kilometres per hour (km/h) to metres per second (m/s). Formula: kph_to_mps(x) = x / 3.6
+# @param x: real — a quantity in kilometres per hour (km/h)
+# @return real — The equivalent value in metres per second (m/s)
 kph_to_mps(x)   = x / 3.6
+# @desc Unit conversion from miles per hour (mph) to metres per second (m/s). Formula: mph_to_mps(x) = x·0.44704
+# @param x: real — a quantity in miles per hour (mph)
+# @return real — The equivalent value in metres per second (m/s)
 mph_to_mps(x)   = x * 0.44704
+# @desc Unit conversion from kilometres per hour (km/h) to miles per hour (mph). Formula: kph_to_mph(x) = x / 1.609344
+# @param x: real — a quantity in kilometres per hour (km/h)
+# @return real — The equivalent value in miles per hour (mph)
 kph_to_mph(x)   = x / 1.609344
+# @desc Unit conversion from miles per hour (mph) to kilometres per hour (km/h). Formula: mph_to_kph(x) = x·1.609344
+# @param x: real — a quantity in miles per hour (mph)
+# @return real — The equivalent value in kilometres per hour (km/h)
 mph_to_kph(x)   = x * 1.609344
+# @desc Unit conversion from knots (kn) to metres per second (m/s). Formula: knots_to_mps(x) = x·(1852 / 3600)
+# @param x: real — a quantity in knots (kn)
+# @return real — The equivalent value in metres per second (m/s)
 knots_to_mps(x) = x * (1852 / 3600)
+# @desc Unit conversion from metres per second (m/s) to knots (kn). Formula: mps_to_knots(x) = x·(3600 / 1852)
+# @param x: real — a quantity in metres per second (m/s)
+# @return real — The equivalent value in knots (kn)
 mps_to_knots(x) = x * (3600 / 1852)
+# @desc Unit conversion from knots (kn) to kilometres per hour (km/h). Formula: knots_to_kph(x) = x·1.852
+# @param x: real — a quantity in knots (kn)
+# @return real — The equivalent value in kilometres per hour (km/h)
 knots_to_kph(x) = x * 1.852
+# @desc Unit conversion from kilometres per hour (km/h) to knots (kn). Formula: kph_to_knots(x) = x / 1.852
+# @param x: real — a quantity in kilometres per hour (km/h)
+# @return real — The equivalent value in knots (kn)
 kph_to_knots(x) = x / 1.852
 
 # 7. Pressure Same-Unit Conversions (`pressure` group: Pa, kPa, MPa, bar, atm, psi, torr)
@@ -142,19 +370,61 @@ kph_to_knots(x) = x / 1.852
 (p:real, pressure) to_psi  :90 -> real, none = p / 6894.757293168
 (p:real, pressure) to_torr :90 -> real, none = p * (760 / 101325)
 
+# @desc Unit conversion from atmospheres (atm) to pascals (Pa). Formula: atm_to_Pa(x) = x·101325
+# @param x: real — a quantity in atmospheres (atm)
+# @return real — The equivalent value in pascals (Pa)
 atm_to_Pa(x)   = x * 101325
+# @desc Unit conversion from pascals (Pa) to atmospheres (atm). Formula: Pa_to_atm(x) = x / 101325
+# @param x: real — a quantity in pascals (Pa)
+# @return real — The equivalent value in atmospheres (atm)
 Pa_to_atm(x)   = x / 101325
+# @desc Unit conversion from bar to pascals (Pa). Formula: bar_to_Pa(x) = x·100000
+# @param x: real — a quantity in bar
+# @return real — The equivalent value in pascals (Pa)
 bar_to_Pa(x)   = x * 100000
+# @desc Unit conversion from pascals (Pa) to bar. Formula: Pa_to_bar(x) = x / 100000
+# @param x: real — a quantity in pascals (Pa)
+# @return real — The equivalent value in bar
 Pa_to_bar(x)   = x / 100000
+# @desc Unit conversion from kilopascals (kPa) to pascals (Pa). Formula: kPa_to_Pa(x) = x·1000
+# @param x: real — a quantity in kilopascals (kPa)
+# @return real — The equivalent value in pascals (Pa)
 kPa_to_Pa(x)   = x * 1000
+# @desc Unit conversion from pascals (Pa) to kilopascals (kPa). Formula: Pa_to_kPa(x) = x / 1000
+# @param x: real — a quantity in pascals (Pa)
+# @return real — The equivalent value in kilopascals (kPa)
 Pa_to_kPa(x)   = x / 1000
+# @desc Unit conversion from pounds per square inch (psi) to pascals (Pa). Formula: psi_to_Pa(x) = x·6894.757293168
+# @param x: real — a quantity in pounds per square inch (psi)
+# @return real — The equivalent value in pascals (Pa)
 psi_to_Pa(x)   = x * 6894.757293168
+# @desc Unit conversion from pascals (Pa) to pounds per square inch (psi). Formula: Pa_to_psi(x) = x / 6894.757293168
+# @param x: real — a quantity in pascals (Pa)
+# @return real — The equivalent value in pounds per square inch (psi)
 Pa_to_psi(x)   = x / 6894.757293168
+# @desc Unit conversion from atmospheres (atm) to pounds per square inch (psi). Formula: atm_to_psi(x) = x·(101325 / 6894.757293168)
+# @param x: real — a quantity in atmospheres (atm)
+# @return real — The equivalent value in pounds per square inch (psi)
 atm_to_psi(x)  = x * (101325 / 6894.757293168)
+# @desc Unit conversion from pounds per square inch (psi) to atmospheres (atm). Formula: psi_to_atm(x) = x·(6894.757293168 / 101325)
+# @param x: real — a quantity in pounds per square inch (psi)
+# @return real — The equivalent value in atmospheres (atm)
 psi_to_atm(x)  = x * (6894.757293168 / 101325)
+# @desc Unit conversion from atmospheres (atm) to bar. Formula: atm_to_bar(x) = x·1.01325
+# @param x: real — a quantity in atmospheres (atm)
+# @return real — The equivalent value in bar
 atm_to_bar(x)  = x * 1.01325
+# @desc Unit conversion from bar to atmospheres (atm). Formula: bar_to_atm(x) = x / 1.01325
+# @param x: real — a quantity in bar
+# @return real — The equivalent value in atmospheres (atm)
 bar_to_atm(x)  = x / 1.01325
+# @desc Unit conversion from atmospheres (atm) to torr (mmHg). Formula: atm_to_torr(x) = x·760
+# @param x: real — a quantity in atmospheres (atm)
+# @return real — The equivalent value in torr (mmHg)
 atm_to_torr(x) = x * 760
+# @desc Unit conversion from torr (mmHg) to atmospheres (atm). Formula: torr_to_atm(x) = x / 760
+# @param x: real — a quantity in torr (mmHg)
+# @return real — The equivalent value in atmospheres (atm)
 torr_to_atm(x) = x / 760
 
 # 8. Energy & Power Same-Unit Conversions (`energy` & `power` groups)
@@ -172,25 +442,85 @@ torr_to_atm(x) = x / 760
 (p_v:real, power)  to_MW   :90 -> real, none = p_v / 1000000
 (p_v:real, power)  to_hp   :90 -> real, none = p_v / 745.699872
 
+# @desc Unit conversion from kilojoules (kJ) to joules (J). Formula: kJ_to_J(x) = x·1000
+# @param x: real — a quantity in kilojoules (kJ)
+# @return real — The equivalent value in joules (J)
 kJ_to_J(x)    = x * 1000
+# @desc Unit conversion from joules (J) to kilojoules (kJ). Formula: J_to_kJ(x) = x / 1000
+# @param x: real — a quantity in joules (J)
+# @return real — The equivalent value in kilojoules (kJ)
 J_to_kJ(x)    = x / 1000
+# @desc Unit conversion from kilocalories (kcal) to joules (J). Formula: kcal_to_J(x) = x·4184
+# @param x: real — a quantity in kilocalories (kcal)
+# @return real — The equivalent value in joules (J)
 kcal_to_J(x)  = x * 4184
+# @desc Unit conversion from joules (J) to kilocalories (kcal). Formula: J_to_kcal(x) = x / 4184
+# @param x: real — a quantity in joules (J)
+# @return real — The equivalent value in kilocalories (kcal)
 J_to_kcal(x)  = x / 4184
+# @desc Unit conversion from kilocalories (kcal) to kilojoules (kJ). Formula: kcal_to_kJ(x) = x·4.184
+# @param x: real — a quantity in kilocalories (kcal)
+# @return real — The equivalent value in kilojoules (kJ)
 kcal_to_kJ(x) = x * 4.184
+# @desc Unit conversion from kilojoules (kJ) to kilocalories (kcal). Formula: kJ_to_kcal(x) = x / 4.184
+# @param x: real — a quantity in kilojoules (kJ)
+# @return real — The equivalent value in kilocalories (kcal)
 kJ_to_kcal(x) = x / 4.184
+# @desc Unit conversion from calories (cal) to joules (J). Formula: cal_to_J(x) = x·4.184
+# @param x: real — a quantity in calories (cal)
+# @return real — The equivalent value in joules (J)
 cal_to_J(x)   = x * 4.184
+# @desc Unit conversion from joules (J) to calories (cal). Formula: J_to_cal(x) = x / 4.184
+# @param x: real — a quantity in joules (J)
+# @return real — The equivalent value in calories (cal)
 J_to_cal(x)   = x / 4.184
+# @desc Unit conversion from kilowatt-hours (kWh) to joules (J). Formula: kWh_to_J(x) = x·3600000
+# @param x: real — a quantity in kilowatt-hours (kWh)
+# @return real — The equivalent value in joules (J)
 kWh_to_J(x)   = x * 3600000
+# @desc Unit conversion from joules (J) to kilowatt-hours (kWh). Formula: J_to_kWh(x) = x / 3600000
+# @param x: real — a quantity in joules (J)
+# @return real — The equivalent value in kilowatt-hours (kWh)
 J_to_kWh(x)   = x / 3600000
+# @desc Unit conversion from watt-hours (Wh) to joules (J). Formula: Wh_to_J(x) = x·3600
+# @param x: real — a quantity in watt-hours (Wh)
+# @return real — The equivalent value in joules (J)
 Wh_to_J(x)    = x * 3600
+# @desc Unit conversion from joules (J) to watt-hours (Wh). Formula: J_to_Wh(x) = x / 3600
+# @param x: real — a quantity in joules (J)
+# @return real — The equivalent value in watt-hours (Wh)
 J_to_Wh(x)    = x / 3600
+# @desc Unit conversion from kilowatts (kW) to watts (W). Formula: kW_to_W(x) = x·1000
+# @param x: real — a quantity in kilowatts (kW)
+# @return real — The equivalent value in watts (W)
 kW_to_W(x)    = x * 1000
+# @desc Unit conversion from watts (W) to kilowatts (kW). Formula: W_to_kW(x) = x / 1000
+# @param x: real — a quantity in watts (W)
+# @return real — The equivalent value in kilowatts (kW)
 W_to_kW(x)    = x / 1000
+# @desc Unit conversion from megawatts (MW) to watts (W). Formula: MW_to_W(x) = x·1000000
+# @param x: real — a quantity in megawatts (MW)
+# @return real — The equivalent value in watts (W)
 MW_to_W(x)    = x * 1000000
+# @desc Unit conversion from watts (W) to megawatts (MW). Formula: W_to_MW(x) = x / 1000000
+# @param x: real — a quantity in watts (W)
+# @return real — The equivalent value in megawatts (MW)
 W_to_MW(x)    = x / 1000000
+# @desc Unit conversion from mechanical horsepower (hp) to watts (W). Formula: hp_to_W(x) = x·745.699872
+# @param x: real — a quantity in mechanical horsepower (hp)
+# @return real — The equivalent value in watts (W)
 hp_to_W(x)    = x * 745.699872
+# @desc Unit conversion from watts (W) to mechanical horsepower (hp). Formula: W_to_hp(x) = x / 745.699872
+# @param x: real — a quantity in watts (W)
+# @return real — The equivalent value in mechanical horsepower (hp)
 W_to_hp(x)    = x / 745.699872
+# @desc Unit conversion from mechanical horsepower (hp) to kilowatts (kW). Formula: hp_to_kW(x) = x·0.745699872
+# @param x: real — a quantity in mechanical horsepower (hp)
+# @return real — The equivalent value in kilowatts (kW)
 hp_to_kW(x)   = x * 0.745699872
+# @desc Unit conversion from kilowatts (kW) to mechanical horsepower (hp). Formula: kW_to_hp(x) = x / 0.745699872
+# @param x: real — a quantity in kilowatts (kW)
+# @return real — The equivalent value in mechanical horsepower (hp)
 kW_to_hp(x)   = x / 0.745699872
 
 # 9. Derived Compound Unit Conversions (`area`, `volume`, `acceleration`, `force`, `frequency`, `momentum`, `density`)
@@ -244,17 +574,53 @@ kW_to_hp(x)   = x / 0.745699872
 (r_v:real, resistance)  to_ohm  :90 -> real, none = r_v
 (r_v:real, resistance)  to_kohm :90 -> real, none = r_v / 1000
 
+# @desc Unit conversion from newtons (N) to kilonewtons (kN). Formula: N_to_kN(x) = x / 1000
+# @param x: real — a quantity in newtons (N)
+# @return real — The equivalent value in kilonewtons (kN)
 N_to_kN(x)   = x / 1000
+# @desc Unit conversion from kilonewtons (kN) to newtons (N). Formula: kN_to_N(x) = x·1000
+# @param x: real — a quantity in kilonewtons (kN)
+# @return real — The equivalent value in newtons (N)
 kN_to_N(x)   = x * 1000
+# @desc Unit conversion from newtons (N) to pounds-force (lbf). Formula: N_to_lbf(x) = x / 4.4482216152605
+# @param x: real — a quantity in newtons (N)
+# @return real — The equivalent value in pounds-force (lbf)
 N_to_lbf(x)  = x / 4.4482216152605
+# @desc Unit conversion from pounds-force (lbf) to newtons (N). Formula: lbf_to_N(x) = x·4.4482216152605
+# @param x: real — a quantity in pounds-force (lbf)
+# @return real — The equivalent value in newtons (N)
 lbf_to_N(x)  = x * 4.4482216152605
+# @desc Unit conversion from newtons (N) to dynes (dyn). Formula: N_to_dyn(x) = x·100000
+# @param x: real — a quantity in newtons (N)
+# @return real — The equivalent value in dynes (dyn)
 N_to_dyn(x)  = x * 100000
+# @desc Unit conversion from dynes (dyn) to newtons (N). Formula: dyn_to_N(x) = x / 100000
+# @param x: real — a quantity in dynes (dyn)
+# @return real — The equivalent value in newtons (N)
 dyn_to_N(x)  = x / 100000
+# @desc Unit conversion from litres (L) to cubic metres (m³). Formula: L_to_m3(x) = x·0.001
+# @param x: real — a quantity in litres (L)
+# @return real — The equivalent value in cubic metres (m³)
 L_to_m3(x)   = x * 0.001
+# @desc Unit conversion from cubic metres (m³) to litres (L). Formula: m3_to_L(x) = x·1000
+# @param x: real — a quantity in cubic metres (m³)
+# @return real — The equivalent value in litres (L)
 m3_to_L(x)   = x * 1000
+# @desc Unit conversion from litres (L) to millilitres (mL). Formula: L_to_mL(x) = x·1000
+# @param x: real — a quantity in litres (L)
+# @return real — The equivalent value in millilitres (mL)
 L_to_mL(x)   = x * 1000
+# @desc Unit conversion from millilitres (mL) to litres (L). Formula: mL_to_L(x) = x·0.001
+# @param x: real — a quantity in millilitres (mL)
+# @return real — The equivalent value in litres (L)
 mL_to_L(x)   = x * 0.001
+# @desc Unit conversion from US gallons (gal) to litres (L). Formula: gal_to_L(x) = x·3.785411784
+# @param x: real — a quantity in US gallons (gal)
+# @return real — The equivalent value in litres (L)
 gal_to_L(x)  = x * 3.785411784
+# @desc Unit conversion from litres (L) to US gallons (gal). Formula: L_to_gal(x) = x / 3.785411784
+# @param x: real — a quantity in litres (L)
+# @return real — The equivalent value in US gallons (gal)
 L_to_gal(x)  = x / 3.785411784
 
 # 10. Temperature, Molar / Chemical & Photometric Same-Unit Conversions (`K`, `mol`, `cd`)

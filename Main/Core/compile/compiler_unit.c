@@ -133,20 +133,43 @@ bool ext_compile_unit(MemArena *mem, const SymTable *tab,
     if (!raw_math_text) {
         return build_fail(mem, ctx, "Null extension source string");
     }
-    size_t raw_len = strlen(raw_math_text);
-    if (raw_len > 65534u) {
+    uint32_t base_off = ctx->pool_used;
+    char *dst = ctx->src_pool + base_off;
+    size_t stripped_len = 0;
+    bool in_str = false;
+    for (size_t i = 0; raw_math_text[i] != '\0'; ) {
+        char c = raw_math_text[i];
+        if (c == '\\' && in_str && raw_math_text[i + 1] != '\0') {
+            if (base_off + stripped_len + 3u > EXT_STAGE_POOL_CAP) {
+                return build_fail(mem, ctx, "Extension staging pool overflow");
+            }
+            dst[stripped_len++] = c;
+            dst[stripped_len++] = raw_math_text[i + 1];
+            i += 2;
+            continue;
+        }
+        if (c == '"') {
+            in_str = !in_str;
+        } else if (c == '#' && !in_str) {
+            while (raw_math_text[i] != '\0' && raw_math_text[i] != '\n') {
+                i++;
+            }
+            continue;
+        }
+        if (base_off + stripped_len + 2u > EXT_STAGE_POOL_CAP) {
+            return build_fail(mem, ctx, "Extension staging pool overflow");
+        }
+        dst[stripped_len++] = c;
+        i++;
+    }
+    dst[stripped_len] = '\0';
+    if (stripped_len > 65534u) {
         return build_fail(mem, ctx, "Extension source length exceeds maximum (65534 bytes)");
     }
-    if (ctx->pool_used + (uint32_t)raw_len + 1u > EXT_STAGE_POOL_CAP) {
-        return build_fail(mem, ctx, "Extension staging pool overflow");
-    }
-
-    uint32_t base_off = ctx->pool_used;
-    memcpy(ctx->src_pool + base_off, raw_math_text, raw_len + 1u);
-    ctx->pool_used += (uint32_t)raw_len + 1u;
+    ctx->pool_used += (uint32_t)stripped_len + 1u;
 
     const char *src = ctx->src_pool + base_off;
-    uint16_t    len = (uint16_t)raw_len;
+    uint16_t    len = (uint16_t)stripped_len;
     uint16_t    pos = 0;
 
     int  cur_u          = -1;

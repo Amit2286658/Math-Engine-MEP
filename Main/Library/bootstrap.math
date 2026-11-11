@@ -108,13 +108,41 @@ return()                     = @return_fn(0)
 return(val:T)           -> T = @return_fn(val)
 
 # 11. Symbolic Expression Differentiation, Integration, Equation Solving, Simplification & Evaluation
+# @desc Computes the exact symbolic derivative d(expr)/d(var_x) using the native CAS differentiation rules and algebraic simplification. Formula: sym_diff(var_x, expr) = @sym_diff(var_x, expr)
+# @param var_x: ident — Differentiation variable symbol (e.g. `x`)
+# @param expr: ast — Symbolic expression f(x) to differentiate
+# @return str — Exact symbolic derivative string f'(x)
 sym_diff(var_x, expr)              -> str = @sym_diff(var_x, expr)
 sym_diff(var_x, expr, order)       -> str = @sym_diff(var_x, expr, order)
+# @desc Computes the exact n-th symbolic derivative dⁿ(expr)/d(var_x)ⁿ using the native CAS engine. Formula: sym_diff_n(var_x, expr, order)
+# @param var_x: ident — Differentiation variable symbol (e.g. `x`)
+# @param expr: ast — Symbolic expression f(x)
+# @param order: int — Derivative order n ≥ 1
+# @return str — Exact n-th symbolic derivative string
 sym_diff_n(var_x, expr, order)     -> str = @sym_diff(var_x, expr, order)
+# @desc Computes the symbolic indefinite antiderivative ∫ expr d(var_x) using the native CAS integration engine. Formula: sym_integ(var_x, expr) = @sym_integ(var_x, expr)
+# @param var_x: ident — Integration variable symbol (e.g. `x`)
+# @param expr: ast — Symbolic integrand expression f(x)
+# @return str — Symbolic antiderivative F(x)
 sym_integ(var_x, expr)             -> str = @sym_integ(var_x, expr)
+# @desc Solves a polynomial or algebraic equation `eq` symbolically for variable `var_x`. Formula: sym_solve(var_x, eq) = @sym_solve(var_x, eq)
+# @param var_x: ident — Unknown variable symbol to solve for (e.g. `x`)
+# @param eq: ast — Symbolic equation (e.g. `x^2 - 5*x + 6 == 0`)
+# @return str | vec — Exact or numeric roots of the equation
 sym_solve(var_x, eq)               -> str = @sym_solve(var_x, eq)
+# @desc Symbolically simplifies an algebraic, trigonometric, or exponential expression into canonical reduced form. Formula: sym_simplify(expr) = @sym_simplify(expr)
+# @param expr: ast — Symbolic mathematical expression to simplify
+# @return str — Simplified symbolic expression string
 sym_simplify(expr:T)               -> str = @sym_simplify(expr)
+# @desc Symbolically simplifies an algebraic or trigonometric expression into canonical reduced form. Formula: simplify(expr) = @sym_simplify(expr)
+# @param expr: ast — Symbolic mathematical expression to simplify
+# @return str — Simplified symbolic expression string
 simplify(expr:T)                   -> str = @sym_simplify(expr)
+# @desc Evaluates a symbolic expression string `expr_str` by substituting `var_x = val`. Formula: sym_eval(expr_str, var_x, val)
+# @param expr_str: str — Symbolic expression string (e.g. output from `sym_diff`)
+# @param var_x: ident — Variable symbol to substitute
+# @param val: real — Numeric value to bind to `var_x`
+# @return real — Numeric value of `expr_str` at `var_x = val`
 sym_eval(expr_str:str, var_x, val)        = @sym_eval(expr_str, var_x, val)
 
 # 12. Runtime Entity/Unit Introspection, Unit Transfer (`raw_val`, `with_unit`),
@@ -122,10 +150,26 @@ sym_eval(expr_str:str, var_x, val)        = @sym_eval(expr_str, var_x, val)
 raw_val(x)           -> real, none = @raw(x)
 with_unit(val, donor)              = @raw(val, donor)
 with_unit(val:str, donor:T) -> str = val
+# @desc Returns the runtime entity type name (`"real"`, `"vec"`, `"mat"`, `"map"`, `"str"`, or custom struct name) of value `x`. Formula: type_of(x) = @type_name(x)
+# @param x: any — Any runtime value or struct instance
+# @return str — Runtime type name string
 type_of(x:T)         -> str        = @type_name(x)
+# @desc Returns the static or runtime element type annotation of a container `x` (e.g. `"vec2"` for `vec<vec2>`). Formula: elem_type_of(x) = @type_name(x, 1)
+# @param x: any — Container or value to inspect
+# @return str — Element type name string
 elem_type_of(x:T)    -> str        = @type_name(x, 1)
+# @desc Returns the full type signature descriptor of value or container `x`. Formula: type_sig_of(x) = @type_name(x, 2)
+# @param x: any — Value or container to inspect
+# @return str — Full runtime type signature string
 type_sig_of(x:T)     -> str        = @type_name(x, 2)
+# @desc Returns the physical quantity category name (e.g. `"length"`, `"force"`, `"energy"`, `"none"`) of a unit-tagged value `x`. Formula: unit_of(x) = @unit_name(x)
+# @param x: real — Value carrying 7D SI physical dimensions
+# @return str — Physical unit category name
 unit_of(x:T)         -> str        = @unit_name(x)
+# @desc 7D SI dimension (m, kg, s, A, K, mol, cd) of a unit-tagged value. Define: unit_dim(x, axis) = @unit_name(x, axis)
+# @param x: real — the unit-tagged value to inspect
+# @param axis: real — optional axis selector (default \"dim\": 7D SI dimension; \"unit\": unit string; \"scale\": SI scale factor)
+# @return real — The 7D SI dimension descriptor (or axis-selected form)
 unit_dim(x:T, axis)                = @unit_name(x, axis)
 gc_compact()                       = @gc_compact(0)
 pool_used()                        = @pool_used(0)

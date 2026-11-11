@@ -69,10 +69,26 @@ $complex(re, im) => @complex_type
             (a.im * b.re - a.re * b.im) / denom)
 }
 
+# @desc Computes the complex conjugate z* = re − im·i of a `$complex(re, im)` number. Formula: conj(z) = complex(z.re, -z.im)
+# @param z: complex — Input complex number `complex(re, im)`
+# @return complex — Complex conjugate `complex(z.re, -z.im)`
 conj(z:complex, T)      -> complex, T = complex(z.re, -z.im)
+# @desc Computes the modulus (magnitude) |z| = √(re² + im²) of a `$complex(re, im)` number. Formula: cabs(z) = √(z.re^2 + z.im^2)
+# @param z: complex — Input complex number `complex(re, im)`
+# @return real — Non-negative complex magnitude |z| ≥ 0
 cabs(z:complex, T)      -> real, T    = √(z.re^2 + z.im^2)
+# @desc Computes the phase angle (argument) arg(z) = atan2(im, re) of a `$complex(re, im)` number in radians. Formula: carg(z) = atan2(z.im, z.re)
+# @param z: complex — Input complex number `complex(re, im)`
+# @return real — Phase angle arg(z) in (−π, π] radians
 carg(z:complex)                       = atan2(z.im, z.re)
+# @desc Evaluates Euler's formula e^(i·θ) = cos(θ) + i·sin(θ) on the unit circle in the complex plane. Formula: cexp_i(theta) = complex(cos(theta), sin(theta))
+# @param theta: real — Phase angle θ
+# @return complex — Unit complex phasor `complex(cos(theta), sin(theta))`
 cexp_i(theta)           -> complex    = complex(cos(theta), sin(theta))
+# @desc Constructs a `$complex` number from polar magnitude `r` and phase angle `theta`: r·(cos(θ) + i·sin(θ)). Formula: polar(r, theta) = complex(r · cos(theta), r · sin(theta))
+# @param r: real — Radial magnitude r ≥ 0
+# @param theta: real — Phase angle θ (radians, or degrees in Degree mode)
+# @return complex — Complex number `complex(r·cos(theta), r·sin(theta))`
 polar(r:real, T, theta) -> complex, T = complex(r * cos(theta), r * sin(theta))
 
 # Mixed scalar/imaginary * and / with complex, plus re/im extractors
@@ -81,22 +97,54 @@ polar(r:real, T, theta) -> complex, T = complex(r * cos(theta), r * sin(theta))
 (z:complex, T) "*" (b:iota)       :<60 -> complex, T = complex(-z.im * @raw(b), z.re * @raw(b))
 (z:complex, T) "/" (b:iota)       :<60 -> complex, T = complex(z.im / @raw(b), -z.re / @raw(b))
 (a:iota)       "/" (z:complex)    :<60 -> complex    = complex(0, @raw(a)) / z
+# @desc Extracts the real part Re(z) of a `$complex(re, im)` number. Formula: re(z) = z.re
+# @param z: complex — Input complex number `complex(re, im)`
+# @return real — Real component `z.re`
 re(z:complex, T)        -> real, T    = z.re
+# @desc Extracts the imaginary part Im(z) of a `$complex(re, im)` number. Formula: im(z) = z.im
+# @param z: complex — Input complex number `complex(re, im)`
+# @return real — Imaginary component `z.im`
 im(z:complex, T)        -> real, T    = z.im
 
-# Complex Powers, Roots & Transcendental Functions
+# @desc Natural exponential e^x. Define: exp(x) = @exp(x)
+# @param x: real — exponent of the natural base e
+# @return real — A positive real number e^x
 exp(z:complex)                    -> complex = polar(exp(z.re), z.im)
+# @desc Natural logarithm (base e). Define: ln(x) = @ln(x)
+# @param x: real — positive real argument
+# @return real — A real number (defined for x > 0)
 ln(z:complex)                     -> complex = complex(ln(cabs(z)), carg(z))
 (z:complex) "^" (p:real)    :>85  -> complex = polar(cabs(z) ^ p, carg(z) * p)
 (z:complex) "^" (w:complex) :>85  -> complex = exp(w * ln(z))
 (a:real)    "^" (w:complex) :>85  -> complex = exp(w * ln(a))
 "√" (z:complex)             :80   -> complex = polar(√cabs(z), carg(z) / 2)
+# @desc Principal square root. Define: sqrt(x) = @sqrt(x)
+# @param x: real — non-negative real argument
+# @return real — A non-negative real number (principal root)
 sqrt(z:complex)                   -> complex = √z
+# @desc Sine of x (radians; honours the calculator’s deg/rad mode). Define: sin(x) = @sin(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A value in [−1, 1] (sine rises and falls within this band)
 sin(z:complex)                    -> complex = complex(sin(z.re) * cosh(z.im), cos(z.re) * sinh(z.im))
+# @desc Cosine of x (radians; honours the deg/rad mode). Define: cos(x) = @cos(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A value in [−1, 1]
 cos(z:complex)                    -> complex = complex(cos(z.re) * cosh(z.im), -sin(z.re) * sinh(z.im))
+# @desc Tangent of x; asymptotes reported as errors, not huge values. Define: tan(x) = @tan(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A real number (unbounded; tangent asymptotes report errors)
 tan(z:complex)                    -> complex = sin(z) / cos(z)
+# @desc Hyperbolic sine (e^x − e^−x)/2. Define: sinh(x) = ½·(@exp(x) - @exp(-x))
+# @param x: real — real argument
+# @return real — A real number (unbounded)
 sinh(z:complex)                   -> complex = complex(sinh(z.re) * cos(z.im), cosh(z.re) * sin(z.im))
+# @desc Hyperbolic cosine (e^x + e^−x)/2. Define: cosh(x) = ½·(@exp(x) + @exp(-x))
+# @param x: real — real argument
+# @return real — A value in [1, ∞)
 cosh(z:complex)                   -> complex = complex(cosh(z.re) * cos(z.im), sinh(z.re) * sin(z.im))
+# @desc Hyperbolic tangent. Define: tanh(x) = (@exp(x) - @exp(-x)) / (@exp(x) + @exp(-x))
+# @param x: real — real argument
+# @return real — A value in (−1, 1)
 tanh(z:complex)                   -> complex = sinh(z) / cosh(z)
 
 # Equality and Approximate Equality (`~`) for complex numbers

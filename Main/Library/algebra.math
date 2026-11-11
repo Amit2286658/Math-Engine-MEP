@@ -50,17 +50,36 @@ $mat2(a, b, c, d)
 (m1:mat2) "~"  (m2:mat2) :<30 =
     (m1.a ~ m2.a) && (m1.b ~ m2.b) && (m1.c ~ m2.c) && (m1.d ~ m2.d)
 
+# @desc Computes the scalar determinant det(M) of a square n×n matrix (via LU decomposition) or a 2×2 `$mat2` struct. Formula: det(m)
+# @param m: mat | mat2 — Square n×n matrix or `$mat2` struct
+# @return real — Scalar determinant det(m)
 det(m:mat2)              = m.a * m.d - m.b * m.c
+# @desc Computes the matrix trace tr(M) = ∑ M[i, i], the sum of elements along the main diagonal. Formula: trace(m)
+# @param m: mat | mat2 — Square matrix or `$mat2` struct
+# @return real — Sum of diagonal elements tr(m)
 trace(m:mat2)            = m.a + m.d
+# @desc Flips a matrix M over its main diagonal, turning an r×c matrix into a c×r matrix Mᵀ. Formula: transpose(m)
+# @param m: mat | mat2 — Input r×c matrix or 2×2 `$mat2` struct
+# @return mat | mat2 — Transposed c×r matrix Mᵀ
 transpose(m:mat2) -> mat2 = mat2(m.a, m.c, m.b, m.d)
 
+# @desc Computes the exact inverse of a 2×2 `$mat2(a, b, c, d)` struct: (1 / (ad − bc)) · mat2(d, −b, −c, a). Formula: inv_mat2(m)
+# @param m: mat2 — Invertible 2×2 matrix struct `mat2(a, b, c, d)`
+# @return mat2 — Inverse 2×2 matrix struct
 inv_mat2(m:mat2) -> mat2 = {
     d := det(m)
     mat2(m.d / d, -m.b / d, -m.c / d, m.a / d)
 }
 
 # 2. 2x2 Linear Equation System Solver (Cramer's Rule)
-#    Solves: a1*x + b1*y = c1,  a2*x + b2*y = c2  -> returns vec2(x, y)
+# @desc Solves the 2×2 linear system a₁x + b₁y = c₁ and a₂x + b₂y = c₂ via Cramer's Rule, returning `vec2(x, y)`. Formula: solve_2x2(a1, b1, c1, a2, b2, c2)
+# @param a1: real — Coefficient of x in equation 1
+# @param b1: real — Coefficient of y in equation 1
+# @param c1: real — Right-hand side constant of equation 1
+# @param a2: real — Coefficient of x in equation 2
+# @param b2: real — Coefficient of y in equation 2
+# @param c2: real — Right-hand side constant of equation 2
+# @return vec2 — Solution pair `vec2(x, y)`
 solve_2x2(a1, b1, c1, a2, b2, c2) -> vec2 = {
     d  := a1 * b2 - b1 * a2
     dx := c1 * b2 - b1 * c2
@@ -69,15 +88,28 @@ solve_2x2(a1, b1, c1, a2, b2, c2) -> vec2 = {
 }
 
 # 3. Quadratic Equation Solvers (`a*x^2 + b*x + c = 0`)
+# @desc Calculates the quadratic discriminant Δ = b² − 4ac of a polynomial ax² + bx + c = 0 (Δ > 0: two distinct real roots; Δ = 0: repeated root; Δ < 0: complex conjugate roots). Formula: quad_disc(a, b, c) = b^2 - 4·a·c
+# @param a: real — Coefficient of x²
+# @param b: real — Coefficient of x
+# @param c: real — Constant term
+# @return real — Discriminant Δ = b² − 4ac
 quad_disc(a, b, c) = b^2 - 4a * c
 
-# Real roots `vec2(r1, r2)` when discriminant >= 0
+# @desc Computes the two real roots `vec2(r1, r2)` of a quadratic equation ax² + bx + c = 0 when Δ = b² − 4ac ≥ 0. Formula: quad_roots(a, b, c) = vec2((-b - √Δ)/(2a), (-b + √Δ)/(2a))
+# @param a: real — Quadratic x² coefficient (a ≠ 0)
+# @param b: real — Linear x coefficient
+# @param c: real — Constant term
+# @return vec2 — Pair of real roots `vec2(r1, r2)`
 quad_roots(a, b, c) -> vec2 = {
     sd := √(b^2 - 4a * c)
     vec2((-b + sd) / (2a), (-b - sd) / (2a))
 }
 
-# Principal root in `$complex` (handles both real and complex roots when disc < 0!)
+# @desc Computes the principal root of ax² + bx + c = 0 as a `$complex` number (handling both real roots when Δ ≥ 0 and complex roots when Δ < 0). Formula: quad_croot(a, b, c)
+# @param a: real — Quadratic x² coefficient (a ≠ 0)
+# @param b: real — Linear x coefficient
+# @param c: real — Constant term
+# @return complex — Principal root `complex(re, im)`
 quad_croot(a, b, c) -> complex = {
     d := b^2 - 4a * c
     if (d >= 0) {
@@ -90,7 +122,10 @@ quad_croot(a, b, c) -> complex = {
 # 4. Symbolic & Numerical Polynomial Algebra on `$vec`
 #    Polynomial `P(x) = c_0 + c_1*x + c_2*x^2 + ... + c_n*x^n` stored as `[c_0, c_1, ..., c_n]`
 
-# 4a. Horner's Method Evaluation `poly_val(coeffs, x)` in O(n) operations
+# @desc Evaluates a polynomial with ascending coefficient vector `coeffs = [c₀, c₁, c₂, ...]` at `x` using O(n) Horner's scheme. Formula: poly_val(coeffs, x)
+# @param coeffs: vec — Coefficient vector `[c0, c1, c2, ...]` in ascending powers of x
+# @param x: real — Evaluation point x
+# @return real — Polynomial value P(x)
 poly_val(coeffs:vec, x) = {
     n   := coeffs.len()
     acc := 0
@@ -102,7 +137,9 @@ poly_val(coeffs:vec, x) = {
     acc
 }
 
-# 4b. Symbolic Polynomial Derivative `poly_deriv([c0, c1, c2, c3])` -> `[c1, 2*c2, 3*c3]`
+# @desc Computes the derivative coefficient vector `[c₁, 2c₂, 3c₃, ...]` of polynomial `coeffs = [c₀, c₁, c₂, ...]`. Formula: poly_deriv(coeffs)
+# @param coeffs: vec — Ascending polynomial coefficient vector `[c0, c1, c2, ...]`
+# @return vec — Coefficient vector of the derivative polynomial P'(x)
 poly_deriv(coeffs:vec) -> vec = {
     n   := coeffs.len()
     out := vec<real>()
@@ -116,7 +153,10 @@ poly_deriv(coeffs:vec) -> vec = {
     out
 }
 
-# 4c. Symbolic Polynomial Indefinite Integral `poly_integ(coeffs, c0)`
+# @desc Computes the indefinite integral coefficient vector `[c0, coeffs[0], coeffs[1]/2, ...]` of polynomial `coeffs` with integration constant `c0`. Formula: poly_integ(coeffs, c0 = 0)
+# @param coeffs: vec — Ascending polynomial coefficient vector
+# @param c0: real — Constant of integration (default 0)
+# @return vec — Coefficient vector of the integrated polynomial ∫P(x) dx
 poly_integ(coeffs:vec, c0 = 0) -> vec = {
     n   := coeffs.len()
     out := vec<real>()
@@ -129,7 +169,10 @@ poly_integ(coeffs:vec, c0 = 0) -> vec = {
     out
 }
 
-# 4d. Symbolic Polynomial Addition `poly_add(p, q)`
+# @desc Adds two polynomials represented by ascending coefficient vectors `p` and `q`. Formula: poly_add(p, q)
+# @param p: vec — First polynomial coefficient vector
+# @param q: vec — Second polynomial coefficient vector
+# @return vec — Coefficient vector of the sum polynomial P(x) + Q(x)
 poly_add(p:vec, q:vec) -> vec = {
     np  := p.len()
     nq  := q.len()
@@ -145,7 +188,10 @@ poly_add(p:vec, q:vec) -> vec = {
     out
 }
 
-# 4e. Symbolic Polynomial Multiplication (Cauchy Convolution) `poly_mul(p, q)`
+# @desc Multiplies two polynomials `p` and `q` via discrete Cauchy convolution of their coefficient vectors. Formula: poly_mul(p, q)
+# @param p: vec — First polynomial coefficient vector
+# @param q: vec — Second polynomial coefficient vector
+# @return vec — Coefficient vector of the product polynomial P(x) · Q(x)
 poly_mul(p:vec, q:vec) -> vec = {
     np  := p.len()
     nq  := q.len()
@@ -160,7 +206,11 @@ poly_mul(p:vec, q:vec) -> vec = {
     out
 }
 
-# 4f. Newton-Raphson Polynomial Root Solver `poly_newton(coeffs, x0, steps)`
+# @desc Finds a root of polynomial `coeffs` starting from `x0` using `steps` iterations of Newton-Raphson refinement. Formula: poly_newton(coeffs, x0, steps = 12)
+# @param coeffs: vec — Ascending polynomial coefficient vector
+# @param x0: real — Initial root guess x₀
+# @param steps: int — Number of Newton-Raphson iterations (default 12)
+# @return real — Refined polynomial root x
 poly_newton(coeffs:vec, x0, steps = 12) = {
     dp := poly_deriv(coeffs)
     x  := x0
@@ -172,6 +222,9 @@ poly_newton(coeffs:vec, x0, steps = 12) = {
     x
 }
 
+# @desc Computes the multiplicative inverse M⁻¹ of a non-singular square n×n matrix or `$mat2` struct such that M · M⁻¹ = I. Formula: inv(m)
+# @param m: mat | mat2 — Invertible square matrix (det(m) ≠ 0)
+# @return mat | mat2 — Inverse matrix M⁻¹
 mat2::inv(self) -> mat2  = inv_mat2(self)
 
 poly_val(coeffs:mat, x)                 = poly_val(flatten(coeffs), x)

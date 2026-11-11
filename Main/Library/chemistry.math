@@ -17,88 +17,347 @@ P_stp     = 101325                        # Standard pressure (Pa = 1 atm)
 kw_water  = 10 ^ -14                      # Autoionization constant of water at 25 C
 
 # 2. Stoichiometry, Empirical Composition, Solutions & Concentration Units
+# @desc Amount of substance n = mass / molar mass. Define: moles(mass_g, molar_mass) = mass_g / molar_mass
+# @param mass_g: real — mass of substance (g)
+# @param molar_mass: real — molar mass (g/mol)
+# @return real — An amount of substance in moles (mol)
 moles(mass_g, molar_mass)              = mass_g / molar_mass
+# @desc Calculates the mass m = n · M of a substance in grams from its amount in moles and molar mass. Formula: mass_from_moles(n_mol, molar_mass) = n_mol · molar_mass
+# @param n_mol: real — Chemical amount of substance n in moles (mol)
+# @param molar_mass: real — Molar mass M of the substance in grams per mole (g/mol)
+# @return real — Mass of the substance in grams (g)
 mass_from_moles(n_mol, molar_mass)     = n_mol * molar_mass
+# @desc Converts chemical amount in moles to the total number of elementary entities (atoms, molecules, or ions) using Avogadro's constant N_A = 6.02214076×10²³ mol⁻¹. Formula: particles_from_moles(n_mol) = n_mol · N_A
+# @param n_mol: real — Chemical amount of substance n in moles (mol)
+# @return real — Total number of elementary particles (atoms, molecules, or formula units)
 particles_from_moles(n_mol)            = n_mol * N_A
+# @desc Mass percentage of an element in a compound. Define: percent_composition(mass_elem, molar_mass) = (mass_elem / molar_mass)·100
+# @param mass_elem: real — mass of the element in the compound (g)
+# @param molar_mass: real — molar mass of the compound (g/mol)
+# @return real — A mass percentage
 percent_composition(mass_elem, molar_mass) = (mass_elem / molar_mass) * 100
+# @desc Reaction percent yield = actual/theoretical × 100. Define: percent_yield(actual_y, theor_y) = (actual_y / theor_y)·100
+# @param actual_y: real — actual product mass (g)
+# @param theor_y: real — theoretical product mass (g)
+# @return real — A percentage (can exceed 100 in impure cases)
 percent_yield(actual_y, theor_y)       = (actual_y / theor_y) * 100
+# @desc Atom economy: mass of desired product ÷ total reactant mass. Define: atom_economy(mw_desired, mw_reactants) = (mw_desired / mw_reactants)·100
+# @param mw_desired: real — molar mass of the desired product (g/mol)
+# @param mw_reactants: real — summed molar masses of all reactants (g/mol)
+# @return real — A percentage ≤ 100
 atom_economy(mw_desired, mw_reactants) = (mw_desired / mw_reactants) * 100
 
+# @desc Molar concentration M = moles of solute / litres of solution. Define: molarity(n_mol, vol_liters) = n_mol / vol_liters
+# @param n_mol: real — moles of solute (mol)
+# @param vol_liters: real — solution volume (L)
+# @return real — A molar concentration in mol/L
 molarity(n_mol, vol_liters)            = n_mol / vol_liters
+# @desc Normality from molarity via basicity/acidity factor. Define: normality_from_molarity(molarity_m, n_factor) = molarity_m·n_factor
+# @param molarity_m: real — molarity (mol/L)
+# @param n_factor: real — basicity/acidity (equivalents per formula unit)
+# @return real — A normality in equivalents per litre (eq/L)
 normality_from_molarity(molarity_m, n_factor) = molarity_m * n_factor
+# @desc Initial volume in a dilution M₁V₁ = M₂V₂. Define: dilution_v1(c1, c2, v2) = (c2·v2) / c1
+# @param c1: real — initial concentration
+# @param c2: real — target concentration
+# @param v2: real — final volume
+# @return real — A volume in the units of the input volumes
 dilution_v1(c1, c2, v2)                = (c2 * v2) / c1
+# @desc Molality m = moles of solute / kg of solvent. Define: molality(n_solute, kg_solvent) = n_solute / kg_solvent
+# @param n_solute: real — moles of solute (mol)
+# @param kg_solvent: real — solvent mass (kg)
+# @return real — A molality in mol/kg of solvent
 molality(n_solute, kg_solvent)         = n_solute / kg_solvent
+# @desc Mole fraction χ = n_component/n_total. Define: mole_fraction(n_component, n_total) = n_component / n_total
+# @param n_component: real — moles of the component
+# @param n_total: real — total moles of all components
+# @return real — A fraction in (0, 1)
 mole_fraction(n_component, n_total)    = n_component / n_total
+# @desc Calculates solute concentration in parts per million (ppm) by mass: (m_solute / m_solution) × 10⁶. Formula: ppm_conc(mass_solute_g, mass_soln_g) = (mass_solute_g / mass_soln_g) · 10^6
+# @param mass_solute_g: real — Mass of dissolved solute in grams (g, or any mass unit)
+# @param mass_soln_g: real — Total mass of solution in the same mass unit (g)
+# @return real — Concentration in parts per million (ppm, dimensionless mass ratio × 10⁶)
 ppm_conc(mass_solute_g, mass_soln_g)   = (mass_solute_g / mass_soln_g) * (10 ^ 6)
 
 # 3. Colligative Properties of Solutions (Raoult, Boiling/Freezing Shift, Van t Hoff)
+# @desc Vapour pressure of a solution via Raoult law. Define: raoult_p_soln(x_solvent, p0_solvent) = x_solvent·p0_solvent
+# @param x_solvent: real — solvent mole fraction
+# @param p0_solvent: real — pure solvent vapour pressure (Vvap)
+# @return real — A vapour pressure in the units of the pure pressures
 raoult_p_soln(x_solvent, p0_solvent)        = x_solvent * p0_solvent
+# @desc Boiling-point elevation ΔT_b = K_b·m (colligative). Define: bp_elevation(i_vant, kb, molality_m) = i_vant·kb·molality_m
+# @param i_vant: real — van’t Hoff factor i
+# @param kb: real — molal boiling-point elevation constant (K·kg/mol)
+# @param molality_m: real — molality (mol/kg)
+# @return real — A temperature shift ΔT_b in °C or K
 bp_elevation(i_vant, kb, molality_m)        = i_vant * kb * molality_m
+# @desc Freezing-point depression ΔT_f = K_f·m (colligative). Define: fp_depression(i_vant, kf, molality_m) = i_vant·kf·molality_m
+# @param i_vant: real — van’t Hoff factor i
+# @param kf: real — molal freezing-point constant (K·kg/mol)
+# @param molality_m: real — molality (mol/kg)
+# @return real — A temperature shift ΔT_f in °C or K
 fp_depression(i_vant, kf, molality_m)       = i_vant * kf * molality_m
+# @desc Calculates the ideal osmotic pressure Π = M · R · T of a non-electrolyte solution in atmospheres. Formula: osmotic_pressure(molarity_m, temp_k) = molarity_m · R_atm · temp_k
+# @param molarity_m: real — Solution molarity M in moles per litre (mol/L)
+# @param temp_k: real — Absolute temperature T in kelvins (K)
+# @return real — Osmotic pressure Π in atmospheres (atm, using R_atm = 0.082057 L·atm/(mol·K))
 osmotic_pressure(molarity_m, temp_k)        = molarity_m * R_atm * temp_k
+# @desc Calculates the colligative osmotic pressure Π = i · M · R · T of an electrolyte solution using the van't Hoff factor i. Formula: vant_hoff_osmotic(i_vant, molarity_m, temp_k) = i_vant · molarity_m · R_atm · temp_k
+# @param i_vant: real — Dimensionless van't Hoff dissociation factor i
+# @param molarity_m: real — Molar concentration M of solute (mol/L)
+# @param temp_k: real — Absolute temperature T in kelvins (K)
+# @return real — Osmotic pressure Π in atmospheres (atm)
 vant_hoff_osmotic(i_vant, molarity_m, temp_k) = i_vant * molarity_m * R_atm * temp_k
 
 # 4. Gas Laws (Boyle, Charles, Combined, Ideal, Dalton, Van der Waals & Graham)
+# @desc Boyle law P₁V₁ = P₂V₂ solved for the second pressure. Define: boyle_p2(p1, v1, v2) = (p1·v1) / v2
+# @param p1: real — initial pressure
+# @param v1: real — initial volume
+# @param v2: real — final volume
+# @return real — A pressure in the units of P₁
 boyle_p2(p1, v1, v2)                        = (p1 * v1) / v2
+# @desc Charles law V₁/T₁ = V₂/T₂ solved for the second volume. Define: charles_v2(v1, t1_k, t2_k) = (v1·t2_k) / t1_k
+# @param v1: real — initial volume
+# @param t1_k: real — initial temperature (K)
+# @param t2_k: real — final temperature (K)
+# @return real — A volume in the units of V₁
 charles_v2(v1, t1_k, t2_k)                  = (v1 * t2_k) / t1_k
+# @desc Combined gas law P₁V₁/T₁ = P₂V₂/T₂ solved for V₂. Define: combined_gas_v2(p1, v1, t1_k, p2, t2_k) = (p1·v1·t2_k) / (p2·t1_k)
+# @param p1: real — initial pressure
+# @param v1: real — initial volume
+# @param t1_k: real — initial temperature (K)
+# @param p2: real — final pressure
+# @param t2_k: real — final temperature (K)
+# @return real — A volume in the units of V₁
 combined_gas_v2(p1, v1, t1_k, p2, t2_k)     = (p1 * v1 * t2_k) / (p2 * t1_k)
+# @desc Partial pressure via Dalton law P = χ·P_total. Define: dalton_partial_p(mole_frac, p_total) = mole_frac·p_total
+# @param mole_frac: real — mole fraction of the gas in the mixture
+# @param p_total: real — total pressure of the mixture
+# @return real — A pressure in pascals (Pa)
 dalton_partial_p(mole_frac, p_total)        = mole_frac * p_total
 
+# @desc Ideal gas law solved for pressure P = nRT/V. Define: ideal_gas_p(n_mol, temp_k, vol_m3) = (n_mol·R_gas·temp_k) / vol_m3
+# @param n_mol: real — amount of gas (mol)
+# @param temp_k: real — temperature (K)
+# @param vol_m3: real — volume (m³)
+# @return real — A pressure in pascals (Pa)
 ideal_gas_p(n_mol, temp_k, vol_m3)          = (n_mol * R_gas * temp_k) / vol_m3
+# @desc Solves the ideal gas law PV = nRT for gas volume V = (n · R · T) / P in cubic metres. Formula: ideal_gas_v(n_mol, temp_k, press_pa) = (n_mol · R_gas · temp_k) / press_pa
+# @param n_mol: real — Amount of gas n in moles (mol)
+# @param temp_k: real — Absolute temperature T in kelvins (K)
+# @param press_pa: real — Absolute gas pressure P in pascals (Pa)
+# @return real — Gas volume V in cubic metres (m³)
 ideal_gas_v(n_mol, temp_k, press_pa)        = (n_mol * R_gas * temp_k) / press_pa
+# @desc Solves the ideal gas law PV = nRT for the amount of gas n = (P · V) / (R · T) in moles. Formula: ideal_gas_n(press_pa, vol_m3, temp_k) = (press_pa · vol_m3) / (R_gas · temp_k)
+# @param press_pa: real — Absolute gas pressure P in pascals (Pa)
+# @param vol_m3: real — Gas container volume V in cubic metres (m³)
+# @param temp_k: real — Absolute temperature T in kelvins (K)
+# @return real — Amount of gas n in moles (mol)
 ideal_gas_n(press_pa, vol_m3, temp_k)       = (press_pa * vol_m3) / (R_gas * temp_k)
+# @desc Solves the ideal gas law PV = nRT for absolute temperature T = (P · V) / (n · R) in kelvins. Formula: ideal_gas_t(press_pa, vol_m3, n_mol) = (press_pa · vol_m3) / (n_mol · R_gas)
+# @param press_pa: real — Absolute gas pressure P in pascals (Pa)
+# @param vol_m3: real — Gas volume V in cubic metres (m³)
+# @param n_mol: real — Amount of gas n in moles (mol)
+# @return real — Absolute gas temperature T in kelvins (K)
 ideal_gas_t(press_pa, vol_m3, n_mol)        = (press_pa * vol_m3) / (n_mol * R_gas)
+# @desc Calculates real-gas pressure P = nRT/(V − nb) − a(n/V)² using the van der Waals equation of state. Formula: van_der_waals_p(n_mol, temp_k, vol_l, a_vdw, b_vdw) = ((n_mol · R_atm · temp_k) / (vol_l - n_mol · b_vdw)) - a_vdw · (n_mol / vol_l)^2
+# @param n_mol: real — Amount of gas n in moles (mol)
+# @param temp_k: real — Absolute temperature T in kelvins (K)
+# @param vol_l: real — Container volume V in litres (L)
+# @param a_vdw: real — Intermolecular attraction van der Waals parameter a (L²·atm/mol²)
+# @param b_vdw: real — Excluded molecular volume parameter b (L/mol)
+# @return real — Real-gas pressure P in atmospheres (atm)
 van_der_waals_p(n_mol, temp_k, vol_l, a_vdw, b_vdw) =
     ((n_mol * R_atm * temp_k) / (vol_l - n_mol * b_vdw)) - a_vdw * ((n_mol / vol_l) ^ 2)
 
+# @desc Calculates the root-mean-square thermal speed v_rms = √(3·R·T / M) of gas molecules from kinetic theory. Formula: rms_mol_speed(temp_k, molar_mass_kg) = √(3 · R_gas · temp_k / molar_mass_kg)
+# @param temp_k: real — Absolute gas temperature T in kelvins (K)
+# @param molar_mass_kg: real — Molar mass M in kilograms per mole (kg/mol, e.g. 0.028 for N₂)
+# @return real — Root-mean-square molecular speed v_rms in metres per second (m/s)
 rms_mol_speed(temp_k, molar_mass_kg)        = √(3 * R_gas * temp_k / molar_mass_kg)
+# @desc Effusion-rate ratio of two gases via Graham law. Define: graham_rate_ratio(molar_mass1, molar_mass2) = √(molar_mass2 / molar_mass1)
+# @param molar_mass1: real — molar mass of gas 1 (g/mol)
+# @param molar_mass2: real — molar mass of gas 2 (g/mol)
+# @return real — A dimensionless ratio/percentage
 graham_rate_ratio(molar_mass1, molar_mass2) = √(molar_mass2 / molar_mass1)
 
 # 5. Acid-Base Chemistry, Weak Acids, Buffers & Solubility Product (Ksp)
+# @desc Calculates the pH = −log₁₀([H⁺]) of an aqueous solution from its molar hydrogen/hydronium ion concentration. Formula: ph_from_h(h_conc) = -log10(h_conc)
+# @param h_conc: real — Molar hydrogen ion concentration [H⁺] in moles per litre (mol/L, h_conc > 0)
+# @return real — Solution pH on the logarithmic acidity scale (typically 0–14)
 ph_from_h(h_conc)    = -log10(h_conc)
+# @desc Hydronium concentration from pH: [H⁺] = 10^−pH. Define: h_from_ph(ph_val) = 10^(-ph_val)
+# @param ph_val: real — the pH of the solution
+# @return real — A hydronium concentration in mol/L
 h_from_ph(ph_val)    = 10 ^ (-ph_val)
+# @desc POH from hydroxide concentration pOH = −log₁₀[OH⁻]. Define: poh_from_oh(oh_conc) = -log₁₀(oh_conc)
+# @param oh_conc: real — hydroxide concentration [OH⁻] (mol/L)
+# @return real — A dimensionless logarithmic (pH-scale) value
 poh_from_oh(oh_conc) = -log10(oh_conc)
+# @desc Hydroxide concentration from pOH: [OH⁻] = 10^−pOH. Define: oh_from_poh(poh_val) = 10^(-poh_val)
+# @param poh_val: real — the pOH of the solution
+# @return real — A hydroxide concentration in mol/L
 oh_from_poh(poh_val) = 10 ^ (-poh_val)
+# @desc POH from pH (pH + pOH = 14 at 25 °C). Define: poh_from_ph(ph_val) = 14 - ph_val
+# @param ph_val: real — the pH of the solution
+# @return real — A pOH value
 poh_from_ph(ph_val)  = 14 - ph_val
+# @desc PH from pOH (pH + pOH = 14 at 25 °C). Define: ph_from_poh(poh_val) = 14 - poh_val
+# @param poh_val: real — the pOH of the solution
+# @return real — A pH value
 ph_from_poh(poh_val) = 14 - poh_val
+# @desc PH from hydroxide concentration (via pOH). Define: ph_from_oh(oh_conc) = 14 - (-log₁₀(oh_conc))
+# @param oh_conc: real — hydroxide concentration [OH⁻] (mol/L)
+# @return real — PH of the solution
 ph_from_oh(oh_conc)  = 14 - (-log10(oh_conc))
 
+# @desc PKa from acid dissociation constant: pKa = −log₁₀Ka. Define: pka_from_ka(ka) = -log₁₀(ka)
+# @param ka: real — the acid dissociation constant
+# @return real — PKa = −log₁₀(Ka)
 pka_from_ka(ka)                  = -log10(ka)
+# @desc Acid dissociation constant from pKa: Ka = 10^−pKa. Define: ka_from_pka(pka) = 10^(-pka)
+# @param pka: real — the pKa of the acid
+# @return real — Ka = 10^(−pKa)
 ka_from_pka(pka)                 = 10 ^ (-pka)
+# @desc Hydronium concentration of a weak acid from Ka and concentration. Define: weak_acid_h(ka, conc_c) = √(ka·conc_c)
+# @param ka: real — acid dissociation constant Ka
+# @param conc_c: real — initial acid concentration (mol/L)
+# @return real — A hydronium concentration in mol/L
 weak_acid_h(ka, conc_c)          = √(ka * conc_c)
+# @desc PH of a weak acid solution from Ka and concentration. Define: weak_acid_ph(ka, conc_c) = -log₁₀(√(ka·conc_c))
+# @param ka: real — acid dissociation constant Ka
+# @param conc_c: real — initial acid concentration (mol/L)
+# @return real — A pH value (dimensionless)
 weak_acid_ph(ka, conc_c)         = -log10(√(ka * conc_c))
+# @desc Buffer pH via the Henderson-Hasselbalch equation. Define: henderson_hasselbalch(pka, conj_base, weak_acid) = pka + log₁₀(conj_base / weak_acid)
+# @param pka: real — the buffer acid’s pKa
+# @param conj_base: real — conjugate-base concentration ratio term
+# @param weak_acid: real — weak-acid concentration term
+# @return real — Buffer pH (dimensionless)
 henderson_hasselbalch(pka, conj_base, weak_acid) =
     pka + log10(conj_base / weak_acid)
+# @desc Molar solubility from Ksp of a salt AB. Define: solubility_ksp_ab(ksp) = √ksp
+# @param ksp: real — solubility product of salt AB (A⁺B⁻)
+# @return real — Molar solubility s in mol/L
 solubility_ksp_ab(ksp)           = √ksp
+# @desc Molar solubility from Ksp of a salt AB₂. Define: solubility_ksp_ab2(ksp) = (ksp / 4)^(1 / 3)
+# @param ksp: real — solubility product of salt AB₂ (A⁺2B⁻)
+# @return real — Molar solubility s in mol/L
 solubility_ksp_ab2(ksp)          = (ksp / 4) ^ (1 / 3)
 
 # 6. Chemical Kinetics, Nuclear Decay, Thermochemistry, Electrochemistry & Solid State
+# @desc Arrhenius rate constant k = A·e^−Ea/RT. Define: arrhenius_k(pre_exp_a, ea_j_mol, temp_k) = pre_exp_a·exp(-ea_j_mol / (R_gas·temp_k))
+# @param pre_exp_a: real — pre-exponential factor A
+# @param ea_j_mol: real — activation energy (J/mol)
+# @param temp_k: real — temperature (K)
+# @return real — A rate constant in the same unit as the pre-exponential A
 arrhenius_k(pre_exp_a, ea_j_mol, temp_k) =
     pre_exp_a * exp(-ea_j_mol / (R_gas * temp_k))
+# @desc Rate constant at a second temperature (two-point Arrhenius). Define: arrhenius_k2(k1, ea_j_mol, t1_k, t2_k) = k1·exp((ea_j_mol / R_gas)·((1 / t1_k) - (1 / t2_k)))
+# @param k1: real — rate constant at t1_k
+# @param ea_j_mol: real — activation energy (J/mol)
+# @param t1_k: real — first temperature (K)
+# @param t2_k: real — second temperature (K)
+# @return real — A rate constant in the same unit as k1
 arrhenius_k2(k1, ea_j_mol, t1_k, t2_k) =
     k1 * exp((ea_j_mol / R_gas) * ((1 / t1_k) - (1 / t2_k)))
 
+# @desc Calculates the first-order reaction rate constant k = (1 / t) · ln([A]₀ / [A]_t) from integrated concentration data. Formula: rate_const_1st(t_sec, c0, ct) = (1 / t_sec) · ln(c0 / ct)
+# @param t_sec: real — Elapsed reaction time t (s)
+# @param c0: real — Initial reactant concentration [A]₀ at t = 0
+# @param ct: real — Remaining reactant concentration [A]_t at time t (0 < ct ≤ c0)
+# @return real — First-order rate constant k in inverse time units (s⁻¹)
 rate_const_1st(t_sec, c0, ct)        = (1 / t_sec) * ln(c0 / ct)
+# @desc Calculates the half-life t₁/₂ = ln(2) / k of a first-order reaction or radioactive decay process. Formula: half_life_1st(rate_k) = ln(2) / rate_k
+# @param rate_k: real — First-order rate or decay constant k (in s⁻¹ or inverse time units)
+# @return real — Half-life t₁/₂ in time units reciprocal to rate_k (e.g. seconds)
 half_life_1st(rate_k)                = ln(2) / rate_k
+# @desc Half-life of a zero-order reaction t½ = [A]₀/(2k). Define: zero_order_half_life(c0, rate_k) = c0 / (2·rate_k)
+# @param c0: real — initial concentration [A]₀
+# @param rate_k: real — zero-order rate constant k
+# @return real — A half-life in the units of [A]₀/k
 zero_order_half_life(c0, rate_k)     = c0 / (2 * rate_k)
+# @desc Calculates the half-life t₁/₂ = 1 / (k · [A]₀) of a second-order chemical reaction. Formula: second_order_half_life(c0, rate_k) = 1 / (rate_k · c0)
+# @param c0: real — Initial reactant concentration [A]₀ (mol/L)
+# @param rate_k: real — Second-order rate constant k (L/(mol·s))
+# @return real — Half-life duration t₁/₂ in time units (e.g. seconds)
 second_order_half_life(c0, rate_k)   = 1 / (rate_k * c0)
+# @desc Remaining amount after first-order decay N = N₀e^−λt. Define: decay_rem(n0, time_t, half_life) = n0·(0.5^(time_t / half_life))
+# @param n0: real — initial amount N₀
+# @param time_t: real — elapsed time (same unit as t half-life)
+# @param half_life: real — half-life duration
+# @return real — The remaining amount in the same unit as N₀
 decay_rem(n0, time_t, half_life)     = n0 * (0.5 ^ (time_t / half_life))
+# @desc Radiocarbon dating age of a sample. Define: radiocarbon_age(fraction_rem) = -5730·(ln(fraction_rem) / ln(2))
+# @param fraction_rem: real — remaining C-14 fraction of the live ratio (0..1)
+# @return real — Age of the sample in years
 radiocarbon_age(fraction_rem)        = -5730 * (ln(fraction_rem) / ln(2))
 
+# @desc Reaction enthalpy ΔH = ΣH_products − ΣH_reactants. Define: enthalpy_rxn(sum_h_prod, sum_h_react) = sum_h_prod - sum_h_react
+# @param sum_h_prod: real — summed product enthalpies
+# @param sum_h_react: real — summed reactant enthalpies
+# @return real — An enthalpy change in kJ/mol when inputs are in kJ/mol
 enthalpy_rxn(sum_h_prod, sum_h_react)     = sum_h_prod - sum_h_react
+# @desc Equilibrium constant conversion Kp = Kc·(RT)^Δn. Define: kp_from_kc(kc, temp_k, delta_n_gas) = kc·((R_atm·temp_k)^delta_n_gas)
+# @param kc: real — the Kc constant
+# @param temp_k: real — temperature (K)
+# @param delta_n_gas: real — Δn = gas moles products − reactants
+# @return real — The Kp constant (purified by R, T and Δn)
 kp_from_kc(kc, temp_k, delta_n_gas)       = kc * ((R_atm * temp_k) ^ delta_n_gas)
+# @desc Calculates the Gibbs free energy change ΔG = ΔH − T·ΔS at constant temperature. Formula: gibbs_free_energy(dh_j, temp_k, ds_j_k) = dh_j - temp_k · ds_j_k
+# @param dh_j: real — Enthalpy change ΔH in joules (J or J/mol)
+# @param temp_k: real — Absolute temperature T in kelvins (K)
+# @param ds_j_k: real — Entropy change ΔS in joules per kelvin (J/K or J/(mol·K))
+# @return real — Gibbs free energy change ΔG in joules (J or J/mol; ΔG < 0 indicates spontaneity)
 gibbs_free_energy(dh_j, temp_k, ds_j_k)   = dh_j - temp_k * ds_j_k
+# @desc Gibbs free energy from an equilibrium constant ΔG° = −RT·lnK. Define: gibbs_from_keq(temp_k, keq) = -R_gas·temp_k·ln(keq)
+# @param temp_k: real — absolute temperature (K)
+# @param keq: real — thermodynamic equilibrium constant K
+# @return real — A standard Gibbs energy in J/mol
 gibbs_from_keq(temp_k, keq)               = -R_gas * temp_k * ln(keq)
 
+# @desc Standard cell potential E°cell = E°cathode − E°anode. Define: cell_emf(e_cathode, e_anode) = e_cathode - e_anode
+# @param e_cathode: real — cathode (reduction) standard potential (V)
+# @param e_anode: real — anode (oxidation) standard potential (V)
+# @return real — A cell potential in volts (V)
 cell_emf(e_cathode, e_anode)              = e_cathode - e_anode
+# @desc Gibbs free energy from cell potential ΔG = −nFE°. Define: gibbs_electro(n_elec, e_cell_v) = -n_elec·F_faraday·e_cell_v
+# @param n_elec: real — electrons transferred per reaction
+# @param e_cell_v: real — standard cell potential (V)
+# @return real — A Gibbs energy in joules (J, negative for spontaneous cells)
 gibbs_electro(n_elec, e_cell_v)           = -n_elec * F_faraday * e_cell_v
+# @desc Mass deposited in electrolysis m = Q·M/(n·F). Define: faraday_mass(current_i, time_s, molar_mass, n_elec) = (current_i·time_s·molar_mass) / (n_elec·F_faraday)
+# @param current_i: real — current (A)
+# @param time_s: real — duration (s)
+# @param molar_mass: real — molar mass (g/mol)
+# @param n_elec: real — electrons per formula unit
+# @return real — A deposited mass in grams (g)
 faraday_mass(current_i, time_s, molar_mass, n_elec) =
     (current_i * time_s * molar_mass) / (n_elec * F_faraday)
+# @desc Molar conductivity Λm = κ·1000/M. Define: molar_conductivity(kappa_s_cm, molarity_m) = (kappa_s_cm·1000) / molarity_m
+# @param kappa_s_cm: real — conductivity κ (S/cm)
+# @param molarity_m: real — concentration (mol/L)
+# @return real — A molar conductivity in S·cm²/mol
 molar_conductivity(kappa_s_cm, molarity_m)= (kappa_s_cm * 1000) / molarity_m
+# @desc Nernst electrode potential under non-standard conditions. Define: nernst_cell(e0_volts, n_elec, reaction_q) = e0_volts - (R_gas·298.15 / (n_elec·F_faraday))·ln(reaction_q)
+# @param e0_volts: real — standard potential E° (V)
+# @param n_elec: real — electrons transferred
+# @param reaction_q: real — reaction quotient Q
+# @return real — An electrode potential in volts (V)
 nernst_cell(e0_volts, n_elec, reaction_q) =
     e0_volts - (R_gas * 298.15 / (n_elec * F_faraday)) * ln(reaction_q)
 
+# @desc Calculates crystallographic unit-cell density ρ = (Z · M) / (a³ · N_A) in g/cm³. Formula: crystal_density(z_atoms, molar_mass, a_edge_cm) = (z_atoms · molar_mass) / (a_edge_cm^3 · N_A)
+# @param z_atoms: real — Number of formula units/atoms per unit cell Z (e.g. 1 simple cubic, 2 BCC, 4 FCC)
+# @param molar_mass: real — Molar mass M in grams per mole (g/mol)
+# @param a_edge_cm: real — Cubic unit-cell edge length a in centimetres (cm)
+# @return real — Crystal bulk density ρ in grams per cubic centimetre (g/cm³)
 crystal_density(z_atoms, molar_mass, a_edge_cm) =
     (z_atoms * molar_mass) / ((a_edge_cm ^ 3) * N_A)
+# @desc Crystal plane spacing from Bragg diffraction nλ = 2d·sinθ. Define: bragg_d_spacing(n_order, wavelength, theta_deg) = (n_order·wavelength) / (2·sin(deg2rad(theta_deg)))
+# @param n_order: real — diffraction order n
+# @param wavelength: real — X-ray wavelength λ
+# @param theta_deg: real — glancing angle θ (°)
+# @return real — A plane spacing in metres (m)
 bragg_d_spacing(n_order, wavelength, theta_deg) =
     (n_order * wavelength) / (2 * sin(deg2rad(theta_deg)))

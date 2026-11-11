@@ -51,7 +51,13 @@
 (x) dB     :95                = 10 ^ (x / 20)
 (x) dBm    :95                = 0.001 * (10 ^ (x / 10))
 
+# @desc Converts an angle from degrees (°) to radians (rad): rad = deg × (π / 180). Formula: deg2rad(x) = x · (π / 180)
+# @param x: real — Angle measured in degrees (°)
+# @return real — Equivalent angle in radians (rad)
 deg2rad(deg) -> real, angle = deg * π / 180
+# @desc Converts an angle from radians (rad) to degrees (°): deg = rad × (180 / π). Formula: rad2deg(x) = x · (180 / π)
+# @param x: real — Angle measured in radians (rad)
+# @return real — Equivalent angle in degrees (°)
 rad2deg(rad)                = rad * 180 / π
 
 # 2. Length Unit Group (`length`, normalized to SI meters `m`)
@@ -75,11 +81,29 @@ rad2deg(rad)                = rad * 180 / π
 (x)      ft   :95 -> real, length = x * 0.3048
 (x)      inch :95 -> real, length = x * 0.0254
 
+# @desc Unit conversion from metres (m) to kilometres (km). Formula: m_to_km(x) = m / 1000
+# @param m: real — a quantity in metres (m)
+# @return real — The equivalent value in kilometres (km)
 m_to_km(m)                    = m / 1000
+# @desc Unit conversion from metres (m) to feet (ft). Formula: m_to_ft(x) = m / 0.3048
+# @param m: real — a quantity in metres (m)
+# @return real — The equivalent value in feet (ft)
 m_to_ft(m)                    = m / 0.3048
+# @desc Unit conversion from metres (m) to statute miles (mi). Formula: m_to_mi(x) = m / 1609.344
+# @param m: real — a quantity in metres (m)
+# @return real — The equivalent value in statute miles (mi)
 m_to_mi(m)                    = m / 1609.344
+# @desc Unit conversion from feet (ft) to metres (m). Formula: ft_to_m(x) = ft_v·0.3048
+# @param ft_v: real — a quantity in feet (ft)
+# @return real — The equivalent value in metres (m)
 ft_to_m(ft_v) -> real, length = ft_v * 0.3048
+# @desc Unit conversion from inches (in) to centimetres (cm). Formula: in_to_cm(x) = in_v·2.54
+# @param in_v: real — a quantity in inches (in)
+# @return real — The equivalent value in centimetres (cm)
 in_to_cm(in_v)                = in_v * 2.54
+# @desc Unit conversion from centimetres (cm) to inches (in). Formula: cm_to_in(x) = cm_v / 2.54
+# @param cm_v: real — a quantity in centimetres (cm)
+# @return real — The equivalent value in inches (in)
 cm_to_in(cm_v)                = cm_v / 2.54
 
 # 3. Area (`area`, SI `m^2`) & Volume (`volume`, SI `m^3`) Unit Groups
@@ -115,7 +139,13 @@ cm_to_in(cm_v)                = cm_v / 2.54
 (x) kgm3 :95 -> real, density = x
 (x) gcm3 :95 -> real, density = x * 1000
 
+# @desc Unit conversion from kilograms (kg) to pounds (lb). Formula: kg_to_lb(x) = kg_v / 0.45359237
+# @param kg_v: real — a quantity in kilograms (kg)
+# @return real — The equivalent value in pounds (lb)
 kg_to_lb(kg_v)                = kg_v / 0.45359237
+# @desc Unit conversion from pounds (lb) to kilograms (kg). Formula: lb_to_kg(x) = lb_v·0.45359237
+# @param lb_v: real — a quantity in pounds (lb)
+# @return real — The equivalent value in kilograms (kg)
 lb_to_kg(lb_v) -> real, mass  = lb_v * 0.45359237
 
 # 5. Time (`time`, SI `s`), Squared Time (`time2`, SI `s^2`) & Frequency (`frequency`, SI `Hz` = `s^-1`)
@@ -146,7 +176,13 @@ lb_to_kg(lb_v) -> real, mass  = lb_v * 0.45359237
 (x) fps2  :95 -> real, acceleration    = x * 0.3048
 (x) Jpkg  :95 -> real, specific_energy = x
 
+# @desc Unit conversion from metres per second (m/s) to kilometres per hour (km/h). Formula: mps_to_kph(x) = v·3.6
+# @param v: real — a quantity in metres per second (m/s)
+# @return real — The equivalent value in kilometres per hour (km/h)
 mps_to_kph(v) = v * 3.6
+# @desc Unit conversion from metres per second (m/s) to miles per hour (mph). Formula: mps_to_mph(x) = v / 0.44704
+# @param v: real — a quantity in metres per second (m/s)
+# @return real — The equivalent value in miles per hour (mph)
 mps_to_mph(v) = v / 0.44704
 
 # 7. Force (`force`, SI Newtons `N` = `kg*m/s^2`) & Momentum/Impulse (`momentum`, SI `N*s` = `kg*m/s`)
@@ -220,11 +256,29 @@ mps_to_mph(v) = v / 0.44704
 (x) JpK    :95 -> real, heat_capacity = x
 (x) JpkgK  :95 -> real, specific_heat = x
 
+# @desc Unit conversion from degrees Celsius (°C) to kelvin (K). Formula: c_to_k(x) = c + 273.15
+# @param c: real — a quantity in degrees Celsius (°C)
+# @return real — The equivalent value in kelvin (K)
 c_to_k(c) = c + 273.15
+# @desc Unit conversion from kelvin (K) to degrees Celsius (°C). Formula: k_to_c(x) = k - 273.15
+# @param k: real — a quantity in kelvin (K)
+# @return real — The equivalent value in degrees Celsius (°C)
 k_to_c(k) = k - 273.15
+# @desc Converts a temperature from degrees Celsius (°C) to degrees Fahrenheit (°F): °F = °C × (9/5) + 32. Formula: c_to_f(c) = c · 1.8 + 32
+# @param c: real — Temperature in degrees Celsius (°C)
+# @return real — Equivalent temperature in degrees Fahrenheit (°F)
 c_to_f(c) = c * 1.8 + 32
+# @desc Converts a temperature from degrees Fahrenheit (°F) to degrees Celsius (°C): °C = (°F − 32) × (5/9). Formula: f_to_c(f) = (f - 32) / 1.8
+# @param f: real — Temperature in degrees Fahrenheit (°F)
+# @return real — Equivalent temperature in degrees Celsius (°C)
 f_to_c(f) = (f - 32) / 1.8
+# @desc Unit conversion from degrees Fahrenheit (°F) to kelvin (K). Formula: f_to_k(x) = (f - 32) / 1.8 + 273.15
+# @param f: real — a quantity in degrees Fahrenheit (°F)
+# @return real — The equivalent value in kelvin (K)
 f_to_k(f) = (f - 32) / 1.8 + 273.15
+# @desc Unit conversion from kelvin (K) to degrees Fahrenheit (°F). Formula: k_to_f(x) = (k - 273.15)·1.8 + 32
+# @param k: real — a quantity in kelvin (K)
+# @return real — The equivalent value in degrees Fahrenheit (°F)
 k_to_f(k) = (k - 273.15) * 1.8 + 32
 
 # 12. Amount of Substance (`substance`, SI `mol`) & Chemical / Molar Unit Groups

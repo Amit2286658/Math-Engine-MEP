@@ -73,9 +73,22 @@ not(x) :25 = !x
 }
 
 # 8. Common Utility, Rounding (with default parameter `digits = 0`) & Boolean Predicate Functions
+# @desc Absolute value |x|, magnitude without sign. Define: abs(x) = @abs(x)
+# @param x: real — the real value whose magnitude is wanted
+# @return real — A non-negative real number
 abs(x)   = @abs(x)
+# @desc Rounding down to the previous whole number. Define: floor(x) = @floor(x)
+# @param x: real — value to round down
+# @return real — A real number rounded down
 floor(x) = @floor(x)
+# @desc Rounding up to the next whole number. Define: ceil(x) = @ceil(x)
+# @param x: real — value to round up
+# @return real — A real number rounded up
 ceil(x)  = @ceil(x)
+# @desc Rounds a real number x half-way away from zero to a specified number of decimal places (defaults to 0 for nearest integer). Formula: round(x, digits = 0)
+# @param x: real — Real number to round
+# @param digits: int — Number of decimal places to keep (0 for integer, negative for powers of 10; default 0)
+# @return real — Value of x rounded to the specified number of decimal places
 round(x, digits = 0) = {
     if (digits != digits || digits != @floor(digits)) { error("round() digits must be an integer") }
     if (digits > 300 || x == 0 || x != x) { return x }
@@ -88,19 +101,63 @@ round(x, digits = 0) = {
         ((x >= 0) ? @floor(x / s + 0.5) : @ceil(x / s - 0.5)) * s
     }
 }
+# @desc Truncation towards zero (fractional part removed). Define: trunc(x) = (x >= 0) ? @floor(x) : @ceil(x)
+# @param x: real — value to truncate towards zero
+# @return real — A real number with the fractional part removed
 trunc(x) = (x >= 0) ? @floor(x) : @ceil(x)
+# @desc Extracts the non-negative fractional part of x in [0, 1) defined as x − ⌊x⌋. Formula: fract(x) = x - floor(x)
+# @param x: real — Real number whose fractional part is extracted
+# @return real — Fractional part x − floor(x) in the half-open interval [0, 1)
 fract(x) = x - @floor(x)
+# @desc Sign of x: −1 negative, 0 zero, 1 positive. Define: sign(x) = (x != x) ? x : ((x > 0) ? 1 : (x < 0) ? -1 : 0)
+# @param x: real — real value whose signum is wanted
+# @return real — −1, 0 or 1
 sign(x)  = (x != x) ? x : ((x > 0) ? 1 : (x < 0) ? -1 : 0)
+# @desc True when the value is NaN (not a number, e.g. from 0 ÷ 0). Define: is_nan(x) = (x != x)
+# @param x: real — value to test for NaN
+# @return real — True / false
 is_nan(x) = (x != x)
+# @desc Returns the smaller of two numeric values a and b. Formula: min(a, b) = (a < b) ? a : b
+# @param a: real — First numeric value
+# @param b: real — Second numeric value
+# @return real — Minimum value min(a, b)
 min(a, b) = (a != a) ? a : ((b != b) ? b : ((a < b) ? a : b))
+# @desc Returns the larger of two numeric values a and b. Formula: max(a, b) = (a > b) ? a : b
+# @param a: real — First numeric value
+# @param b: real — Second numeric value
+# @return real — Maximum value max(a, b)
 max(a, b) = (a != a) ? a : ((b != b) ? b : ((a > b) ? a : b))
+# @desc Clamps a value x into the closed interval [lo, hi], returning lo if x < lo and hi if x > hi. Formula: clamp(x, lo, hi) = (x < lo) ? lo : ((x > hi) ? hi : x)
+# @param x: real — Input value to constrain
+# @param lo: real — Lower bound of the target range
+# @param hi: real — Upper bound of the target range (hi ≥ lo)
+# @return real — Value of x constrained to [lo, hi]
 clamp(x, lo, hi) = min(max(x, lo), hi)
+# @desc Absolute difference |a − b|. Define: abs_diff(a, b) = (a < b) ? (b - a) : (a - b)
+# @param a: real — first value
+# @param b: real — second value
+# @return real — A non-negative real number
 abs_diff(a, b)   = (a < b) ? (b - a) : (a - b)
+# @desc Parity test: true when n is even. Define: is_even(n) = (n % 2 == 0)
+# @param n: real — integer to test
+# @return real — True / false
 is_even(n) = (n % 2 == 0)
+# @desc Parity test: true when n is odd. Define: is_odd(n) = (n % 2 != 0)
+# @param n: real — integer to test
+# @return real — True / false
 is_odd(n)  = (n % 2 != 0)
+# @desc Floating-point near-equality test within a tolerance (robust equality for reals). Define: is_close(a, b, tol) = (@abs(a - b) <= tol). Default tol = 0.000001
+# @param a: real — first real value
+# @param b: real — second real value
+# @param tol: real — absolute tolerance (default 1e-6)
+# @return real — True / false — whether the values agree within tol
 is_close(a, b, tol = 0.000001) = (@abs(a - b) <= tol)
 
 # 9. Number Theory & Combinatorics (`gcd`, `lcm`, `ncr`, `npr`, `fib`, `is_prime`, `mod_pow`)
+# @desc Computes the greatest common divisor (GCD) of two integers a and b using Euclid's iterative modulo algorithm. Formula: gcd(a, b) = gcd(|b|, |a| mod |b|)
+# @param a: int — First integer operand
+# @param b: int — Second integer operand
+# @return int — Largest non-negative integer that divides both a and b evenly
 gcd(a, b) = {
     x := @abs(a)
     y := @abs(b)
@@ -112,10 +169,25 @@ gcd(a, b) = {
     x
 }
 
+# @desc Least common multiple via lcm = a·b/gcd(a, b). Define: lcm(a, b) = (a == 0 || b == 0) ? 0 : @abs(a·b) / gcd(a, b)
+# @param a: real — first integer
+# @param b: real — second integer
+# @return real — The least common multiple (positive integer)
 lcm(a, b) = (a == 0 || b == 0) ? 0 : @abs(a * b) / gcd(a, b)
+# @desc Computes the number of ordered permutations P(n, r) = n! / (n − r)! of r items selected from n distinct items. Formula: npr(n, r) = (r < 0 || r > n) ? 0 : (n!) / ((n - r)!)
+# @param n: int — Total number of distinct items in the set (n ≥ 0)
+# @param r: int — Number of ordered positions to fill (0 ≤ r ≤ n)
+# @return int — Number of ordered arrangements P(n, r)
 npr(n, r) = (r < 0 || r > n) ? 0 : (n!) / ((n - r)!)
+# @desc Computes the binomial coefficient C(n, r) = n! / (r! · (n − r)!), the number of unordered combinations of r items chosen from n items. Formula: ncr(n, r) = (r < 0 || r > n) ? 0 : (n!) / ((r!) · ((n - r)!))
+# @param n: int — Total number of distinct items in the set (n ≥ 0)
+# @param r: int — Number of items chosen without regard to order (0 ≤ r ≤ n)
+# @return int — Number of unordered combinations C(n, r)
 ncr(n, r) = (r < 0 || r > n) ? 0 : (n!) / ((r!) * ((n - r)!))
 
+# @desc Computes the n-th Fibonacci number F(n) iteratively (where F(0) = 0, F(1) = 1, and F(n) = F(n−1) + F(n−2)). Formula: fib(n)
+# @param n: int — Non-negative Fibonacci sequence index (n ≥ 0)
+# @return int — The n-th Fibonacci number F(n)
 fib(n) = {
     a := 0
     b := 1
@@ -129,6 +201,9 @@ fib(n) = {
     a
 }
 
+# @desc Tests whether an integer n is a prime number via 6k ± 1 trial division up to √n. Formula: is_prime(n)
+# @param n: int — Integer to test for primality
+# @return int — Boolean flag: 1 if n ≥ 2 is prime, or 0 if composite / less than 2
 is_prime(n) = {
     if (n < 2) { return 0 }
     d := 2
@@ -139,6 +214,11 @@ is_prime(n) = {
     1
 }
 
+# @desc Computes fast modular exponentiation (base^exp) mod m using binary square-and-multiply in O(log exp) steps. Formula: mod_pow(base, exp, m) = (base^exp) mod m
+# @param base: int — Integer base value
+# @param exp: int — Non-negative integer exponent (exp ≥ 0)
+# @param m: int — Positive integer modulus (m > 0)
+# @return int — Modular power (base^exp) mod m in [0, m − 1]
 mod_pow(base, exp_n, m) = {
     res := 1
     b   := base % m
@@ -152,35 +232,147 @@ mod_pow(base, exp_n, m) = {
 }
 
 # 10. Percentages, Profit & Loss, Markup & Discounts
+# @desc Calculates what percentage part is of whole: (part / whole) × 100. Formula: pct_of(part, whole) = (part / whole) · 100
+# @param part: real — Portion or numerator value
+# @param whole: real — Total reference value (whole ≠ 0)
+# @return real — Percentage value (%) representing part relative to whole
 pct_of(part, whole)        = (part / whole) * 100
+# @desc Calculates pct% of a given total amount: (pct / 100) × total. Formula: pct_val(pct, total) = (pct / 100) · total
+# @param pct: real — Percentage rate (%)
+# @param total: real — Base total amount
+# @return real — Portion equal to pct% of total
 pct_val(pct, total)        = (pct / 100) * total
+# @desc Calculates the signed relative percentage change ((new_v − old_v) / old_v) × 100 from a baseline value to a new value. Formula: pct_change(old_v, new_v) = ((new_v - old_v) / old_v) · 100
+# @param old_v: real — Initial baseline value (old_v ≠ 0)
+# @param new_v: real — Final updated value
+# @return real — Signed percentage change (%): positive for growth, negative for reduction
 pct_change(old_v, new_v)   = ((new_v - old_v) / old_v) * 100
+# @desc Calculates the resulting value after increasing val by pct%. Formula: pct_inc(val, pct) = val · (1 + pct / 100)
+# @param val: real — Original starting value
+# @param pct: real — Percentage increase to add (%)
+# @return real — Increased value val · (1 + pct / 100)
 pct_inc(val, pct)          = val * (1 + pct / 100)
+# @desc Calculates the resulting value after decreasing val by pct%. Formula: pct_dec(val, pct) = val · (1 - pct / 100)
+# @param val: real — Original starting value
+# @param pct: real — Percentage decrease to subtract (%)
+# @return real — Decreased value val · (1 − pct / 100)
 pct_dec(val, pct)          = val * (1 - pct / 100)
+# @desc Percentage error between an experimental and a true value. Define: pct_error(measured, exact) = (@abs(measured - exact) / @abs(exact))·100
+# @param measured: real — measured (experimental) value
+# @param exact: real — true (theoretical) value
+# @return real — A percentage (absolute when inputs are absolute)
 pct_error(measured, exact) = (@abs(measured - exact) / @abs(exact)) * 100
+# @desc Combined percentage change of two successive percentage changes. Define: successive_pct(p1, p2) = p1 + p2 + (p1·p2) / 100
+# @param p1: real — first percentage change (signed)
+# @param p2: real — second percentage change (signed)
+# @return real — A dimensionless ratio/percentage
 successive_pct(p1, p2)     = p1 + p2 + (p1 * p2) / 100
 
+# @desc Calculates absolute financial profit (SP − CP) when selling price exceeds cost price. Formula: profit(cp, sp) = sp - cp
+# @param cp: real — Cost price (CP) paid for the item
+# @param sp: real — Selling price (SP) at which the item was sold
+# @return real — Monetary profit (sp − cp) in the same currency unit as the inputs
 profit(cp, sp)                 = sp - cp
+# @desc Calculates absolute financial loss (CP − SP) when cost price exceeds selling price. Formula: loss(cp, sp) = cp - sp
+# @param cp: real — Cost price (CP) paid for the item
+# @param sp: real — Selling price (SP) at which the item was sold
+# @return real — Monetary loss (cp − sp) in the same currency unit as the inputs
 loss(cp, sp)                   = cp - sp
+# @desc Profit as a percentage of the cost price. Define: profit_pct(cp, sp) = ((sp - cp) / cp)·100
+# @param cp: real — cost price
+# @param sp: real — selling price
+# @return real — A dimensionless ratio/percentage
 profit_pct(cp, sp)             = ((sp - cp) / cp) * 100
+# @desc Loss as a percentage of the cost price. Define: loss_pct(cp, sp) = ((cp - sp) / cp)·100
+# @param cp: real — cost price
+# @param sp: real — selling price
+# @return real — A dimensionless ratio/percentage
 loss_pct(cp, sp)               = ((cp - sp) / cp) * 100
+# @desc Calculates the selling price SP = CP · (1 + profit%/100) from the cost price and profit percentage. Formula: sp_from_profit_pct(cp, p_pct) = cp · (1 + p_pct / 100)
+# @param cp: real — Cost price (CP) of the item
+# @param p_pct: real — Profit percentage on cost price (%)
+# @return real — Selling price (SP) in the same currency unit as cp
 sp_from_profit_pct(cp, p_pct)  = cp * (1 + p_pct / 100)
+# @desc Calculates the selling price SP = CP · (1 − loss%/100) from the cost price and loss percentage. Formula: sp_from_loss_pct(cp, l_pct) = cp · (1 - l_pct / 100)
+# @param cp: real — Cost price (CP) of the item
+# @param l_pct: real — Loss percentage on cost price (%)
+# @return real — Selling price (SP) in the same currency unit as cp
 sp_from_loss_pct(cp, l_pct)    = cp * (1 - l_pct / 100)
+# @desc Recovers the original cost price (CP) from the selling price (SP) and profit percentage: CP = SP / (1 + profit%/100). Formula: cp_from_profit_pct(sp, p_pct) = sp / (1 + p_pct / 100)
+# @param sp: real — Selling price (SP) of the item
+# @param p_pct: real — Profit percentage on cost price (%)
+# @return real — Original cost price (CP) in the same currency unit as sp
 cp_from_profit_pct(sp, p_pct)  = sp / (1 + p_pct / 100)
+# @desc Recovers the original cost price (CP) from the selling price (SP) and loss percentage: CP = SP / (1 − loss%/100). Formula: cp_from_loss_pct(sp, l_pct) = sp / (1 - l_pct / 100)
+# @param sp: real — Selling price (SP) of the item
+# @param l_pct: real — Loss percentage on cost price (0 ≤ l_pct < 100)
+# @return real — Original cost price (CP) in the same currency unit as sp
 cp_from_loss_pct(sp, l_pct)    = sp / (1 - l_pct / 100)
+# @desc Discount amount for a price at a discount percentage. Define: discount_amt(marked_p, d_pct) = marked_p·(d_pct / 100)
+# @param marked_p: real — marked (list) price
+# @param d_pct: real — discount percentage
+# @return real — The discount in the same currency unit as the price
 discount_amt(marked_p, d_pct)  = marked_p * (d_pct / 100)
+# @desc Selling price after applying a discount percentage. Define: sp_after_discount(marked_p, d_pct) = marked_p·(1 - d_pct / 100)
+# @param marked_p: real — marked (list) price
+# @param d_pct: real — discount percentage
+# @return real — The discounted price in the same currency unit
 sp_after_discount(marked_p, d_pct) = marked_p * (1 - d_pct / 100)
+# @desc Calculates the single equivalent discount percentage (%) resulting from two successive percentage discounts d₁% and d₂%. Formula: successive_discount(d1, d2) = d1 + d2 - (d1 · d2) / 100
+# @param d1: real — First discount percentage d₁ (%)
+# @param d2: real — Second successive discount percentage d₂ (%)
+# @return real — Equivalent single discount percentage (%)
 successive_discount(d1, d2)    = d1 + d2 - (d1 * d2) / 100
 
 # 11. Simple & Compound Interest, Depreciation & Loan EMI
+# @desc Simple interest I = P·R·T/100. Define: simple_interest(p, r_pct, t_yr) = (p·r_pct·t_yr) / 100
+# @param p: real — principal
+# @param r_pct: real — annual rate (%)
+# @param t_yr: real — time (years)
+# @return real — The interest in the same currency unit as the principal
 simple_interest(p, r_pct, t_yr)   = (p * r_pct * t_yr) / 100
+# @desc Total amount (principal + interest) under simple interest. Define: si_amount(p, r_pct, t_yr) = p + simple_interest(p, r_pct, t_yr)
+# @param p: real — principal
+# @param r_pct: real — annual rate (%)
+# @param t_yr: real — time (years)
+# @return real — The total amount (principal + interest) in the same currency
 si_amount(p, r_pct, t_yr)         = p + simple_interest(p, r_pct, t_yr)
+# @desc Compound-interest amount A = P·(1 + r)^t. Define: compound_amount(p, r_pct, t_yr) = p·((1 + r_pct / 100)^t_yr)
+# @param p: real — principal
+# @param r_pct: real — rate per period (%)
+# @param t_yr: real — number of periods (typically years)
+# @return real — The accumulated amount in the same currency unit
 compound_amount(p, r_pct, t_yr)   = p * ((1 + r_pct / 100) ^ t_yr)
+# @desc Calculates the net compound interest earned CI = P·[(1 + r/100)^t − 1] over t periods (excluding the initial principal). Formula: compound_interest(p, r_pct, t_yr) = compound_amount(p, r_pct, t_yr) - p
+# @param p: real — Initial principal amount P
+# @param r_pct: real — Compound interest rate r per period (%)
+# @param t_yr: real — Number of compounding periods t (typically years)
+# @return real — Net compound interest earned in the same currency unit as p
 compound_interest(p, r_pct, t_yr) = compound_amount(p, r_pct, t_yr) - p
+# @desc Calculates total accumulated amount A under compound interest compounded n times per year: A = P·(1 + (r/100)/n)^(n·t). Formula: ci_amount_n(p, r_pct, t_yr, n_per_yr) = p · (1 + (r_pct / 100) / n_per_yr)^(n_per_yr · t_yr)
+# @param p: real — Initial principal amount P
+# @param r_pct: real — Nominal annual interest rate r (%)
+# @param t_yr: real — Investment or loan duration t in years
+# @param n_per_yr: real — Number of compounding periods per year (e.g. 12 for monthly, 4 for quarterly)
+# @return real — Total compounded amount (principal + interest) in the same currency unit as p
 ci_amount_n(p, r_pct, t_yr, n_per_yr) =
     p * ((1 + (r_pct / 100) / n_per_yr) ^ (n_per_yr * t_yr))
+# @desc Calculates the exact difference between compound interest and simple interest over 2 years at annual rate r%: CI − SI = P·(r/100)². Formula: ci_si_diff_2yr(p, r_pct) = p · (r_pct / 100)^2
+# @param p: real — Principal amount P
+# @param r_pct: real — Annual interest rate r (%)
+# @return real — Difference (CI − SI) over 2 years in the same currency unit as p
 ci_si_diff_2yr(p, r_pct)          = p * ((r_pct / 100) ^ 2)
+# @desc Calculates the book value of an asset after t years of compound (declining-balance) depreciation at annual rate r%: V = P₀·(1 − r/100)^t. Formula: depreciated_val(p0, r_pct, t_yr) = p0 · (1 - r_pct / 100)^t_yr
+# @param p0: real — Initial asset cost or value P₀
+# @param r_pct: real — Annual depreciation rate r (%)
+# @param t_yr: real — Number of years elapsed t
+# @return real — Remaining depreciated value in the same currency unit as p0
 depreciated_val(p0, r_pct, t_yr)  = p0 * ((1 - r_pct / 100) ^ t_yr)
+# @desc Calculates the fixed Equated Monthly Installment (EMI) for an amortizing loan of principal P at annual interest rate R% over N months. Formula: emi(p, r_annual_pct, n_months) = P · r_m · (1 + r_m)^N / ((1 + r_m)^N − 1) where r_m = R / 1200
+# @param p: real — Loan principal amount P
+# @param r_annual_pct: real — Nominal annual interest rate R (%)
+# @param n_months: int — Total loan repayment tenure N in months
+# @return real — Monthly installment payment (EMI) in the same currency unit as p
 emi(principal, annual_rate_pct, months) = {
     r_m := (annual_rate_pct / 12) / 100
     f   := (1 + r_m) ^ months
@@ -188,50 +380,201 @@ emi(principal, annual_rate_pct, months) = {
 }
 
 # 12. Work & Time, Pipes & Cisterns, and Chain Rule (`M1*D1/W1 = M2*D2/W2`)
+# @desc Calculates the fraction of a job completed per unit time (1 / days) given the total time required to complete the entire job. Formula: work_rate(days) = 1 / days
+# @param days: real — Total time (in days or hours) required to finish 1 complete job
+# @return real — Fraction of the job completed per unit time (days⁻¹)
 work_rate(days)                      = 1 / days
+# @desc Combined time for two workers with individual completion times. Define: work_together_2(d1, d2) = (d1·d2) / (d1 + d2)
+# @param d1: real — days person 1 needs alone
+# @param d2: real — days person 2 needs alone
+# @return real — The combined completion time in the inputs’ time unit
 work_together_2(d1, d2)              = (d1 * d2) / (d1 + d2)
+# @desc Combined time for three workers with individual completion times. Define: work_together_3(d1, d2, d3) = (d1·d2·d3) / (d1·d2 + d2·d3 + d3·d1)
+# @param d1: real — days person 1 needs alone
+# @param d2: real — days person 2 needs alone
+# @param d3: real — days person 3 needs alone
+# @return real — The combined completion time in the inputs’ time unit
 work_together_3(d1, d2, d3)          = (d1 * d2 * d3) / (d1 * d2 + d2 * d3 + d3 * d1)
+# @desc Time the other person needs for the rest of a shared job. Define: work_other_person(d_both, d_one) = (d_both·d_one) / (d_one - d_both)
+# @param d_both: real — total days to finish together
+# @param d_one: real — days the first person needed alone
+# @return real — The remaining time needed in the inputs’ time unit
 work_other_person(d_both, d_one)     = (d_both * d_one) / (d_one - d_both)
+# @desc Calculates the dimensionless fraction of a job remaining (1 − days_worked / d_total) after working for a given number of days. Formula: work_rem_after(d_total, days_worked) = 1 - (days_worked / d_total)
+# @param d_total: real — Total days required for the worker to finish the entire job alone
+# @param days_worked: real — Number of days already worked
+# @return real — Remaining fraction of the job in [0, 1]
 work_rem_after(d_total, days_worked) = 1 - (days_worked / d_total)
+# @desc Time to fill a tank while a leak simultaneously empties it. Define: pipe_fill_with_leak(t_fill, t_empty) = (t_fill·t_empty) / (t_empty - t_fill)
+# @param t_fill: real — fill time without the leak
+# @param t_empty: real — time the leak alone takes to empty a full tank
+# @return real — The fill time in the inputs’ time unit
 pipe_fill_with_leak(t_fill, t_empty) = (t_fill * t_empty) / (t_empty - t_fill)
+# @desc Man-days problem: workers × days scale inversely with work. Define: man_days_solve(m1, d1, w1, m2, w2) = (m1·d1·w2) / (w1·m2)
+# @param m1: real — workers in the first scenario
+# @param d1: real — days in the first scenario
+# @param w1: real — work units in the first scenario
+# @param m2: real — workers in the second scenario
+# @param w2: real — work units in the second scenario
+# @return real — The solved quantity (days, workers or man-days requested)
 man_days_solve(m1, d1, w1, m2, w2)   = (m1 * d1 * w2) / (w1 * m2)
 
-# 13. Progressions (AP / GP / HP), Means, Proportions, Mixtures & Speed/Boats
+# @desc Nth term of an arithmetic progression aₙ = a + (n−1)d. Define: ap_nth(a, d, n) = a + (n - 1)·d
+# @param a: real — first term a₁
+# @param d: real — common difference d
+# @param n: real — term index (1-based)
+# @return real — The nth term value
 ap_nth(a, d, n)    = a + (n - 1) * d
+# @desc Calculates the sum S_n = (n / 2) · [2a + (n − 1)d] of the first n terms of an arithmetic progression. Formula: ap_sum(a, d, n) = (n / 2) · (2·a + (n - 1)·d)
+# @param a: real — First term a₁ of the arithmetic progression
+# @param d: real — Common difference d between consecutive terms
+# @param n: int — Number of terms n to sum
+# @return real — Sum S_n of the first n terms of the AP
 ap_sum(a, d, n)    = (n / 2) * (2a + (n - 1) * d)
+# @desc Nth term of a geometric progression aₙ = a·rⁿ⁻¹. Define: gp_nth(a, r, n) = a·(r^(n - 1))
+# @param a: real — first term a₁
+# @param r: real — common ratio r
+# @param n: real — term index (1-based)
+# @return real — The nth term value
 gp_nth(a, r, n)    = a * (r ^ (n - 1))
+# @desc Calculates the sum S_n = a · (r^n − 1) / (r − 1) of the first n terms of a geometric progression. Formula: gp_sum(a, r, n) = (r == 1) ? (a · n) : (a · ((r^n) - 1) / (r - 1))
+# @param a: real — First term a₁ of the geometric progression
+# @param r: real — Common ratio r between consecutive terms
+# @param n: int — Number of terms n to sum
+# @return real — Sum S_n of the first n terms of the GP
 gp_sum(a, r, n)    = (r == 1) ? (a * n) : a * ((r ^ n) - 1) / (r - 1)
+# @desc Sum of an infinite GP with |r| < 1, a/(1−r). Define: gp_inf_sum(a, r) = a / (1 - r)
+# @param a: real — first term a₁
+# @param r: real — common ratio with |r| < 1
+# @return real — The infinite-series sum (finite only when |r| < 1)
 gp_inf_sum(a, r)   = a / (1 - r)
+# @desc Nth term of a harmonic progression (reciprocal AP). Define: hp_nth(a, d, n) = 1 / (a + (n - 1)·d)
+# @param a: real — first term a₁
+# @param d: real — common difference of the inverted AP
+# @param n: real — term index (1-based)
+# @return real — The nth term value
 hp_nth(a, d, n)    = 1 / (a + (n - 1) * d)
 
+# @desc Calculates the arithmetic mean (average) (a + b) / 2 of two numbers. Formula: arith_mean(a, b) = (a + b) / 2
+# @param a: real — First numeric value
+# @param b: real — Second numeric value
+# @return real — Arithmetic mean (a + b) / 2
 arith_mean(a, b)   = (a + b) / 2
+# @desc Calculates the geometric mean √(a · b) of two non-negative numbers. Formula: geom_mean(a, b) = √(a · b)
+# @param a: real — First non-negative number (a ≥ 0)
+# @param b: real — Second non-negative number (b ≥ 0)
+# @return real — Geometric mean √(a · b) ≥ 0
 geom_mean(a, b)    = √(a * b)
+# @desc Calculates the harmonic mean 2ab / (a + b) of two rates or positive numbers. Formula: harm_mean(a, b) = (2 · a · b) / (a + b)
+# @param a: real — First positive value or rate
+# @param b: real — Second positive value or rate (a + b ≠ 0)
+# @return real — Harmonic mean 2ab / (a + b)
 harm_mean(a, b)    = 2a * b / (a + b)
+# @desc Fourth proportional d of a:b::c:d, d = b·c/a. Define: fourth_proportional(a, b, c) = (b·c) / a
+# @param a: real — first term
+# @param b: real — second term
+# @param c: real — third term
+# @return real — The fourth proportional value
 fourth_proportional(a, b, c) = (b * c) / a
+# @desc Third proportional c of a:b::b:c, c = b²/a. Define: third_proportional(a, b) = (b^2) / a
+# @param a: real — first term
+# @param b: real — second term
+# @return real — The third proportional value
 third_proportional(a, b)     = (b^2) / a
+# @desc Mean proportional (geometric mean) of two numbers. Define: mean_proportional(a, b) = √(a·b)
+# @param a: real — first value
+# @param b: real — second value
+# @return real — The geometric mean (non-negative for non-negative inputs)
 mean_proportional(a, b)      = √(a * b)
+# @desc Alligation ratio for mixing two ingredients of different prices. Define: alligation_ratio(cheaper, dearer, mean_p) = (dearer - mean_p) / (mean_p - cheaper)
+# @param cheaper: real — price of the cheaper ingredient
+# @param dearer: real — price of the dearer ingredient
+# @param mean_p: real — target mean price of the mixture
+# @return real — A dimensionless ratio/percentage
 alligation_ratio(cheaper, dearer, mean_p) = (dearer - mean_p) / (mean_p - cheaper)
 
+# @desc Average speed over two equal-distance legs (harmonic mean). Define: avg_speed_2(s1, s2) = 2s1·s2 / (s1 + s2)
+# @param s1: real — speed on the first leg (m/s)
+# @param s2: real — speed on the second leg (m/s)
+# @return real — An average speed in the inputs’ speed unit
 avg_speed_2(s1, s2)              = 2s1 * s2 / (s1 + s2)
+# @desc Relative speed when moving in the same direction (speeds differ). Define: rel_speed_same(s1, s2) = @abs(s1 - s2)
+# @param s1: real — faster object speed (m/s)
+# @param s2: real — slower object speed (m/s)
+# @return real — A relative speed in the inputs’ speed unit
 rel_speed_same(s1, s2)           = @abs(s1 - s2)
+# @desc Relative speed when moving in opposite directions (speeds add). Define: rel_speed_opp(s1, s2) = s1 + s2
+# @param s1: real — speed of object 1 (m/s)
+# @param s2: real — speed of object 2 (m/s)
+# @return real — A relative speed in the inputs’ speed unit
 rel_speed_opp(s1, s2)            = s1 + s2
+# @desc Boat speed along a stream = still-water speed + stream speed. Define: boat_downstream(u_boat, v_stream) = u_boat + v_stream
+# @param u_boat: real — still-water boat speed
+# @param v_stream: real — stream speed
+# @return real — An effective speed in the inputs’ speed unit
 boat_downstream(u_boat, v_stream)= u_boat + v_stream
+# @desc Boat speed against a stream = still-water speed − stream speed. Define: boat_upstream(u_boat, v_stream) = u_boat - v_stream
+# @param u_boat: real — still-water boat speed
+# @param v_stream: real — stream speed
+# @return real — An effective speed in the inputs’ speed unit
 boat_upstream(u_boat, v_stream)  = u_boat - v_stream
+# @desc Still-water speed recovered from upstream and downstream speeds. Define: boat_still_speed(d_spd, u_spd) = (d_spd + u_spd) / 2
+# @param d_spd: real — downstream (with-current) speed
+# @param u_spd: real — upstream (against-current) speed
+# @return real — A speed in the inputs’ speed unit
 boat_still_speed(d_spd, u_spd)   = (d_spd + u_spd) / 2
+# @desc Stream (current) speed from upstream and downstream speeds. Define: stream_speed(d_spd, u_spd) = (d_spd - u_spd) / 2
+# @param d_spd: real — downstream speed (m/s)
+# @param u_spd: real — upstream speed (m/s)
+# @return real — A speed in the inputs’ speed unit
 stream_speed(d_spd, u_spd)       = (d_spd - u_spd) / 2
 
+# @desc Sum of the first n natural numbers n(n+1)/2. Define: sum_n(n) = n·(n + 1) / 2
+# @param n: real — summation upper bound (positive integer)
+# @return real — The sum (integer-valued real)
 sum_n(n)      = n * (n + 1) / 2
+# @desc Sum of squares of the first n naturals n(n+1)(2n+1)/6. Define: sum_sq_n(n) = n·(n + 1)·(2n + 1) / 6
+# @param n: real — summation upper bound (positive integer)
+# @return real — The sum of squares
 sum_sq_n(n)   = n * (n + 1) * (2n + 1) / 6
+# @desc Sum of cubes of the first n naturals [n(n+1)/2]². Define: sum_cube_n(n) = (n·(n + 1) / 2)^2
+# @param n: real — summation upper bound (positive integer)
+# @return real — The sum of cubes
 sum_cube_n(n) = (n * (n + 1) / 2) ^ 2
 
-# 13b. Bitwise Integer Operations & Discrete/Exponential Probability Functions
+# @desc Computes the bitwise AND (a & b) of two non-negative integers. Formula: bit_and(a, b) = @band(a, b)
+# @param a: int — First non-negative integer operand
+# @param b: int — Second non-negative integer operand
+# @return int — Bitwise AND result where each bit is 1 iff the corresponding bit of both a and b is 1
 bit_and(a:real, none, b:real, none) = @band(a, b)
+# @desc Computes the bitwise inclusive OR (a | b) of two non-negative integers. Formula: bit_or(a, b) = @bor(a, b)
+# @param a: int — First non-negative integer operand
+# @param b: int — Second non-negative integer operand
+# @return int — Bitwise OR result where each bit is 1 if either input bit is 1
 bit_or(a:real, none, b:real, none)  = @bor(a, b)
+# @desc Computes the bitwise exclusive OR (a ^ b) of two non-negative integers. Formula: bit_xor(a, b) = @bxor(a, b)
+# @param a: int — First non-negative integer operand
+# @param b: int — Second non-negative integer operand
+# @return int — Bitwise XOR result where each bit is 1 iff the input bits differ
 bit_xor(a:real, none, b:real, none) = @bxor(a, b)
+# @desc Computes the 32-bit unsigned bitwise NOT (~a, ones' complement) of a non-negative integer. Formula: bit_not(a) = @bnot(a)
+# @param a: int — Non-negative integer operand to invert
+# @return int — Unsigned 32-bit ones'-complement integer (~a)
 bit_not(a:real, none)               = @bnot(a)
+# @desc Shifts a non-negative integer a left by b bit positions (a << b = a · 2^b). Formula: bit_shl(a, b) = @bshl(a, b)
+# @param a: int — Non-negative integer value to shift
+# @param b: int — Number of bit positions to shift left (b ≥ 0)
+# @return int — Left-shifted integer value a << b
 bit_shl(a:real, none, b:real, none) = @bshl(a, b)
+# @desc Shifts a non-negative integer a right by b bit positions (a >> b = ⌊a / 2^b⌋). Formula: bit_shr(a, b) = @bshr(a, b)
+# @param a: int — Non-negative integer value to shift
+# @param b: int — Number of bit positions to shift right (b ≥ 0)
+# @return int — Right-shifted integer value a >> b
 bit_shr(a:real, none, b:real, none) = @bshr(a, b)
 
+# @desc Counts the number of set binary bits (1s, Hamming weight) in the base-2 representation of a non-negative integer n. Formula: popcount(n) = ∑ bit_i(n)
+# @param n: int — Non-negative integer whose 1-bits are counted
+# @return int — Total number of set bits (1s) in the binary representation of n
 popcount(n:real, none) = {
     if (n < 0 || n != @floor(n)) { error("popcount() requires a non-negative integer") }
     c := 0
@@ -243,6 +586,9 @@ popcount(n:real, none) = {
     c
 }
 
+# @desc Counts the minimum number of binary bits required to represent a non-negative integer n (0 returns 0). Formula: bit_len(n) = ⌊log₂(n)⌋ + 1 for n > 0
+# @param n: int — Non-negative integer whose binary bit width is measured
+# @return int — Number of bits required to represent n in base 2 (0 for n = 0)
 bit_len(n:real, none) = {
     if (n < 0 || n != @floor(n)) { error("bit_len() requires a non-negative integer") }
     b := 0
@@ -254,10 +600,31 @@ bit_len(n:real, none) = {
     b
 }
 
+# @desc Evaluates the binomial probability mass function P(X = k) = C(n, k) · p^k · (1 − p)^(n − k) for k successes in n independent Bernoulli trials. Formula: binom_pmf(n, k, p) = ncr(n, k) · (p^k) · ((1 - p)^(n - k))
+# @param n: int — Total number of independent trials (n ≥ 0)
+# @param k: int — Number of observed successes (0 ≤ k ≤ n)
+# @param p: real — Per-trial success probability in [0, 1]
+# @return real — Exact binomial probability P(X = k) in [0, 1]
 binom_pmf(n, k, p)   = ncr(n, k) * (p ^ k) * ((1 - p) ^ (n - k))
+# @desc Evaluates the Poisson probability mass function P(X = k) = (λ^k · e^(−λ)) / k! for k discrete events occurring in a fixed interval. Formula: poisson_pmf(k, lam) = (lam^k · @exp(-lam)) / (k!)
+# @param k: int — Non-negative integer event count (k ≥ 0)
+# @param lam: real — Expected average event rate λ > 0 per interval
+# @return real — Exact Poisson probability P(X = k) in [0, 1]
 poisson_pmf(k, lam)  = ((lam ^ k) * @exp(-lam)) / (k!)
+# @desc Geometric distribution: P(first success on trial k). Define: geom_pmf(k, p) = ((1 - p)^(k - 1))·p
+# @param k: real — trial index of first success (1, 2, …)
+# @param p: real — per-trial success probability
+# @return real — A probability in (0, 1]
 geom_pmf(k, p)       = ((1 - p) ^ (k - 1)) * p
+# @desc Evaluates the probability density function f(x) = λ·e^(−λx) of an exponential distribution. Formula: exp_pdf(x, lam) = (x < 0) ? 0 : lam · exp(-lam · x)
+# @param x: real — Non-negative evaluation point x ≥ 0
+# @param lam: real — Rate parameter λ > 0 (λ = 1 / mean)
+# @return real — Probability density f(x) ≥ 0
 exp_pdf(x, lam)      = (x < 0) ? 0 : lam * @exp(-lam * x)
+# @desc Evaluates the cumulative distribution function P(X ≤ x) = 1 − e^(−λx) of an exponential distribution. Formula: exp_cdf(x, lam) = (x < 0) ? 0 : 1 - exp(-lam · x)
+# @param x: real — Non-negative evaluation point x ≥ 0
+# @param lam: real — Rate parameter λ > 0 (λ = 1 / mean)
+# @return real — Cumulative probability P(X ≤ x) in [0, 1]
 exp_cdf(x, lam)      = (x < 0) ? 0 : 1 - @exp(-lam * x)
 
 # 14. Fundamental Mathematical Constants
@@ -269,4 +636,7 @@ phi = 1.618033988749895
 ϕ   = 1.618033988749895
 inf = 1e300 * 1e300
 nan = (-1) ^ 0.5
+# @desc True when the value is ±infinity (e.g. from division by zero). Define: is_inf(x) = (@abs(x) == inf)
+# @param x: real — value to test for ±infinity
+# @return real — True / false
 is_inf(x) = (@abs(x) == inf)

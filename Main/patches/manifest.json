@@ -9,8 +9,8 @@
       "deps": [
         "arith"
       ],
-      "sha256": "c463f4742c00e0cbbef27027888c7e91023abe42ad2ed234961593d634c83bd2",
-      "size": 148
+      "sha256": "6f582b6ad2cc4e78bd4563da179c27dd53f3ad664da15e3642a8aa10554bef79",
+      "size": 738
     },
     {
       "file": "currency.math",
@@ -22,8 +22,8 @@
         "arith",
         "string"
       ],
-      "sha256": "af569acb14f8516a9c596c69baba9459829a3789f7d7b9a82e368930052a6d21",
-      "size": 20482
+      "sha256": "c42aeb4a27a8dae22580c2cd63d5368b1229f216c5c53614181e76fe14559648",
+      "size": 24883
     },
     {
       "file": "currency_pairs_1.math",

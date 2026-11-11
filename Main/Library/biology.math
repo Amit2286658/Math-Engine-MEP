@@ -9,94 +9,326 @@
 <[chemistry]
 
 # 1. Population Genetics (Hardy-Weinberg Equilibrium `p + q = 1`, `p^2 + 2pq + q^2 = 1`)
+# @desc Recessive allele frequency q = 1 − p. Define: hw_q_from_p(p_dom) = 1 - p_dom
+# @param p_dom: real — dominant allele frequency p
+# @return real — An allele frequency in [0, 1]
 hw_q_from_p(p_dom)         = 1 - p_dom
+# @desc Dominant allele frequency p recovered from recessive phenotype q². Define: hw_p_from_q2(q2_rec_freq) = 1 - √q2_rec_freq
+# @param q2_rec_freq: real — recessive (aa) phenotype frequency observed in the population
+# @return real — An allele frequency in [0, 1]
 hw_p_from_q2(q2_rec_freq)  = 1 - √q2_rec_freq
+# @desc Hardy-Weinberg dominant homozygote frequency p². Define: hw_homo_dom(p_dom) = p_dom^2
+# @param p_dom: real — dominant allele frequency p
+# @return real — A genotype frequency in [0, 1]
 hw_homo_dom(p_dom)         = p_dom ^ 2
+# @desc Hardy-Weinberg heterozygote frequency 2pq. Define: hw_hetero(p_dom) = 2·p_dom·(1 - p_dom)
+# @param p_dom: real — dominant allele frequency p
+# @return real — A genotype frequency in [0, 1]
 hw_hetero(p_dom)           = 2 * p_dom * (1 - p_dom)
+# @desc Hardy-Weinberg recessive homozygote frequency q². Define: hw_homo_rec(p_dom) = (1 - p_dom)^2
+# @param p_dom: real — dominant allele frequency p
+# @return real — A genotype frequency in [0, 1]
 hw_homo_rec(p_dom)         = (1 - p_dom) ^ 2
+# @desc Estimates the expected number of heterozygous carriers (2pq · N) in a Hardy-Weinberg population from observed recessive phenotype frequency q² and population size N. Formula: q = √(q2_rec_freq), p = 1 − q, carriers = 2·p·q·pop_size
+# @param q2_rec_freq: real — Observed homozygous recessive phenotype frequency q² in [0, 1]
+# @param pop_size: real — Total number of individuals N in the population
+# @return real — Expected number of heterozygous (2pq) carrier individuals in the population
 hw_carrier_count(q2_rec_freq, pop_size) = {
     q_val := √q2_rec_freq
     p_val := 1 - q_val
     2 * p_val * q_val * pop_size
 }
+# @desc Genetic recombination frequency (map distance in cM). Define: recomb_freq(recombinants, total_offspring) = (recombinants / total_offspring)·100
+# @param recombinants: real — recombinant offspring count
+# @param total_offspring: real — total offspring count
+# @return real — A map distance in centimorgans (cM, 0–50 typically)
 recomb_freq(recombinants, total_offspring) = (recombinants / total_offspring) * 100
+# @desc One cell term (O−E)²/E of a chi-square statistic. Define: chi_sq_term(observed, expected) = ((observed - expected)^2) / expected
+# @param observed: real — observed count O
+# @param expected: real — expected count E
+# @return real — A single χ² contribution (non-negative)
 chi_sq_term(observed, expected)            = ((observed - expected) ^ 2) / expected
 
 # 2. Molecular Biology & Biotechnology (Chargaff Rules, DNA Helix, Translation & PCR)
+# @desc Computes guanine base percentage (%G) from adenine percentage (%A) in double-stranded DNA using Chargaff's parity rule (%A = %T, %G = %C, so %G = 50 − %A). Formula: chargaff_g_from_a(a_pct) = 50 - a_pct
+# @param a_pct: real — Percentage of adenine (%A) bases in double-stranded DNA (0–50)
+# @return real — Percentage of guanine (%G, equal to %C) in the double-stranded DNA sample (0–50%)
 chargaff_g_from_a(a_pct)          = 50 - a_pct
+# @desc Computes cytosine base percentage (%C) from thymine percentage (%T) in double-stranded DNA using Chargaff's parity rule (%A = %T, %G = %C, so %C = 50 − %T). Formula: chargaff_c_from_t(t_pct) = 50 - t_pct
+# @param t_pct: real — Percentage of thymine (%T) bases in double-stranded DNA (0–50)
+# @return real — Percentage of cytosine (%C, equal to %G) in the double-stranded DNA sample (0–50%)
 chargaff_c_from_t(t_pct)          = 50 - t_pct
+# @desc DNA double-helix length in nanometres (3.4 nm per 10 bp). Define: dna_length_nm(base_pairs) = base_pairs·0.34
+# @param base_pairs: real — number of base pairs
+# @return real — A helix length in nanometres (nm)
 dna_length_nm(base_pairs)         = base_pairs * 0.34
+# @desc Calculates the number of complete helical turns in a B-DNA double helix (10 base pairs per turn). Formula: dna_turns(base_pairs) = base_pairs / 10
+# @param base_pairs: real — Total number of base pairs (bp) in the B-DNA segment
+# @return real — Number of 360° helical turns (base_pairs / 10)
 dna_turns(base_pairs)             = base_pairs / 10
+# @desc Estimates the molecular mass of double-stranded DNA in daltons (Da) using an average weight of 650 Da per base pair. Formula: dna_weight_da(base_pairs) = base_pairs · 650
+# @param base_pairs: real — Number of base pairs (bp) in the double-stranded DNA molecule
+# @return real — Molecular mass of the DNA segment in daltons (Da, or g/mol)
 dna_weight_da(base_pairs)         = base_pairs * 650
+# @desc Counts the total mRNA codons required to translate a polypeptide chain of a given amino-acid length (including 1 termination stop codon). Formula: codons_for_protein(amino_acids) = amino_acids + 1
+# @param amino_acids: int — Number of amino-acid residues in the translated protein chain
+# @return int — Total mRNA codons required (coding codons + 1 stop codon)
 codons_for_protein(amino_acids)   = amino_acids + 1
+# @desc Calculates the minimum number of mRNA ribonucleotides needed to encode a protein of a given amino-acid length (3 bases per amino acid plus 3 bases for the stop codon). Formula: mrna_bases_for_protein(amino_acids) = 3 · (amino_acids + 1)
+# @param amino_acids: int — Number of amino acids in the polypeptide chain
+# @return int — Total number of mRNA nucleotide bases required (including the 3-base stop codon)
 mrna_bases_for_protein(amino_acids) = 3 * (amino_acids + 1)
+# @desc Total DNA copies after n PCR cycles (2ⁿ amplification). Define: pcr_copies(n_cycles) = 2^n_cycles
+# @param n_cycles: real — PCR cycle count n
+# @return real — A copy count (grows as 2^n)
 pcr_copies(n_cycles)              = 2 ^ n_cycles
+# @desc PCR product yield from template amount and cycles. Define: pcr_yield_from(n0_templates, n_cycles) = n0_templates·(2^n_cycles)
+# @param n0_templates: real — starting template copies (or amount unit)
+# @param n_cycles: real — PCR cycle count n
+# @return real — A product amount in the input’s amount unit
 pcr_yield_from(n0_templates, n_cycles) = n0_templates * (2 ^ n_cycles)
+# @desc Returns the number of DNA fragments produced when a linear DNA molecule is completely digested at n recognition cut sites. Formula: res_digest_linear(cut_sites) = cut_sites + 1
+# @param cut_sites: int — Number of restriction endonuclease cleavage sites along the linear DNA strand (n ≥ 0)
+# @return int — Number of resulting DNA restriction fragments (cut_sites + 1)
 res_digest_linear(cut_sites)      = cut_sites + 1
+# @desc Returns the number of DNA fragments produced when a circular DNA molecule (plasmid) is completely digested at n recognition cut sites. Formula: res_digest_circular(cut_sites) = cut_sites
+# @param cut_sites: int — Number of restriction endonuclease cleavage sites on the circular plasmid (n ≥ 1)
+# @return int — Number of resulting linear DNA restriction fragments (equal to cut_sites)
 res_digest_circular(cut_sites)    = cut_sites
 
 # 3. Biochemistry, Enzyme Kinetics (Michaelis-Menten) & Bioenergetics
+# @desc Michaelis-Menten velocity v = Vmax·[S]/(Km + [S]). Define: michaelis_menten(vmax, km, substrate_s) = (vmax·substrate_s) / (km + substrate_s)
+# @param vmax: real — maximum reaction velocity Vmax
+# @param km: real — Michaelis constant Km (half-saturation [S])
+# @param substrate_s: real — substrate concentration [S]
+# @return real — A reaction velocity in the unit of Vmax
 michaelis_menten(vmax, km, substrate_s) =
     (vmax * substrate_s) / (km + substrate_s)
+# @desc Velocity with a competitive inhibitor (Km effectively raised). Define: competitive_inh_v(vmax, km, substrate_s, inh_i, ki) = (vmax·substrate_s) / (km·(1 + inh_i / ki) + substrate_s)
+# @param vmax: real — maximum velocity
+# @param km: real — Michaelis constant
+# @param substrate_s: real — substrate concentration [S]
+# @param inh_i: real — inhibitor concentration [I]
+# @param ki: real — inhibition constant
+# @return real — A reaction velocity in the unit of Vmax
 competitive_inh_v(vmax, km, substrate_s, inh_i, ki) =
     (vmax * substrate_s) / (km * (1 + inh_i / ki) + substrate_s)
+# @desc Velocity with a non-competitive inhibitor (Vmax effectively lowered). Define: noncomp_inh_v(vmax, km, substrate_s, inh_i, ki) = ((vmax / (1 + inh_i / ki))·substrate_s) / (km + substrate_s)
+# @param vmax: real — maximum velocity
+# @param km: real — Michaelis constant
+# @param substrate_s: real — substrate concentration [S]
+# @param inh_i: real — inhibitor concentration [I]
+# @param ki: real — inhibition constant
+# @return real — A reaction velocity in the unit of Vmax
 noncomp_inh_v(vmax, km, substrate_s, inh_i, ki) =
     ((vmax / (1 + inh_i / ki)) * substrate_s) / (km + substrate_s)
+# @desc Enzyme catalytic efficiency kcat/Km. Define: enzyme_catalytic_eff(kcat, km) = kcat / km
+# @param kcat: real — turnover number kcat (s⁻¹)
+# @param km: real — Michaelis constant
+# @return real — Catalytic efficiency (per-second per-molar units)
 enzyme_catalytic_eff(kcat, km) = kcat / km
 
+# @desc Reaction rate scaled by the Q10 temperature coefficient. Define: q10_rate(r1, t1_c, t2_c, q10_coeff) = r1·(q10_coeff^((t2_c - t1_c) / 10)). Default q10 coeff = 2
+# @param r1: real — rate measured at t1_c
+# @param t1_c: real — reference temperature (°C)
+# @param t2_c: real — second temperature (°C)
+# @param q10_coeff: real — Q10 coefficient (default 2)
+# @return real — A reaction rate in the input rates’ unit
 q10_rate(r1, t1_c, t2_c, q10_coeff = 2) =
     r1 * (q10_coeff ^ ((t2_c - t1_c) / 10))
+# @desc Q10 coefficient from rates at two temperatures. Define: q10_from_rates(r1, r2, t1_c, t2_c) = (r2 / r1)^(10 / (t2_c - t1_c))
+# @param r1: real — rate at t1_c
+# @param r2: real — rate at t2_c
+# @param t1_c: real — first temperature (°C)
+# @param t2_c: real — second temperature (°C)
+# @return real — The dimensionless Q10 coefficient
 q10_from_rates(r1, r2, t1_c, t2_c) =
     (r2 / r1) ^ (10 / (t2_c - t1_c))
+# @desc Respiratory quotient RQ = CO₂ produced/O₂ consumed. Define: respiratory_quotient(co2_produced, o2_consumed) = co2_produced / o2_consumed
+# @param co2_produced: real — CO₂ produced (mol or volume units)
+# @param o2_consumed: real — O₂ consumed (same units)
+# @return real — A dimensionless RQ
 respiratory_quotient(co2_produced, o2_consumed) = co2_produced / o2_consumed
+# @desc Calculates total aerobic respiration ATP yield (38 ATP per oxidised glucose). Formula: aerobic_atp_yield(glucose_moles) = 38 · glucose_moles
+# @param glucose_moles: real — Amount of glucose completely oxidised (mol or molecule count)
+# @return real — Total ATP produced (38 × glucose_moles, in moles or molecules matching input)
 aerobic_atp_yield(glucose_moles)                = 38 * glucose_moles
 
 # 4. Plant Physiology & Water Potential (`Psi_w = Psi_s + Psi_p`, `DPD = OP - TP`)
+# @desc Water potential Ψw = Ψs + Ψp. Define: water_potential(psi_s, psi_p) = psi_s + psi_p
+# @param psi_s: real — solute potential Ψs
+# @param psi_p: real — pressure (turgor) potential Ψp
+# @return real — A potential in bars or MPa (per input unit set)
 water_potential(psi_s, psi_p)                  = psi_s + psi_p
+# @desc Solute (osmotic) potential Ψs = −iCRT. Define: solute_potential(i_ion, molarity_c, temp_k) = -i_ion·molarity_c·0.0831·temp_k
+# @param i_ion: real — ionisation constant i (van’t Hoff factor)
+# @param molarity_c: real — molar concentration (mol/L)
+# @param temp_k: real — absolute temperature (K)
+# @return real — A potential in bars or MPa (per input unit set)
 solute_potential(i_ion, molarity_c, temp_k)    = -i_ion * molarity_c * 0.0831 * temp_k
+# @desc DPD = osmotic pressure − turgor pressure. Define: diffusion_pressure_deficit(osmotic_p, turgor_p) = osmotic_p - turgor_p
+# @param osmotic_p: real — cell osmotic pressure
+# @param turgor_p: real — cell turgor pressure
+# @return real — A pressure in the inputs’ pressure unit
 diffusion_pressure_deficit(osmotic_p, turgor_p)= osmotic_p - turgor_p
+# @desc Calculates the foliar stomatal index SI (%) = [S / (S + E)] × 100 from stomatal and epidermal cell counts. Formula: stomatal_index(stomata_s, epidermal_e) = (stomata_s / (stomata_s + epidermal_e)) · 100
+# @param stomata_s: real — Number of stomata (S) counted in the microscopic field
+# @param epidermal_e: real — Number of ordinary epidermal pavement cells (E) in the same field
+# @return real — Stomatal index as a percentage (%) between 0 and 100
 stomatal_index(stomata_s, epidermal_e)         = (stomata_s / (stomata_s + epidermal_e)) * 100
 
 # 5. Cell Biology, Microscopy & Morphometrics
+# @desc Total compound-microscope magnification (ocular × objective). Define: total_magnification(ocular_mag, objective_mag) = ocular_mag·objective_mag
+# @param ocular_mag: real — eyepiece magnification
+# @param objective_mag: real — objective magnification
+# @return real — A magnification as a × factor
 total_magnification(ocular_mag, objective_mag)    = ocular_mag * objective_mag
+# @desc Real specimen size from magnified size and magnification. Define: actual_specimen_size(image_size, magnification) = image_size / magnification
+# @param image_size: real — size measured on the image
+# @param magnification: real — magnification used
+# @return real — The real size in the input’s length unit
 actual_specimen_size(image_size, magnification)   = image_size / magnification
+# @desc Field-of-view diameter at a second magnification. Define: fov_diameter(fov_low, mag_low, mag_high) = (fov_low·mag_low) / mag_high
+# @param fov_low: real — field width at the lower magnification (µm)
+# @param mag_low: real — lower magnification
+# @param mag_high: real — higher magnification
+# @return real — A field width in the input’s length unit (typically µm)
 fov_diameter(fov_low, mag_low, mag_high)          = (fov_low * mag_low) / mag_high
+# @desc Calculates the mitotic index (%) as the percentage of total observed cells actively undergoing mitosis. Formula: mitotic_index(dividing_cells, total_cells) = (dividing_cells / total_cells) · 100
+# @param dividing_cells: real — Number of cells visibly in mitotic phases (prophase, metaphase, anaphase, telophase)
+# @param total_cells: real — Total number of cells counted in the microscopic field
+# @return real — Mitotic index expressed as a percentage (%) between 0 and 100
 mitotic_index(dividing_cells, total_cells)        = (dividing_cells / total_cells) * 100
+# @desc Surface area of a spherical cell. Define: cell_surface_sphere(r) = 4π·(r^2)
+# @param r: real — cell radius (m)
+# @return real — An area in the input length unit squared
 cell_surface_sphere(r) = 4π * (r ^ 2)
+# @desc Volume of a spherical cell. Define: cell_volume_sphere(r) = (4 / 3)·π·(r^3)
+# @param r: real — cell radius (m)
+# @return real — A volume in the input length unit cubed
 cell_volume_sphere(r)  = (4 / 3) * π * (r ^ 3)
+# @desc Surface-area-to-volume ratio of a sphere (diffusion efficiency). Define: sa_to_vol_sphere(r) = 3 / r
+# @param r: real — sphere radius (m)
+# @return real — An area-to-volume ratio in inverse length units
 sa_to_vol_sphere(r)    = 3 / r
 
 # 6. Human Physiology (Cardiovascular, Respiratory, Renal & Biometrics)
+# @desc Calculates ventricular stroke volume SV = EDV − ESV (volume of blood pumped per heartbeat). Formula: stroke_volume(edv_ml, esv_ml) = edv_ml - esv_ml
+# @param edv_ml: real — End-diastolic volume (EDV) in millilitres (mL)
+# @param esv_ml: real — End-systolic volume (ESV) in millilitres (mL)
+# @return real — Stroke volume (SV) per heartbeat in millilitres (mL)
 stroke_volume(edv_ml, esv_ml)               = edv_ml - esv_ml
+# @desc Calculates left-ventricular ejection fraction (EF%) as the percentage of end-diastolic volume ejected per heartbeat. Formula: ejection_fraction(edv_ml, esv_ml) = ((edv_ml - esv_ml) / edv_ml) · 100
+# @param edv_ml: real — End-diastolic volume (EDV) in millilitres (mL)
+# @param esv_ml: real — End-systolic volume (ESV) in millilitres (mL)
+# @return real — Ejection fraction as a percentage (%) between 0 and 100
 ejection_fraction(edv_ml, esv_ml)           = ((edv_ml - esv_ml) / edv_ml) * 100
+# @desc Calculates cardiac output (CO) in litres per minute from heart rate and stroke volume. Formula: cardiac_output(hr_bpm, stroke_vol_ml) = (hr_bpm · stroke_vol_ml) / 1000
+# @param hr_bpm: real — Heart rate in beats per minute (bpm)
+# @param stroke_vol_ml: real — Volume of blood pumped per beat in millilitres (mL)
+# @return real — Cardiac output in litres per minute (L/min)
 cardiac_output(hr_bpm, stroke_vol_ml)       = (hr_bpm * stroke_vol_ml) / 1000
+# @desc Pulse pressure = systolic − diastolic pressure. Define: pulse_pressure(systolic_p, diastolic_p) = systolic_p - diastolic_p
+# @param systolic_p: real — systolic pressure (mmHg)
+# @param diastolic_p: real — diastolic pressure (mmHg)
+# @return real — A pressure in mmHg
 pulse_pressure(systolic_p, diastolic_p)     = systolic_p - diastolic_p
+# @desc Mean arterial pressure MAP = DP + ⅓PP. Define: mean_arterial_pressure(systolic_p, diastolic_p) = diastolic_p + (systolic_p - diastolic_p) / 3
+# @param systolic_p: real — systolic pressure (mmHg)
+# @param diastolic_p: real — diastolic pressure (mmHg)
+# @return real — A pressure in mmHg
 mean_arterial_pressure(systolic_p, diastolic_p) = diastolic_p + (systolic_p - diastolic_p) / 3
 
+# @desc Minute ventilation = tidal volume × breaths per minute. Define: minute_ventilation(tidal_vol_ml, resp_rate_bpm) = tidal_vol_ml·resp_rate_bpm
+# @param tidal_vol_ml: real — tidal volume (mL)
+# @param resp_rate_bpm: real — breaths per minute
+# @return real — A ventilation rate in mL/min
 minute_ventilation(tidal_vol_ml, resp_rate_bpm) = tidal_vol_ml * resp_rate_bpm
+# @desc Alveolar ventilation = (tidal volume − dead space) × rate. Define: alveolar_ventilation(tidal_vol_ml, dead_space_ml, resp_rate_bpm) = (tidal_vol_ml - dead_space_ml)·resp_rate_bpm
+# @param tidal_vol_ml: real — tidal volume (mL)
+# @param dead_space_ml: real — anatomical dead space (mL)
+# @param resp_rate_bpm: real — breaths per minute
+# @return real — A ventilation rate in mL/min
 alveolar_ventilation(tidal_vol_ml, dead_space_ml, resp_rate_bpm) =
     (tidal_vol_ml - dead_space_ml) * resp_rate_bpm
+# @desc Vital capacity = IRV + TV + ERV. Define: vital_capacity(tv_ml, irv_ml, erv_ml) = tv_ml + irv_ml + erv_ml
+# @param tv_ml: real — tidal volume (mL)
+# @param irv_ml: real — inspiratory reserve volume (mL)
+# @param erv_ml: real — expiratory reserve volume (mL)
+# @return real — A capacity in mL
 vital_capacity(tv_ml, irv_ml, erv_ml)       = tv_ml + irv_ml + erv_ml
+# @desc Total lung capacity = VC + RV. Define: total_lung_capacity(vc_ml, rv_ml) = vc_ml + rv_ml
+# @param vc_ml: real — vital capacity (mL)
+# @param rv_ml: real — residual volume (mL)
+# @return real — A capacity in mL
 total_lung_capacity(vc_ml, rv_ml)           = vc_ml + rv_ml
 
+# @desc Net glomerular filtration pressure (Starling forces). Define: net_filtration_pressure(ghp, bcops, chp) = ghp - (bcops + chp)
+# @param ghp: real — glomerular hydrostatic pressure
+# @param bcops: real — blood-colloid osmotic pressure
+# @param chp: real — capsular hydrostatic pressure
+# @return real — A pressure in mmHg
 net_filtration_pressure(ghp, bcops, chp)    = ghp - (bcops + chp)
+# @desc Renal clearance Cx = (Ux·V)/Px. Define: renal_clearance(urine_conc_u, urine_flow_v, plasma_conc_p) = (urine_conc_u·urine_flow_v) / plasma_conc_p
+# @param urine_conc_u: real — urine concentration Ux
+# @param urine_flow_v: real — urine flow rate V (mL/min)
+# @param plasma_conc_p: real — plasma concentration Px
+# @return real — A clearance in mL/min
 renal_clearance(urine_conc_u, urine_flow_v, plasma_conc_p) =
     (urine_conc_u * urine_flow_v) / plasma_conc_p
+# @desc Calculates Body Mass Index (BMI) = mass_kg / height_m² from body mass and stature. Formula: bmi_calc(mass_kg, height_m) = mass_kg / (height_m^2)
+# @param mass_kg: real — Body mass in kilograms (kg)
+# @param height_m: real — Standing height in metres (m)
+# @return real — Body Mass Index (BMI) in kg/m²
 bmi_calc(mass_kg, height_m)                 = mass_kg / (height_m ^ 2)
 
 # 7. Ecology, Population Growth, Mark-Recapture & Biodiversity Indices
+# @desc Exponential population growth N = N₀e^(rt). Define: pop_exp_growth(n0, r_intrinsic, time_t) = n0·exp(r_intrinsic·time_t)
+# @param n0: real — initial population size
+# @param r_intrinsic: real — intrinsic growth rate r
+# @param time_t: real — elapsed time (same unit as r)
+# @return real — A population size (real count)
 pop_exp_growth(n0, r_intrinsic, time_t)      = n0 * exp(r_intrinsic * time_t)
+# @desc Population doubling time t = ln2/r. Define: pop_doubling_time(r_intrinsic) = ln(2) / r_intrinsic
+# @param r_intrinsic: real — intrinsic growth rate r (per time unit)
+# @return real — A doubling time in the input’s time unit
 pop_doubling_time(r_intrinsic)               = ln(2) / r_intrinsic
+# @desc Instantaneous logistic growth rate dN/dt = rN(1 − N/K). Define: pop_logistic_dNdt(r_intrinsic, n_cur, k_carrying) = r_intrinsic·n_cur·((k_carrying - n_cur) / k_carrying)
+# @param r_intrinsic: real — intrinsic growth rate r
+# @param n_cur: real — current population size N
+# @param k_carrying: real — carrying capacity K
+# @return real — A growth rate in individuals per time unit
 pop_logistic_dNdt(r_intrinsic, n_cur, k_carrying) =
     r_intrinsic * n_cur * ((k_carrying - n_cur) / k_carrying)
+# @desc Logistic population size at time t. Define: pop_logistic_nt(n0, k_carrying, r_intrinsic, time_t) = k_carrying / (1 + ((k_carrying - n0) / n0)·exp(-r_intrinsic·time_t))
+# @param n0: real — initial population size
+# @param k_carrying: real — carrying capacity K
+# @param r_intrinsic: real — intrinsic growth rate r
+# @param time_t: real — elapsed time (same unit as r)
+# @return real — A population size (real count)
 pop_logistic_nt(n0, k_carrying, r_intrinsic, time_t) =
     k_carrying / (1 + ((k_carrying - n0) / n0) * exp(-r_intrinsic * time_t))
+# @desc Lincoln-Petersen mark-recapture population estimate. Define: lincoln_petersen_pop(marked_m1, total_catch_c, recaptured_m2) = (marked_m1·total_catch_c) / recaptured_m2
+# @param marked_m1: real — individuals marked & released (M)
+# @param total_catch_c: real — size of the second sample (C)
+# @param recaptured_m2: real — marked individuals recaptured (R)
+# @return real — An estimated population size (real count)
 lincoln_petersen_pop(marked_m1, total_catch_c, recaptured_m2) =
     (marked_m1 * total_catch_c) / recaptured_m2
+# @desc Energy reaching a trophic level via the 10% rule. Define: trophic_energy_at(base_energy, trophic_steps) = base_energy·(0.1^trophic_steps)
+# @param base_energy: real — energy at the producer level (J)
+# @param trophic_steps: real — trophic transfers above the producer level
+# @return real — Available energy in the input energy unit
 trophic_energy_at(base_energy, trophic_steps) = base_energy * (0.1 ^ trophic_steps)
+# @desc Net primary productivity GPP − respiration. Define: net_primary_prod(gpp, respiration_r) = gpp - respiration_r
+# @param gpp: real — gross primary productivity
+# @param respiration_r: real — autotroph respiration
+# @return real — Net productivity in the inputs’ rate units
 net_primary_prod(gpp, respiration_r)          = gpp - respiration_r
 
-# Simpson Index of Diversity `1 - sum(n_i*(n_i-1)) / (N*(N-1))`
+# @desc Calculates Simpson's Index of Diversity 1 − D = 1 − [∑ nᵢ(nᵢ − 1)] / [N(N − 1)] from a vector of species abundance counts. Formula: simpson_diversity_vec(counts)
+# @param counts: vec — Vector of species abundance counts `[n1, n2, ...]`
+# @return real — Simpson's diversity index (1 − D) in [0, 1]
 simpson_diversity_vec(counts:vec) = {
     tot   := counts.sum()
     numer := 0
@@ -106,7 +338,9 @@ simpson_diversity_vec(counts:vec) = {
     1 - (numer / (tot * (tot - 1)))
 }
 
-# Shannon-Wiener Diversity Index `H = -sum((n_i/N) * ln(n_i/N))`
+# @desc Calculates the Shannon-Wiener species diversity index H' = −∑ (pᵢ · ln(pᵢ)) where pᵢ = nᵢ / N from a vector of species abundance counts. Formula: shannon_diversity_vec(counts)
+# @param counts: vec — Vector of positive abundance counts `[n1, n2, ...]` for each species
+# @return real — Shannon-Wiener diversity index H' ≥ 0 (in nats)
 shannon_diversity_vec(counts:vec) = {
     tot := counts.sum()
     h   := 0

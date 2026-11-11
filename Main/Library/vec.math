@@ -12,32 +12,104 @@
 <[arith]
 
 # 1. Constructors & Mutating / Query Methods for `vec<T>`, `list<T>`, `stack<T>`, `queue<T>`
+# @desc Constructs a dynamic 1D vector containing the given elements. Formula: vec(a, b, ...)
+# @param elems: any... — Zero or more elements to pack into the vector
+# @return vec — Dynamic 1D array supporting 0-based indexing, slicing, and functional pipelines
 vec()                         -> vec = @vnew(0)
 vec(cap:real, none)           -> vec = @vnew(cap)
 vec(count:real, none, init:T) -> vec = @vfill(count, init)
+# @desc Constructs an empty or populated dynamic list (`vec<T>`). Formula: list()
+# @param elems: any... — Optional initial elements
+# @return vec — Newly allocated dynamic list
 list()                  -> vec = @vnew(0)
 list(item:T)            -> vec = @vfill(1, item)
+# @desc Constructs a LIFO stack backed by a dynamic vector (`push`, `pop`, `peek`/`top`). Formula: stack()
+# @param None — Takes no parameters
+# @return vec — Empty LIFO stack container
 stack()                 -> vec = @vnew(0)
 stack(item:T)            -> vec = @vfill(1, item)
+# @desc Constructs a FIFO queue backed by a dynamic vector (`enqueue`, `dequeue`, `front`). Formula: queue()
+# @param None — Takes no parameters
+# @return vec — Empty FIFO queue container
 queue()                 -> vec = @vnew(0)
 queue(item:T)            -> vec = @vfill(1, item)
+# @desc Returns the number of elements in a vector/map or the character length of a string. Formula: len(x) = @vlen(x)
+# @param x: vec | map | str — Input vector, dictionary map, or string
+# @return int — Number of elements or characters in `x`
 len(v:vec)                     = @vlen(v)
+# @desc Returns the currently allocated capacity of dynamic vector v. Formula: cap(v) = @vcap(v)
+# @param v: vec — Input dynamic vector
+# @return int — Allocated buffer capacity (in elements)
 cap(v:vec)                     = @vcap(v)
+# @desc Computes `is_empty(v: vec)` in module [vec] (Constructors & Mutating / Query Methods for `vec<T>`, `list<T>`, `stack<T>`, `queue<T>`). Formula: is_empty(v:vec) = (len(v) == 0)
+# @param v: vec — Input vector
+# @return any — Result returned by `is_empty(v: vec)` in [vec]
 is_empty(v:vec)                = (len(v) == 0)
+# @desc Returns the element or character at 0-based index `idx` (supports negative wrap-around indices). Formula: at(v, idx) = @vget(v, idx)
+# @param v: vec | str — Input vector or string
+# @param idx: int — 0-based index (negative indices count backward from the end)
+# @return any — Element or single-character string at `idx`
 at(v:vec, idx)          -> T   = @vget(v, idx)
+# @desc Returns a vector with the element at 0-based index `idx` updated to `val`. Formula: set(v, idx, val) = @vset(v, idx, val)
+# @param v: vec — Input vector
+# @param idx: int — 0-based element index
+# @param val: any — Replacement value
+# @return vec — Updated vector with `v[idx] = val`
 set(v:vec, idx, val:T)  -> vec = @vset(v, idx, val)
+# @desc Resizes vector v to `new_len` elements (zero-filling new slots or truncating excess elements). Formula: resize(v, new_len) = @vresize(v, new_len)
+# @param v: vec — Target vector
+# @param new_len: int — Desired non-negative element count
+# @return vec — Resized vector of length `new_len`
 resize(v:vec, new_len)  -> vec = @vresize(v, new_len)
+# @desc Shrinks a vector's excess allocated buffer capacity to match its current length. Formula: shrink(v) = @vshrink(v)
+# @param v: vec — Target vector
+# @return vec — Compacted vector
 shrink(v:vec)           -> vec = @vshrink(v)
+# @desc Removes all elements from vector v, resetting its length to 0. Formula: clear(v) = @vclear(v)
+# @param v: vec — Target vector to clear
+# @return vec — Empty vector `[]`
 clear(v:vec)            -> vec = @vclear(v)
+# @desc Appends an element to the end of vector v and returns the updated vector. Formula: push(v, item) = @vpush(v, item)
+# @param v: vec — Target vector to append to
+# @param item: any — Element value to append at the tail
+# @return vec — Updated vector with `item` appended at the end
 push(v:vec, item:T)     -> vec = @vpush(v, item)
+# @desc Removes and returns the last element from a non-empty vector or stack. Formula: pop(v) = @vpop(v)
+# @param v: vec — Non-empty target vector or stack
+# @return any — The removed tail element of `v`
 pop(v:vec)              -> T   = @vpop(v)
+# @desc Enqueues an item at the back of FIFO queue q. Formula: enqueue(q, item) = @vpush(q, item)
+# @param q: vec — Target queue vector
+# @param item: any — Element to add to the back of the queue
+# @return vec — Updated queue vector
 enqueue(q:vec, item:T)  -> vec = @vpush(q, item)
+# @desc Removes and returns the front item from FIFO queue q. Formula: dequeue(q) = @vshift(q)
+# @param q: vec — Non-empty queue vector
+# @return any — Dequeued front element
 dequeue(q:vec)          -> T   = @vshift(q)
+# @desc Removes and returns the first element (index 0) from a non-empty vector or queue. Formula: shift(q) = @vshift(q)
+# @param q: vec — Non-empty target vector or queue
+# @return any — The removed front element at index 0
 shift(q:vec)            -> T   = @vshift(q)
+# @desc Removes and returns the front element (index 0) from a non-empty vector or queue. Formula: pop_front(q) = @vshift(q)
+# @param q: vec — Non-empty target vector or queue
+# @return any — The removed front element at index 0
 pop_front(q:vec)        -> T   = @vshift(q)
+# @desc Returns the top (last) element of a non-empty stack or vector without removing it. Formula: peek(s) = s[len(s) - 1]
+# @param s: vec — Non-empty stack or vector
+# @return any — Last element `s[len(s) - 1]`
 peek(s:vec)             -> T   = (s.len() == 0) ? error("Cannot peek into an empty vector") : s[-1]
+# @desc Returns the top (last) element of a non-empty stack without removing it. Formula: top(s) = peek(s)
+# @param s: vec — Non-empty stack vector
+# @return any — Top element of stack `s`
 top(s:vec)              -> T   = peek(s)
+# @desc Returns the last element at the back of a non-empty vector or queue without removing it. Formula: back(s) = peek(s)
+# @param s: vec — Non-empty vector or queue
+# @return any — Last element at the back of `s`
 back(s:vec)             -> T   = peek(s)
+# @desc Returns the first element (index 0) at the front of a non-empty queue or vector without removing it. Formula: front(q) = q[0]
+# @param q: vec — Non-empty queue or vector
+# @return any — Front element `q[0]`
 front(q:vec)            -> T   = (q.len() == 0) ? error("Cannot peek into an empty vector") : q[0]
 
 # 2. Range Operators (`...`, `..<`, `>..`, `>..<`), Stepped Range (`by`), Membership (`in`) & Insert (`into`)
@@ -61,7 +133,11 @@ front(q:vec)            -> T   = (q.len() == 0) ? error("Cannot peek into an emp
     0
 }
 
-# Pure MEP `range(start, stop, step = 1)` function
+# @desc Generates a vector of numbers starting at `start` up to `stop` (inclusive) stepped by `step`. Formula: range(start, stop, step = 1)
+# @param start: real — Starting value of the sequence
+# @param stop: real — Inclusive end bound of the sequence
+# @param step: real — Non-zero increment between elements (default 1)
+# @return vec — Vector of stepped numeric values from `start` to `stop`
 range(start:real, T, stop:real, T, step = 1) -> vec = {
     if (step == 0) { error("Range step cannot be zero") }
     out := vec<real, T>()
@@ -86,8 +162,20 @@ range(start:real, T, stop:real, T, step = 1) -> vec = {
 }
 
 # 3. Higher-Order Functional Pipelines on `$vec`
+# @desc Applies transformation function `f(x)` to every element of a vector or matrix, or constructs a key-value `$map` dictionary when called with key-value arguments. Formula: map(container, f)
+# @param m: vec | mat — Input vector or matrix to transform
+# @param f: fn — Element mapping function or lambda `x => ...`
+# @return vec | mat | map — Transformed container of the same shape, or a new `$map` dictionary
 map(v:vec, f:fn)            -> vec = [f(x) for x in v]
+# @desc Selects all elements from a vector or matrix for which predicate function `f(x)` returns true (non-zero). Formula: filter(m, f) = [x for x in m if f(x)]
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return vec — Vector of elements satisfying `f(x) != 0`
 filter(v:vec, f:fn)         -> vec = [x for x in v if f(x)]
+# @desc Folds a vector or matrix down to a single value by repeatedly applying binary accumulator `f(acc, x)`. Formula: reduce(m, f)
+# @param m: vec | mat — Non-empty input vector or matrix
+# @param f: fn — Binary reduction lambda `(acc, x) => ...`
+# @return any — Accumulated reduction result
 reduce(v:vec, f:fn)         -> T   = {
     if (v.len() == 0) { error("Cannot reduce an empty collection without an initial value") }
     acc := v[0]
@@ -99,19 +187,40 @@ reduce(v:vec, init:T, f:fn) -> T   = {
     (x in v) { acc = f(acc, x) }
     acc
 }
+# @desc Folds a vector or matrix from an explicit initial accumulator value `init` using binary function `f(acc, x)`. Formula: fold(m, init, f)
+# @param m: vec | mat — Input vector or matrix
+# @param init: any — Initial accumulator value
+# @param f: fn — Binary reduction lambda `(acc, x) => ...`
+# @return any — Final accumulated value
 fold(v:vec, init:T, f:fn)   -> T   = reduce(v, init, f)
+# @desc Returns 1 (true) if at least one element in a vector or matrix satisfies predicate `f(x)`, or 0 otherwise. Formula: any(m, f)
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return bool — 1 if any element satisfies `f(x)`, else 0
 any(v:vec, f:fn)                   = {
     (x in v) { if (f(x)) { return 1 } }
     0
 }
+# @desc Returns 1 (true) if every element in a vector or matrix satisfies predicate `f(x)`, or 0 otherwise. Formula: all(m, f)
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return bool — 1 if all elements satisfy `f(x)`, else 0
 all(v:vec, f:fn)                   = {
     (x in v) { if (!f(x)) { return 0 } }
     1
 }
+# @desc Returns the first element in a vector or matrix that satisfies predicate `f(x)`, or `nan` if none matches. Formula: find(m, f)
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return any — First matching element, or `nan` if not found
 find(v:vec, f:fn)           -> T   = {
     (x in v) { if (f(x)) { return x } }
     0
 }
+# @desc Counts the number of elements in a vector or matrix that satisfy predicate `f(x)`. Formula: count_if(m, f)
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return int — Count of elements for which `f(x)` is non-zero
 count_if(v:vec, f:fn)              = {
     c := 0
     (x in v) { if (f(x)) { c += 1 } }
@@ -148,15 +257,27 @@ count_if(v:vec, f:fn)              = {
 (s:real) ".^" (a:vec)  :>85 -> vec = [s ^ x for x in a]
 
 # 5. Pure MEP Vector Statistics & Time-Series Functions (`vec_sum`, `sum`, `mean`, `variance`, `stddev`, `sma`)
+# @desc Computes the sum of all elements in a vector (supporting numeric vectors, string vectors, `vec<vec2>`, and `vec<vec3>`). Formula: vec_sum(v)
+# @param v: vec — Input vector
+# @return real | str | vec2 | vec3 — Sum of all elements in `v`
 vec_sum(v:vec) = {
     s := 0
     (x in v) { s += x }
     s
 }
 
+# @desc Computes the sum of all elements in a vector (or concatenates a vector of strings, or sums 2D/3D point vectors). Formula: sum(v)
+# @param v: vec — Input vector of numbers, strings, or 2D/3D points
+# @return real | str | vec2 | vec3 — Total sum of all elements in `v`
 sum(v:vec)  = vec_sum(v)
+# @desc Calculates the arithmetic mean (average) of a non-empty vector of numbers or 2D/3D points: sum(v) / len(v). Formula: mean(v) = sum(v) / len(v)
+# @param v: vec — Non-empty numeric or point vector
+# @return real | vec2 | vec3 — Arithmetic mean of the elements in `v`
 mean(v:vec) = vec_sum(v) / v.len()
 
+# @desc Calculates the population variance σ² = (1/N) ∑(xᵢ − μ)² of a non-empty numeric vector. Formula: variance(v)
+# @param v: vec — Non-empty numeric vector
+# @return real — Population variance σ² ≥ 0
 variance(v:vec) = {
     mu  := mean(v)
     acc := 0
@@ -167,8 +288,15 @@ variance(v:vec) = {
     acc / v.len()
 }
 
+# @desc Calculates the population standard deviation σ = √variance(v) of a non-empty numeric vector. Formula: stddev(v) = √variance(v)
+# @param v: vec — Non-empty numeric vector
+# @return real — Population standard deviation σ ≥ 0
 stddev(v:vec) = √variance(v)
 
+# @desc Computes the Simple Moving Average (SMA) of vector v over a sliding window of length `window`. Formula: sma(v, window)
+# @param v: vec — Input time-series or numeric vector
+# @param window: int — Positive sliding window size (1 ≤ window ≤ len(v))
+# @return vec — Vector of moving-average values for each window position
 sma(v:vec, window) = {
     n     := v.len()
     if (n == 0) { error("Cannot compute sma() of an empty vector") }
@@ -183,6 +311,9 @@ sma(v:vec, window) = {
 }
 
 # 6. Pure MEP Vector Sorting (Shellsort), Reversal, Extrema, Cumulative Ops, Dot/Norm & Linear Regression
+# @desc Sorts the elements of numeric vector v in ascending order using Shellsort. Formula: sort(v)
+# @param v: vec — Input numeric vector
+# @return vec — New vector containing the elements of `v` sorted in ascending order
 sort(v:vec) -> vec = {
     n := v.len()
     if (n <= 1) { return [x for x in v] }
@@ -203,6 +334,9 @@ sort(v:vec) -> vec = {
     out
 }
 
+# @desc Sorts the elements of numeric vector v in descending order. Formula: sort_desc(v) = reverse(sort(v))
+# @param v: vec — Input numeric vector
+# @return vec — New vector containing the elements of `v` sorted from largest to smallest
 sort_desc(v:vec) -> vec = {
     n := v.len()
     if (n <= 1) { return [x for x in v] }
@@ -223,12 +357,18 @@ sort_desc(v:vec) -> vec = {
     out
 }
 
+# @desc Reverses the order of elements in vector v. Formula: reverse(v)
+# @param v: vec — Input vector
+# @return vec — New vector with elements in reverse order
 reverse(v:vec) -> vec = {
     n := v.len()
     if (n <= 1) { return v }
     v[(n - 1)...0]
 }
 
+# @desc Returns the minimum element in a non-empty numeric vector v. Formula: vec_min(v)
+# @param v: vec — Non-empty numeric vector
+# @return real — Smallest element value in `v`
 vec_min(v:vec) -> T = {
     if (v.len() == 0) { error("Cannot compute min of an empty vector") }
     m := v[0]
@@ -236,6 +376,9 @@ vec_min(v:vec) -> T = {
     m
 }
 
+# @desc Returns the maximum element in a non-empty numeric vector v. Formula: vec_max(v)
+# @param v: vec — Non-empty numeric vector
+# @return real — Largest element value in `v`
 vec_max(v:vec) -> T = {
     if (v.len() == 0) { error("Cannot compute max of an empty vector") }
     m := v[0]
@@ -243,9 +386,20 @@ vec_max(v:vec) -> T = {
     m
 }
 
+# @desc Returns the smaller of two numeric values a and b. Formula: min(a, b) = (a < b) ? a : b
+# @param a: real — First numeric value
+# @param b: real — Second numeric value
+# @return real — Minimum value min(a, b)
 min(v:vec) -> T = vec_min(v)
+# @desc Returns the larger of two numeric values a and b. Formula: max(a, b) = (a > b) ? a : b
+# @param a: real — First numeric value
+# @param b: real — Second numeric value
+# @return real — Maximum value max(a, b)
 max(v:vec) -> T = vec_max(v)
 
+# @desc Returns the 0-based index of the minimum element in a non-empty numeric vector v. Formula: argmin(v)
+# @param v: vec — Non-empty numeric vector
+# @return int — 0-based index of the smallest element in `v`
 argmin(v:vec) = {
     if (v.len() == 0) { error("Cannot compute argmin of an empty vector") }
     bi := 0
@@ -254,6 +408,9 @@ argmin(v:vec) = {
     bi
 }
 
+# @desc Returns the 0-based index of the maximum element in a non-empty numeric vector v. Formula: argmax(v)
+# @param v: vec — Non-empty numeric vector
+# @return int — 0-based index of the largest element in `v`
 argmax(v:vec) = {
     if (v.len() == 0) { error("Cannot compute argmax of an empty vector") }
     bi := 0
@@ -262,6 +419,9 @@ argmax(v:vec) = {
     bi
 }
 
+# @desc Computes the prefix cumulative sum vector `[v₀, v₀ + v₁, v₀ + v₁ + v₂, ...]` of vector v. Formula: cumsum(v)
+# @param v: vec — Input numeric vector
+# @return vec — Vector of running cumulative sums
 cumsum(v:vec) -> vec = {
     out := vec()
     acc := 0
@@ -272,6 +432,9 @@ cumsum(v:vec) -> vec = {
     out
 }
 
+# @desc Computes the prefix cumulative product vector `[v₀, v₀·v₁, v₀·v₁·v₂, ...]` of vector v. Formula: cumprod(v)
+# @param v: vec — Input numeric vector
+# @return vec — Vector of running cumulative products
 cumprod(v:vec) -> vec = {
     out := vec()
     acc := 1
@@ -282,12 +445,19 @@ cumprod(v:vec) -> vec = {
     out
 }
 
+# @desc Computes the first forward difference vector `[v₁ − v₀, v₂ − v₁, ...]` of adjacent elements in v. Formula: diff_vec(v)
+# @param v: vec — Input numeric vector of length N ≥ 2
+# @return vec — Vector of N − 1 adjacent differences `v[i+1] - v[i]`
 diff_vec(v:vec) -> vec = {
     n := v.len()
     if (n <= 1) { return vec() }
     [v[i + 1] - v[i] for i in 0..<(n - 1)]
 }
 
+# @desc Computes the inner dot product of two 1D vectors `a` and `b` or two 2D `$vec2` structs. Formula: dot(a, b) = ∑ aᵢ · bᵢ
+# @param a: vec | vec2 — First vector
+# @param b: vec | vec2 — Second vector of matching dimension
+# @return real — Scalar dot product `a · b`
 dot(a:vec, b:vec) = {
     if (a.len() != b.len()) { error("Vector length mismatch for dot()") }
     s := 0
@@ -295,8 +465,16 @@ dot(a:vec, b:vec) = {
     s
 }
 
+# @desc Computes the Euclidean L₂ norm ‖v‖₂ = √dot(v, v) of vector v. Formula: norm(v) = √dot(v, v)
+# @param v: vec — Input numeric vector
+# @return real — Euclidean L₂ length ‖v‖₂ ≥ 0
 norm(v:vec) = √dot(v, v)
 
+# @desc Generates a vector of n evenly spaced points over the closed interval [start, stop]. Formula: linspace(start, stop, n = 50)
+# @param start: real — Start value of the interval
+# @param stop: real — End value of the interval (inclusive)
+# @param n: int — Number of evenly spaced samples to generate (default 50)
+# @return vec — Vector of `n` linearly spaced real values from `start` to `stop`
 linspace(start:real, T, stop:real, T, n = 50) -> vec = {
     if (n < 1) { error("linspace() count must be >= 1") }
     if (n == 1) { return vec(start) }
@@ -304,17 +482,28 @@ linspace(start:real, T, stop:real, T, n = 50) -> vec = {
     [start + k * step for k in 0..<n]
 }
 
+# @desc Returns the sorted unique elements of vector v with duplicates removed. Formula: unique(v)
+# @param v: vec — Input numeric vector
+# @return vec — Sorted vector of distinct elements from `v`
 unique(v:vec) -> vec = {
     out := vec()
     (x in v) { if (!(x in out)) { x into out } }
     out
 }
 
+# @desc Combines two vectors `a` and `b` element-wise by applying binary function `f(a[i], b[i])`. Formula: zip_with(a, b, f)
+# @param a: vec — First input vector
+# @param b: vec — Second input vector
+# @param f: fn — Binary function or lambda `(x, y) => ...` applied to each pair
+# @return vec — New vector `[f(a[0], b[0]), f(a[1], b[1]), ...]`
 zip_with(a:vec, b:vec, f:fn) -> vec = {
     if (a.len() != b.len()) { error("Vector length mismatch for zip_with()") }
     [f(x, b[i]) for i, x in a]
 }
 
+# @desc Calculates the median (50th percentile middle value) of a non-empty numeric vector. Formula: median(v)
+# @param v: vec — Non-empty numeric vector
+# @return real — Median value (middle element if odd length, or average of the two middle elements if even)
 median(v:vec) = {
     n := v.len()
     if (n == 0) { error("Cannot compute median of an empty vector") }
@@ -323,14 +512,24 @@ median(v:vec) = {
     (n % 2 == 1) ? s[mid] : 0.5 * (s[mid - 1] + s[mid])
 }
 
+# @desc Calculates the unbiased sample variance s² = [1 / (N − 1)] ∑(xᵢ − x̄)² of a numeric vector with N ≥ 2. Formula: sample_variance(v)
+# @param v: vec — Numeric sample vector containing at least 2 elements
+# @return real — Unbiased sample variance s² ≥ 0
 sample_variance(v:vec) = {
     n := v.len()
     if (n <= 1) { error("sample_variance() requires at least 2 elements") }
     variance(v) * n / (n - 1)
 }
 
+# @desc Calculates the unbiased sample standard deviation s = √sample_variance(v) of a numeric vector with N ≥ 2. Formula: sample_stddev(v) = √sample_variance(v)
+# @param v: vec — Numeric sample vector containing at least 2 elements
+# @return real — Sample standard deviation s ≥ 0
 sample_stddev(v:vec) = √sample_variance(v)
 
+# @desc Calculates the population covariance cov(X, Y) = (1/N) ∑(xᵢ − μ_x)(yᵢ − μ_y) between two equal-length numeric vectors. Formula: cov(x, y)
+# @param x: vec — First numeric data vector
+# @param y: vec — Second numeric data vector of the same length
+# @return real — Population covariance between `x` and `y`
 cov(x:vec, y:vec) = {
     n := x.len()
     if (n != y.len() || n == 0) { error("cov() requires non-empty vectors of equal length") }
@@ -341,29 +540,99 @@ cov(x:vec, y:vec) = {
     acc / n
 }
 
+# @desc Calculates the Pearson linear correlation coefficient r = cov(x, y) / (σ_x · σ_y) in [−1, 1] between two equal-length vectors. Formula: corr(x, y) = cov(x, y) / (stddev(x) · stddev(y))
+# @param x: vec — First numeric data vector
+# @param y: vec — Second numeric data vector of the same length
+# @return real — Pearson correlation coefficient r in [−1, 1]
 corr(x:vec, y:vec)             = cov(x, y) / (stddev(x) * stddev(y))
+# @desc Calculates the ordinary least-squares linear regression slope m = cov(x, y) / variance(x) for fitting y = m·x + b. Formula: linreg_slope(x, y) = cov(x, y) / variance(x)
+# @param x: vec — Independent variable data vector
+# @param y: vec — Dependent variable data vector of the same length
+# @return real — Best-fit linear regression slope m
 linreg_slope(x:vec, y:vec)     = cov(x, y) / variance(x)
+# @desc Calculates the ordinary least-squares linear regression y-intercept b = mean(y) − m · mean(x) for fitting y = m·x + b. Formula: linreg_intercept(x, y) = mean(y) - linreg_slope(x, y) · mean(x)
+# @param x: vec — Independent variable data vector
+# @param y: vec — Dependent variable data vector of the same length
+# @return real — Best-fit linear regression y-intercept b
 linreg_intercept(x:vec, y:vec) = mean(y) - linreg_slope(x, y) * mean(x)
+# @desc Calculates the coefficient of determination R² = corr(x, y)² ∈ [0, 1] measuring goodness of fit of a linear regression. Formula: linreg_r2(x, y) = corr(x, y)^2
+# @param x: vec — Independent variable data vector
+# @param y: vec — Dependent variable data vector of the same length
+# @return real — Coefficient of determination R² in [0, 1]
 linreg_r2(x:vec, y:vec)        = corr(x, y) ^ 2
 
 
 # 7. First-Class Key-Value Dictionary / Map (`$map`: `map()`, `dict()`, `m["k"]`, `"k" in m`)
 map()                           -> map = @map_new(0)
+# @desc Constructs a key-value `$map` dictionary from alternating key and value arguments (`dict("k1", v1, "k2", v2)`). Formula: dict(...)
+# @param pairs: any... — Alternating string keys and associated values
+# @return map — Mutable key-value `$map` dictionary
 dict()                          -> map = @map_new(0)
+# @desc Inserts or updates key `k` with value `val` in dictionary map `m` and returns the updated map. Formula: map_set(m, k, val) = @map_set(m, k, val)
+# @param m: map — Target dictionary map
+# @param k: str — Key string to set
+# @param val: any — Value to associate with `k`
+# @return map — Updated dictionary map
 map_set(m:map, k:T, val:T)      -> map = @map_set(m, k, val)
+# @desc Inserts or updates key `k` with value `val` in dictionary map `m` and returns the updated map. Formula: put(m, k, val) = @map_set(m, k, val)
+# @param m: map — Target dictionary map
+# @param k: str — Key string to set
+# @param val: any — Value to associate with `k`
+# @return map — Updated dictionary map
 put(m:map, k:T, val:T)          -> map = @map_set(m, k, val)
 set(m:map, k:T, val:T)          -> map = @map_set(m, k, val)
+# @desc Retrieves the value associated with key `k` in dictionary map `m`. Formula: map_get(m, k) = @map_get(m, k)
+# @param m: map — Input dictionary map
+# @param k: str — Key string to look up
+# @return any — Value stored for key `k`
 map_get(m:map, k:T)             -> T   = @map_get(m, k)
+# @desc Retrieves the value associated with key `k` in dictionary map `m` (or index `k` in a vector). Formula: get(m, k) = @map_get(m, k)
+# @param m: map | vec — Input dictionary map or vector
+# @param k: str | int — Key string or 0-based element index
+# @return any — Value associated with `k`
 get(m:map, k:T)                 -> T   = @map_get(m, k)
 map_get(m:map, k:T, def_val:T)  -> T   = @map_get(m, k, def_val)
+# @desc Retrieves the value for key `k` in dictionary map `m`, or returns fallback `def_val` if `k` is not present. Formula: get_or(m, k, def_val) = @map_get(m, k, def_val)
+# @param m: map — Input dictionary map
+# @param k: str — Key string to look up
+# @param def_val: any — Default fallback value returned when `k` is absent
+# @return any — Value for `k` if present, otherwise `def_val`
 get_or(m:map, k:T, def_val:T)   -> T   = @map_get(m, k, def_val)
+# @desc Returns 1 (true) if dictionary map `m` contains key `k`, or 0 otherwise. Formula: map_has(m, k) = @map_has(m, k)
+# @param m: map — Target key-value dictionary
+# @param k: str — Key name to look up
+# @return bool — 1 if `k` exists in `m`, else 0
 map_has(m:map, k:T)                    = @map_has(m, k)
+# @desc Returns 1 (true) if dictionary map `m` contains key `k`, or 0 otherwise. Formula: has_key(m, k) = @map_has(m, k)
+# @param m: map — Target key-value dictionary
+# @param k: str — Key name to look up
+# @return bool — 1 if `k` exists in `m`, else 0
 has_key(m:map, k:T)                    = @map_has(m, k)
+# @desc Deletes key `k` and its value from dictionary map `m`. Formula: map_del(m, k) = @map_del(m, k)
+# @param m: map — Target dictionary map
+# @param k: str — Key string to delete
+# @return map — Updated dictionary map
 map_del(m:map, k:T)             -> map = @map_del(m, k)
+# @desc Removes key `k` from dictionary map `m` (or removes index `k` from a vector) and returns the updated container. Formula: remove(m, k)
+# @param m: map | vec — Target dictionary map or vector
+# @param k: str | int — Key string or 0-based index to remove
+# @return map | vec — Updated container with `k` removed
 remove(m:map, k:T)              -> map = @map_del(m, k)
+# @desc Returns a vector of all string keys currently stored in dictionary map `m`. Formula: keys(m) = [k for k in m]
+# @param m: map — Input key-value dictionary
+# @return vec<str> — Vector of keys in `m`
 keys(m:map)                     -> vec<str> = [k for k in m]
+# @desc Returns a vector of all values stored in dictionary map `m`. Formula: vals(m) = [v for k, v in m]
+# @param m: map — Input key-value dictionary
+# @return vec — Vector of values in `m`
 vals(m:map)                     -> vec      = [v for k, v in m]
+# @desc Returns a vector of all values stored in dictionary map `m`. Formula: values(m) = [v for k, v in m]
+# @param m: map — Input key-value dictionary
+# @return vec — Vector of values in `m`
 values(m:map)                   -> vec      = [v for k, v in m]
+# @desc Returns a vector of `"key=value"` strings for all entries in dictionary map `m`. Formula: entries(m)
+# @param m: map — Input key-value dictionary
+# @return vec<str> — Vector of formatted `"key=value"` strings
 entries(m:map)                  -> vec<str> = [k + "=" + (v_) for k, v in m]
 len(m:map)                             = @vlen(m)
 is_empty(m:map)                        = @eq(@vlen(m), 0)
@@ -382,22 +651,41 @@ clear(m:map)                    -> map = @vclear(m)
 }
 
 # 8. Pure MEP 7D SI Unit Dimensional Introspection (`dim_vec`, `same_dim`)
+# @desc Returns the 7-element SI dimension exponent vector `[m, kg, s, A, K, mol, cd]` of a unit-tagged value `x`. Formula: dim_vec(x) = [@unit_name(x, i) for i in 0..<7]
+# @param x: real — Quantity carrying 7D SI physical dimensions
+# @return vec<real> — 7-element vector of SI base exponents `[m, kg, s, A, K, mol, cd]`
 dim_vec(x:T)         -> vec<real> = [@unit_name(x, i) for i in 0..<7]
+# @desc True when two unit-tagged values carry the same 7D SI dimension. Define: same_dim(a, b) = (dim_vec(a) == dim_vec(b))
+# @param a: real — first unit-tagged value
+# @param b: real — second unit-tagged value
+# @return real — True / false — same 7D SI dimension
 same_dim(a:T, b:T)          = (dim_vec(a) == dim_vec(b))
 
 # 9. Extended Collection Slicing, Custom-Key Sorting & Functional Map Helpers
+# @desc Returns a vector containing the first `k` elements of a vector or flattened matrix. Formula: take(m, k)
+# @param m: vec | mat — Input vector or matrix
+# @param k: int — Number of leading elements to take
+# @return vec — Vector of the first `k` elements
 take(v:vec, k) -> vec = {
     n := v.len()
     m := clamp(@floor(k), 0, n)
     (m <= 0) ? vec() : v[0..<m]
 }
 
+# @desc Returns a vector with the first `k` elements of a vector or flattened matrix skipped. Formula: drop(m, k)
+# @param m: vec | mat — Input vector or matrix
+# @param k: int — Number of leading elements to skip
+# @return vec — Vector of remaining elements after index `k - 1`
 drop(v:vec, k) -> vec = {
     n := v.len()
     m := clamp(@floor(k), 0, n)
     (m >= n) ? vec() : v[m..<n]
 }
 
+# @desc Sorts the elements of a vector or flattened matrix in ascending order of a key function `key_fn(x)`. Formula: sort_by(v, key_fn)
+# @param v: vec | mat — Input vector or matrix
+# @param key_fn: fn — Key projection lambda `x => ...` returning a comparable number
+# @return vec — Vector of elements ordered by ascending `key_fn(x)`
 sort_by(v:vec, key_fn:fn) -> vec = {
     n := v.len()
     if (n <= 1) { return [x for x in v] }
@@ -422,6 +710,10 @@ sort_by(v:vec, key_fn:fn) -> vec = {
     out
 }
 
+# @desc Merges two dictionary maps `a` and `b` into a new map, where entries in `b` override matching keys in `a`. Formula: map_merge(a, b)
+# @param a: map — Base dictionary map
+# @param b: map — Override dictionary map
+# @return map — Combined dictionary containing all keys from `a` and `b`
 map_merge(a:map, b:map) -> map = {
     out := map()
     (k, v in a) { map_set(out, k, v) }
@@ -429,6 +721,10 @@ map_merge(a:map, b:map) -> map = {
     out
 }
 
+# @desc Filters dictionary map `m`, keeping only entries whose value satisfies predicate `pred(v)`. Formula: map_filter(m, pred)
+# @param m: map — Input dictionary map
+# @param pred: fn — Boolean predicate lambda `v => ...`
+# @return map — Filtered dictionary map
 map_filter(m:map, pred:fn) -> map = {
     out := map()
     (k, v in m) {
@@ -437,6 +733,10 @@ map_filter(m:map, pred:fn) -> map = {
     out
 }
 
+# @desc Transforms every value `v` in dictionary map `m` using function `f(v)` while keeping the same keys. Formula: map_values(m, f)
+# @param m: map — Input dictionary map
+# @param f: fn — Transformation lambda `v => ...` applied to each value
+# @return map — New dictionary map with transformed values
 map_values(m:map, f:fn) -> map = {
     out := map()
     (k, v in m) { map_set(out, k, f(v)) }

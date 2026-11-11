@@ -1,6 +1,9 @@
 [prime]
 <[arith]
 
+# @desc Counts how many elements in a numeric vector x have a non-integer square root. Formula: prime_count(x: vec)
+# @param x: vec — Input vector of numbers (such as `1...100` or `[2, 3, 4, 5]`)
+# @return real — Count of elements in vector x whose square root is non-integer
 prime_count(x:vec) -> real = {
     y := 0;
     (i in x){
@@ -10,3 +13,8 @@ prime_count(x:vec) -> real = {
     }
     y
 }
+
+# @desc Counts how many integers from 1 up to n have a non-integer square root. Formula: prime_count(n: real) = prime_count(1...n)
+# @param n: real — Upper integer bound n ≥ 1
+# @return real — Count of integers in 1...n whose square root is non-integer
+prime_count(n:real) -> real = prime_count(1...n)

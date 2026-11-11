@@ -25,134 +25,564 @@ b_wien     = 2.897771955 * (10 ^ -3)        # Wien displacement constant (m K)
 rydberg_R  = 10973731.56816                 # Rydberg constant (m^-1)
 
 # 2. High School Kinematics (SUVAT Equations & Projectile Motion)
+# @desc SUVAT final velocity v = u + a·t. Define: suvat_v(u, a, t) = u + a·t
+# @param u: real — initial velocity (m/s)
+# @param a: real — uniform acceleration (m/s²)
+# @param t: real — elapsed time (s)
+# @return real — A velocity in m/s
 suvat_v(u, a, t)       = u + a * t
+# @desc Calculates linear kinematic displacement s = u·t + ½·a·t² under constant acceleration. Formula: suvat_s(u, a, t) = u·t + 0.5·a·(t^2)
+# @param u: real — Initial velocity u in metres per second (m/s)
+# @param a: real — Constant acceleration a in metres per second squared (m/s²)
+# @param t: real — Elapsed time t in seconds (s)
+# @return real — Displacement s in metres (m)
 suvat_s(u, a, t)       = u * t + 0.5 * a * (t ^ 2)
+# @desc SUVAT final velocity without time: v² = u² + 2a·s. Define: suvat_v2(u, a, s) = √((u^2) + 2a·s)
+# @param u: real — initial velocity (m/s)
+# @param a: real — acceleration (m/s²)
+# @param s: real — displacement (m)
+# @return real — A velocity in m/s
 suvat_v2(u, a, s)      = √((u ^ 2) + 2a * s)
+# @desc SUVAT displacement via average velocity s = ½(u+v)·t. Define: suvat_s_avg(u, v, t) = ½·(u + v)·t
+# @param u: real — initial velocity (m/s)
+# @param v: real — final velocity (m/s)
+# @param t: real — elapsed time (s)
+# @return real — A displacement in metres (m)
 suvat_s_avg(u, v, t)   = 0.5 * (u + v) * t
+# @desc Displacement in the nth second of uniform acceleration. Define: suvat_nth_sec(u, a, n) = u + ½·a·(2n - 1)
+# @param u: real — initial velocity (m/s)
+# @param a: real — acceleration (m/s²)
+# @param n: real — the second index (1st, 2nd, …)
+# @return real — A displacement size in metres (m)
 suvat_nth_sec(u, a, n) = u + 0.5 * a * (2n - 1)
 
+# @desc Translational kinetic energy ½mv². Define: ke(mass, vel) = ½·mass·(vel^2)
+# @param mass: real — mass of the body (kg)
+# @param vel: real — speed (m/s)
+# @return real — Kinetic energy in joules (J)
 ke(mass, vel)               = 0.5 * mass * (vel ^ 2)
+# @desc Calculates gravitational potential energy U = m · g₀ · h near Earth's surface (g₀ = 9.80665 m/s²). Formula: pe(mass, height) = mass · g0 · height
+# @param mass: real — Mass m of the object in kilograms (kg)
+# @param height: real — Elevation h above the reference datum in metres (m)
+# @return real — Gravitational potential energy U in joules (J)
 pe(mass, height)            = mass * g0 * height
+# @desc Total mechanical energy KE + PE. Define: mech_energy(mass, vel, height) = ke(mass, vel) + pe(mass, height)
+# @param mass: real — mass of the body (kg)
+# @param vel: real — speed (m/s)
+# @param height: real — elevation above the reference level (m)
+# @return real — Total mechanical energy in joules (J)
 mech_energy(mass, vel, height) = ke(mass, vel) + pe(mass, height)
 
+# @desc Horizontal range of a projectile launched at an angle over level ground. Define: proj_range(vel, angle_deg) = (vel^2)·sin(2·deg2rad(angle_deg)) / g0
+# @param vel: real — launch speed (m/s)
+# @param angle_deg: real — launch angle above the horizontal (°)
+# @return real — A horizontal range in metres (m)
 proj_range(vel, angle_deg) = (vel ^ 2) * sin(2 * deg2rad(angle_deg)) / g0
+# @desc Maximum height of a projectile. Define: proj_max_h(vel, angle_deg) = ((vel·sin(deg2rad(angle_deg)))^2) / (2·g0)
+# @param vel: real — launch speed (m/s)
+# @param angle_deg: real — launch angle above the horizontal (°)
+# @return real — A height in metres (m)
 proj_max_h(vel, angle_deg) = ((vel * sin(deg2rad(angle_deg))) ^ 2) / (2 * g0)
+# @desc Total time of flight of a projectile. Define: proj_time(vel, angle_deg) = 2·vel·sin(deg2rad(angle_deg)) / g0
+# @param vel: real — launch speed (m/s)
+# @param angle_deg: real — launch angle above the horizontal (°)
+# @return real — A flight time in seconds (s)
 proj_time(vel, angle_deg)  = 2 * vel * sin(deg2rad(angle_deg)) / g0
 
 # 3. Laws of Motion, Friction, Momentum, Impulse & 1D Collisions
+# @desc Linear momentum p = m·v. Define: momentum(mass, vel) = mass·vel
+# @param mass: real — mass of the body (kg)
+# @param vel: real — speed (m/s)
+# @return real — A momentum in kg·m/s
 momentum(mass, vel)                     = mass * vel
+# @desc Calculates mechanical impulse J = F · Δt (equal to change in linear momentum Δp). Formula: impulse(force_f, dt) = force_f · dt
+# @param force_f: real — Applied force F in newtons (N)
+# @param dt: real — Time interval Δt over which the force acts in seconds (s)
+# @return real — Mechanical impulse J in newton-seconds (N·s, or kg·m/s)
 impulse(force_f, dt)                    = force_f * dt
+# @desc Calculates the recoil velocity v_gun = −(m_bullet · v_bullet) / m_gun of a firearm from conservation of linear momentum. Formula: recoil_vel(m_gun, m_bullet, v_bullet) = -(m_bullet · v_bullet) / m_gun
+# @param m_gun: real — Mass of the gun or launcher in kilograms (kg)
+# @param m_bullet: real — Mass of the ejected projectile in kilograms (kg)
+# @param v_bullet: real — Forward muzzle velocity of the projectile in m/s
+# @return real — Recoil velocity of the gun in m/s (negative sign indicates direction opposite to projectile)
 recoil_vel(m_gun, m_bullet, v_bullet)   = -(m_bullet * v_bullet) / m_gun
+# @desc Friction force f = μ·N. Define: friction_force(mu, normal_n) = mu·normal_n
+# @param mu: real — coefficient of friction μ (dimensionless)
+# @param normal_n: real — normal reaction force N (N)
+# @return real — A force in newtons (N)
 friction_force(mu, normal_n)            = mu * normal_n
+# @desc Calculates the normal contact force N = m·g·cos(θ) acting on a mass resting on an inclined plane. Formula: incline_normal(mass, theta_deg) = mass · g0 · cos(deg2rad(theta_deg))
+# @param mass: real — Mass m of the object in kilograms (kg)
+# @param theta_deg: real — Incline angle θ above the horizontal in degrees (°)
+# @return real — Normal reaction force N in newtons (N)
 incline_normal(mass, theta_deg)         = mass * g0 * cos(deg2rad(theta_deg))
+# @desc Calculates the downward acceleration a = g·(sin(θ) − μ_k·cos(θ)) of an object sliding down a rough inclined plane with kinetic friction. Formula: incline_slide_acc(theta_deg, mu_k) = g0 · (sin(deg2rad(theta_deg)) - mu_k · cos(deg2rad(theta_deg)))
+# @param theta_deg: real — Incline angle θ above the horizontal in degrees (°)
+# @param mu_k: real — Dimensionless coefficient of kinetic friction μ_k between object and incline
+# @return real — Net acceleration down the incline in metres per second squared (m/s²)
 incline_slide_acc(theta_deg, mu_k)      = g0 * (sin(deg2rad(theta_deg)) - mu_k * cos(deg2rad(theta_deg)))
+# @desc Frictionless banking angle for speed v on radius r. Define: banking_angle_deg(vel, r) = rad2deg(atan((vel^2) / (r·g0)))
+# @param vel: real — vehicle speed (m/s)
+# @param r: real — bend radius (m)
+# @return real — A banking angle in degrees (°)
 banking_angle_deg(vel, r)               = rad2deg(atan((vel ^ 2) / (r * g0)))
 
+# @desc Post-collision velocity of mass 1 (1D elastic collision). Define: elastic_v1(m1, u1, m2, u2) = ((m1 - m2)·u1 + 2·m2·u2) / (m1 + m2)
+# @param m1: real — first mass (kg)
+# @param u1: real — velocity of mass 1 before impact (m/s)
+# @param m2: real — second mass (kg)
+# @param u2: real — velocity of mass 2 before impact (m/s)
+# @return real — A velocity in m/s
 elastic_v1(m1, u1, m2, u2)  = ((m1 - m2) * u1 + 2 * m2 * u2) / (m1 + m2)
+# @desc Post-collision velocity of mass 2 (1D elastic collision). Define: elastic_v2(m1, u1, m2, u2) = ((m2 - m1)·u2 + 2·m1·u1) / (m1 + m2)
+# @param m1: real — first mass (kg)
+# @param u1: real — velocity of mass 1 before impact (m/s)
+# @param m2: real — second mass (kg)
+# @param u2: real — velocity of mass 2 before impact (m/s)
+# @return real — A velocity in m/s
 elastic_v2(m1, u1, m2, u2)  = ((m2 - m1) * u2 + 2 * m1 * u1) / (m1 + m2)
+# @desc Common velocity after a perfectly inelastic 1D collision. Define: inelastic_v(m1, u1, m2, u2) = (m1·u1 + m2·u2) / (m1 + m2)
+# @param m1: real — first mass (kg)
+# @param u1: real — velocity of mass 1 before impact (m/s)
+# @param m2: real — second mass (kg)
+# @param u2: real — velocity of mass 2 before impact (m/s)
+# @return real — A common velocity in m/s
 inelastic_v(m1, u1, m2, u2) = (m1 * u1 + m2 * u2) / (m1 + m2)
 
 # 4. Circular Motion, Rotational Mechanics & Simple Harmonic Motion (SHM)
+# @desc Centripetal acceleration a = v²/r. Define: centripetal_acc(vel, r) = (vel^2) / r
+# @param vel: real — tangential speed (m/s)
+# @param r: real — circular path radius (m)
+# @return real — An acceleration in m/s²
 centripetal_acc(vel, r)              = (vel ^ 2) / r
+# @desc Centripetal force F = m·v²/r. Define: centripetal_force(mass, vel, r) = mass·(vel^2) / r
+# @param mass: real — mass of the body (kg)
+# @param vel: real — tangential speed (m/s)
+# @param r: real — circular path radius (m)
+# @return real — A force in newtons (N)
 centripetal_force(mass, vel, r)      = mass * (vel ^ 2) / r
+# @desc Torque τ = r·F·sinθ. Define: torque_val(r, force_f, theta_deg) = r·force_f·sin(deg2rad(theta_deg))
+# @param r: real — lever-arm distance (m)
+# @param force_f: real — applied force F (N)
+# @param theta_deg: real — angle between r and F (°)
+# @return real — A torque in N·m
 torque_val(r, force_f, theta_deg)    = r * force_f * sin(deg2rad(theta_deg))
+# @desc Angular momentum L = I·ω. Define: ang_momentum(inertia_i, omega) = inertia_i·omega
+# @param inertia_i: real — moment of inertia I (kg·m²)
+# @param omega: real — angular velocity ω (rad/s)
+# @return real — An angular momentum in kg·m²/s
 ang_momentum(inertia_i, omega)       = inertia_i * omega
+# @desc Rotational kinetic energy ½Iω². Define: rot_ke(inertia_i, omega) = ½·inertia_i·(omega^2)
+# @param inertia_i: real — moment of inertia I (kg·m²)
+# @param omega: real — angular velocity ω (rad/s)
+# @return real — A rotational kinetic energy in joules (J)
 rot_ke(inertia_i, omega)             = 0.5 * inertia_i * (omega ^ 2)
 
+# @desc Calculates the signed Hooke's law linear spring restoring force F = −k · x opposing displacement x. Formula: hooke_force(k_spring, disp) = -k_spring · disp
+# @param k_spring: real — Spring stiffness constant k in newtons per metre (N/m)
+# @param disp: real — Displacement x from equilibrium position in metres (m)
+# @return real — Signed restoring force F in newtons (N, opposite in sign to disp)
 hooke_force(k_spring, disp)          = -k_spring * disp
+# @desc Elastic potential energy stored in a spring ½kx². Define: elastic_pe(k_spring, disp) = ½·k_spring·(disp^2)
+# @param k_spring: real — spring constant k (N/m)
+# @param disp: real — displacement from equilibrium x (m)
+# @return real — An energy in joules (J)
 elastic_pe(k_spring, disp)           = 0.5 * k_spring * (disp ^ 2)
+# @desc Calculates the small-angle oscillation period T = 2π·√(L / g₀) of a simple gravity pendulum. Formula: pendulum_period(length_m) = 2π · √(length_m / g0)
+# @param length_m: real — Pendulum string or rod length L in metres (m)
+# @return real — Oscillation period T in seconds (s)
 pendulum_period(length_m)            = 2π * √(length_m / g0)
+# @desc Angular frequency of a mass-spring oscillator ω = √(k/m). Define: shm_omega(k_spring, mass) = √(k_spring / mass)
+# @param k_spring: real — spring constant k (N/m)
+# @param mass: real — attached mass (kg)
+# @return real — An angular frequency in rad/s
 shm_omega(k_spring, mass)            = √(k_spring / mass)
+# @desc Period of a mass-spring oscillator T = 2π√(m/k). Define: shm_period_spring(mass, k_spring) = 2π·√(mass / k_spring)
+# @param mass: real — attached mass (kg)
+# @param k_spring: real — spring constant k (N/m)
+# @return real — A time in seconds (s)
 shm_period_spring(mass, k_spring)    = 2π * √(mass / k_spring)
+# @desc Instantaneous SHM velocity v = ω√(A² − x²). Define: shm_vel(omega, amp_a, disp_x) = omega·√((amp_a^2) - (disp_x^2))
+# @param omega: real — angular frequency ω (rad/s)
+# @param amp_a: real — amplitude A (m)
+# @param disp_x: real — displacement from equilibrium x (m)
+# @return real — A speed in m/s
 shm_vel(omega, amp_a, disp_x)        = omega * √((amp_a ^ 2) - (disp_x ^ 2))
+# @desc Instantaneous SHM acceleration a = −ω²x. Define: shm_acc(omega, disp_x) = -(omega^2)·disp_x
+# @param omega: real — angular frequency ω (rad/s)
+# @param disp_x: real — displacement from equilibrium x (m)
+# @return real — An acceleration in m/s²
 shm_acc(omega, disp_x)               = -(omega ^ 2) * disp_x
 
 # 5. Gravitation & Orbital Astrophysics
+# @desc Newtonian gravitational attraction F = G·m₁m₂/r². Define: grav_force(m1, m2, r) = G_grav·m1·m2 / (r^2)
+# @param m1: real — first mass (kg)
+# @param m2: real — second mass (kg)
+# @param r: real — separation distance between centres (m)
+# @return real — A force in newtons (N)
 grav_force(m1, m2, r)                = G_grav * m1 * m2 / (r ^ 2)
+# @desc General gravitational potential energy U = −G·m₁m₂/r. Define: grav_pe(m1, m2, r) = -G_grav·m1·m2 / r
+# @param m1: real — first mass (kg)
+# @param m2: real — second mass (kg)
+# @param r: real — separation distance between centres (m)
+# @return real — A potential energy in joules (J; negative for bound systems)
 grav_pe(m1, m2, r)                   = -G_grav * m1 * m2 / r
+# @desc Circular orbital velocity v = √(GM/R). Define: orbital_vel(mass_body, r) = √(G_grav·mass_body / r)
+# @param mass_body: real — mass of the central body (kg)
+# @param r: real — orbital radius (m)
+# @return real — A speed in m/s
 orbital_vel(mass_body, r)            = √(G_grav * mass_body / r)
+# @desc Escape velocity from a body v = √(2GM/R). Define: escape_vel(mass_body, r) = √(2·G_grav·mass_body / r)
+# @param mass_body: real — mass of the body (kg)
+# @param r: real — body radius (m)
+# @return real — A speed in m/s
 escape_vel(mass_body, r)             = √(2 * G_grav * mass_body / r)
+# @desc Calculates the gravitational Schwarzschild (event-horizon) radius R_s = 2·G·M / c₀² of a non-rotating mass M. Formula: schwarzschild_r(mass_body) = 2 · G_grav · mass_body / c0^2
+# @param mass_body: real — Mass M of the astronomical body in kilograms (kg)
+# @return real — Schwarzschild event-horizon radius R_s in metres (m)
 schwarzschild_r(mass_body)           = 2 * G_grav * mass_body / (c0 ^ 2)
+# @desc Calculates the orbital period T = 2π·√(a³ / (G·M)) of a satellite or planet via Kepler's Third Law. Formula: kepler_period(semi_major_a, mass_body) = 2π · √(semi_major_a^3 / (G_grav · mass_body))
+# @param semi_major_a: real — Semi-major orbital axis a in metres (m)
+# @param mass_body: real — Mass M of the central gravitating body in kilograms (kg)
+# @return real — Orbital period T in seconds (s)
 kepler_period(semi_major_a, mass_body) =
     2π * √((semi_major_a ^ 3) / (G_grav * mass_body))
 
 # 6. Fluid Mechanics, Elasticity & Surface Tension
+# @desc Hydrostatic pressure at depth P = ρ·g·h. Define: hydro_pressure(rho, depth_h) = rho·g0·depth_h
+# @param rho: real — fluid density (kg/m³)
+# @param depth_h: real — depth below surface h (m)
+# @return real — A pressure in pascals (Pa)
 hydro_pressure(rho, depth_h)         = rho * g0 * depth_h
+# @desc Archimedes buoyant force F = ρ_fluid·g·V. Define: buoyant_force(rho_fluid, vol_sub) = rho_fluid·g0·vol_sub
+# @param rho_fluid: real — fluid density (kg/m³)
+# @param vol_sub: real — displaced fluid volume V (m³)
+# @return real — A force in newtons (N)
 buoyant_force(rho_fluid, vol_sub)    = rho_fluid * g0 * vol_sub
+# @desc Solves the incompressible fluid continuity equation A₁·v₁ = A₂·v₂ for the downstream flow speed v₂. Formula: continuity_v2(a1, v1, a2) = (a1 · v1) / a2
+# @param a1: real — Upstream cross-sectional pipe area A₁ (m²)
+# @param v1: real — Upstream fluid flow speed v₁ (m/s)
+# @param a2: real — Downstream cross-sectional pipe area A₂ (m²)
+# @return real — Downstream fluid flow speed v₂ in m/s (or matching v1's speed unit)
 continuity_v2(a1, v1, a2)            = (a1 * v1) / a2
+# @desc Stokes viscous drag on a sphere F = 6πηrv. Define: stokes_drag(eta, r, vel) = 6π·eta·r·vel
+# @param eta: real — dynamic viscosity (Pa·s)
+# @param r: real — sphere radius (m)
+# @param vel: real — speed (m/s)
+# @return real — A drag force in newtons (N)
 stokes_drag(eta, r, vel)             = 6π * eta * r * vel
+# @desc Terminal velocity of a sphere falling under Stokes drag. Define: terminal_vel(r, rho_sphere, rho_fluid, eta) = (2·(r^2)·(rho_sphere - rho_fluid)·g0) / (9·eta)
+# @param r: real — sphere radius (m)
+# @param rho_sphere: real — sphere density (kg/m³)
+# @param rho_fluid: real — fluid density (kg/m³)
+# @param eta: real — dynamic viscosity (Pa·s)
+# @return real — A speed in m/s
 terminal_vel(r, rho_sphere, rho_fluid, eta) =
     (2 * (r ^ 2) * (rho_sphere - rho_fluid) * g0) / (9 * eta)
+# @desc Calculates normal mechanical stress σ = F / A from axial force and cross-sectional area. Formula: stress_val(force_f, area) = force_f / area
+# @param force_f: real — Normal force F applied perpendicular to the surface in newtons (N)
+# @param area: real — Cross-sectional area A in square metres (m²)
+# @return real — Normal mechanical stress σ in pascals (Pa = N/m²)
 stress_val(force_f, area)            = force_f / area
+# @desc Strain ΔL/L. Define: strain_val(dl, l0) = dl / l0
+# @param dl: real — extension ΔL (m)
+# @param l0: real — original length L₀ (m)
+# @return real — A dimensionless strain (ΔL/L)
 strain_val(dl, l0)                   = dl / l0
+# @desc Young’s modulus Y = stress/strain. Define: youngs_modulus(force_f, l0, area, dl) = (force_f·l0) / (area·dl)
+# @param force_f: real — applied force (N)
+# @param l0: real — original length (m)
+# @param area: real — cross-section (m²)
+# @param dl: real — extension ΔL (m)
+# @return real — A modulus in pascals (Pa) from the inputs' units
 youngs_modulus(force_f, l0, area, dl) = (force_f * l0) / (area * dl)
 
 # 7. Thermodynamics, Calorimetry & Heat Transfer
+# @desc Sensible heat Q = m·c·ΔT. Define: sensible_heat(mass, c_spec, dt) = mass·c_spec·dt
+# @param mass: real — mass heated (kg)
+# @param c_spec: real — specific heat capacity c (J/kg·K)
+# @param dt: real — temperature change ΔT (K)
+# @return real — A heat quantity in joules (J)
 sensible_heat(mass, c_spec, dt)      = mass * c_spec * dt
+# @desc Latent heat Q = m·L (phase change, no temperature change). Define: latent_heat(mass, l_spec) = mass·l_spec
+# @param mass: real — mass undergoing the phase change (kg)
+# @param l_spec: real — specific latent heat L (J/kg)
+# @return real — A heat quantity in joules (J)
 latent_heat(mass, l_spec)            = mass * l_spec
+# @desc Calculates the expanded total length L = L₀·(1 + α·ΔT) of a solid rod subjected to a temperature change ΔT. Formula: thermal_expansion_l(l0, alpha, dt) = l0 · (1 + alpha · dt)
+# @param l0: real — Original length L₀ at reference temperature (m)
+# @param alpha: real — Coefficient of linear thermal expansion α (K⁻¹ or °C⁻¹)
+# @param dt: real — Temperature change ΔT (K or °C)
+# @return real — Final expanded length L in the same length unit as l0
 thermal_expansion_l(l0, alpha, dt)   = l0 * (1 + alpha * dt)
+# @desc Conduction heat-flow rate via Fourier law Q/t = k·A·ΔT/L. Define: thermal_cond_rate(k_cond, area, dt, thickness) = (k_cond·area·dt) / thickness
+# @param k_cond: real — thermal conductivity (W/m·K)
+# @param area: real — cross-section (m²)
+# @param dt: real — temperature difference ΔT (K)
+# @param thickness: real — slab thickness (m)
+# @return real — A heat-flow rate in joules per second (W)
 thermal_cond_rate(k_cond, area, dt, thickness) =
     (k_cond * area * dt) / thickness
+# @desc Calculates the peak emission wavelength λ_max = b / T of a blackbody radiator via Wien's Displacement Law (b = 2.897771955×10⁻³ m·K). Formula: wien_peak_lambda(temp_k) = b_wien / temp_k
+# @param temp_k: real — Blackbody surface absolute temperature T in kelvins (K)
+# @return real — Peak thermal emission wavelength λ_max in metres (m)
 wien_peak_lambda(temp_k)             = b_wien / temp_k
+# @desc Stefan-Boltzmann radiated power P = ε·σ·A·T⁴. Define: stefan_boltzmann_p(area, emissivity, temp_k) = area·emissivity·sigma_sb·(temp_k^4)
+# @param area: real — emitting surface area (m²)
+# @param emissivity: real — emissivity ε (0–1)
+# @param temp_k: real — absolute temperature (K)
+# @return real — A radiated power in watts (W)
 stefan_boltzmann_p(area, emissivity, temp_k) =
     area * emissivity * sigma_sb * (temp_k ^ 4)
+# @desc Calculates the maximum theoretical Carnot efficiency η = 1 − T_cold / T_hot of a heat engine operating between two thermal reservoirs. Formula: carnot_eff(t_cold_k, t_hot_k) = 1 - (t_cold_k / t_hot_k)
+# @param t_cold_k: real — Cold sink absolute temperature T_cold in kelvins (K)
+# @param t_hot_k: real — Hot source absolute temperature T_hot in kelvins (K)
+# @return real — Dimensionless Carnot thermal efficiency η in (0, 1)
 carnot_eff(t_cold_k, t_hot_k)        = 1 - (t_cold_k / t_hot_k)
 
 # 8. Electromagnetism, DC/AC Circuits & Transformers
+# @desc Electrostatic force between point charges F = k·q₁q₂/r². Define: coulomb_force(q1, q2, r) = ke_coulomb·q1·q2 / (r^2)
+# @param q1: real — first charge (C)
+# @param q2: real — second charge (C)
+# @param r: real — separation distance (m)
+# @return real — A force in newtons (N)
 coulomb_force(q1, q2, r)             = ke_coulomb * q1 * q2 / (r ^ 2)
+# @desc Ohm law potential difference V = I·R. Define: ohm_v(current_i, res_r) = current_i·res_r
+# @param current_i: real — current I (A)
+# @param res_r: real — resistance R (Ω)
+# @return real — A potential in volts (V)
 ohm_v(current_i, res_r)              = current_i * res_r
+# @desc Ohm law current I = V/R. Define: ohm_i(volt_v, res_r) = volt_v / res_r
+# @param volt_v: real — potential difference V (V)
+# @param res_r: real — resistance R (Ω)
+# @return real — A current in amperes (A)
 ohm_i(volt_v, res_r)                 = volt_v / res_r
+# @desc Ohm law resistance R = V/I. Define: ohm_r(volt_v, current_i) = volt_v / current_i
+# @param volt_v: real — potential difference V (V)
+# @param current_i: real — current I (A)
+# @return real — A resistance in ohms (Ω)
 ohm_r(volt_v, current_i)             = volt_v / current_i
+# @desc Calculates electrical power P = V · I from voltage and current. Formula: elec_power(volt_v, current_i) = volt_v · current_i
+# @param volt_v: real — Potential difference (voltage V) in volts (V)
+# @param current_i: real — Electric current I in amperes (A)
+# @return real — Electrical power P in watts (W)
 elec_power(volt_v, current_i)        = volt_v * current_i
+# @desc Energy stored in a capacitor U = ½CV². Define: cap_energy(cap_c, volt_v) = ½·cap_c·(volt_v^2)
+# @param cap_c: real — capacitance C (F)
+# @param volt_v: real — voltage across the capacitor V (V)
+# @return real — An energy in joules (J)
 cap_energy(cap_c, volt_v)            = 0.5 * cap_c * (volt_v ^ 2)
+# @desc Energy stored in an inductor U = ½LI². Define: ind_energy(ind_l, current_i) = ½·ind_l·(current_i^2)
+# @param ind_l: real — inductance L (H, henrys)
+# @param current_i: real — current I (A)
+# @return real — An energy in joules (J)
 ind_energy(ind_l, current_i)         = 0.5 * ind_l * (current_i ^ 2)
+# @desc Equivalent resistance of a series pair R = R₁ + R₂. Define: res_series(r1, r2) = r1 + r2
+# @param r1: real — first resistance (Ω)
+# @param r2: real — second resistance (Ω)
+# @return real — A resistance in ohms (Ω)
 res_series(r1, r2)                   = r1 + r2
+# @desc Calculates the equivalent resistance R_eq = (R₁ · R₂) / (R₁ + R₂) of two resistors connected in parallel. Formula: res_parallel(r1, r2) = (r1 · r2) / (r1 + r2)
+# @param r1: real — First branch resistance R₁ in ohms (Ω)
+# @param r2: real — Second branch resistance R₂ in ohms (Ω)
+# @return real — Equivalent parallel resistance R_eq in ohms (Ω)
 res_parallel(r1, r2)                 = (r1 * r2) / (r1 + r2)
+# @desc Equivalent capacitance of a series pair 1/C = 1/C₁ + 1/C₂. Define: cap_series(c1, c2) = (c1·c2) / (c1 + c2)
+# @param c1: real — first capacitance (F)
+# @param c2: real — second capacitance (F)
+# @return real — A capacitance in farads (F)
 cap_series(c1, c2)                   = (c1 * c2) / (c1 + c2)
+# @desc Equivalent capacitance of a parallel pair C = C₁ + C₂. Define: cap_parallel(c1, c2) = c1 + c2
+# @param c1: real — first capacitance (F)
+# @param c2: real — second capacitance (F)
+# @return real — A capacitance in farads (F)
 cap_parallel(c1, c2)                 = c1 + c2
+# @desc Parallel-plate capacitance C = ε₀A/d. Define: parallel_plate_cap(area, sep_d) = eps0·area / sep_d
+# @param area: real — plate area (m²)
+# @param sep_d: real — plate separation d (m)
+# @return real — A capacitance in farads (F)
 parallel_plate_cap(area, sep_d)      = eps0 * area / sep_d
+# @desc RC circuit time constant τ = R·C. Define: rc_tau(res_r, cap_c) = res_r·cap_c
+# @param res_r: real — resistance R (Ω)
+# @param cap_c: real — capacitance C (F)
+# @return real — A time constant in seconds (s)
 rc_tau(res_r, cap_c)                 = res_r * cap_c
+# @desc Fourth bridge resistance of a balanced Wheatstone bridge. Define: wheatstone_r4(r1, r2, r3) = (r2·r3) / r1
+# @param r1: real — first known resistance (Ω)
+# @param r2: real — second known resistance (Ω)
+# @param r3: real — third known resistance (Ω)
+# @return real — A resistance in ohms (Ω)
 wheatstone_r4(r1, r2, r3)            = (r2 * r3) / r1
+# @desc Electron drift velocity in a conductor I = n·A·q·v_d. Define: drift_velocity(current_i, n_density, area, q_charge) = current_i / (n_density·area·q_charge)
+# @param current_i: real — current (A)
+# @param n_density: real — free-electron density (m⁻³)
+# @param area: real — cross-section area (m²)
+# @param q_charge: real — carrier charge (C)
+# @return real — A drift speed in m/s
 drift_velocity(current_i, n_density, area, q_charge) =
     current_i / (n_density * area * q_charge)
 
+# @desc Magnetic Lorentz force F = qvB·sinθ on a moving charge. Define: lorentz_mag_force(q, vel, b_field, theta_deg) = q·vel·b_field·sin(deg2rad(theta_deg))
+# @param q: real — particle charge (C)
+# @param vel: real — particle speed (m/s)
+# @param b_field: real — magnetic field strength B (T)
+# @param theta_deg: real — angle between v and B (°)
+# @return real — A force in newtons (N)
 lorentz_mag_force(q, vel, b_field, theta_deg) =
     q * vel * b_field * sin(deg2rad(theta_deg))
+# @desc Cyclotron radius r = mv/(qB) of a charged particle in a magnetic field. Define: cyclotron_radius(mass, vel, q, b_field) = (mass·vel) / (q·b_field)
+# @param mass: real — mass of the particle (kg)
+# @param vel: real — particle speed (m/s)
+# @param q: real — particle charge (C)
+# @param b_field: real — magnetic field strength B (T)
+# @return real — A radius in metres (m)
 cyclotron_radius(mass, vel, q, b_field) =
     (mass * vel) / (q * b_field)
+# @desc Magnetic field inside a long solenoid B = μ₀·n·I. Define: solenoid_b(n_turns_per_m, current_i) = mu0·n_turns_per_m·current_i
+# @param n_turns_per_m: real — turns per metre of the solenoid
+# @param current_i: real — coil current I (A)
+# @return real — A magnetic field in tesla (T)
 solenoid_b(n_turns_per_m, current_i)    = mu0 * n_turns_per_m * current_i
+# @desc Calculates the AC inductive reactance X_L = 2π·f·L of an inductor at frequency f. Formula: inductive_reactance(freq_hz, ind_l) = 2π · freq_hz · ind_l
+# @param freq_hz: real — AC signal frequency f in hertz (Hz)
+# @param ind_l: real — Inductance L in henries (H)
+# @return real — Inductive reactance X_L in ohms (Ω)
 inductive_reactance(freq_hz, ind_l)     = 2π * freq_hz * ind_l
+# @desc Calculates the AC capacitive reactance X_C = 1 / (2π·f·C) of a capacitor at frequency f. Formula: capacitive_reactance(freq_hz, cap_c) = 1 / (2π · freq_hz · cap_c)
+# @param freq_hz: real — AC signal frequency f in hertz (Hz)
+# @param cap_c: real — Capacitance C in farads (F)
+# @return real — Capacitive reactance X_C in ohms (Ω)
 capacitive_reactance(freq_hz, cap_c)    = 1 / (2π * freq_hz * cap_c)
+# @desc Series RLC impedance magnitude Z = √(R² + (X_L − X_C)²). Define: rlc_impedance(res_r, xl, xc) = √((res_r^2) + ((xl - xc)^2))
+# @param res_r: real — resistance R (Ω)
+# @param xl: real — inductive reactance X_L (Ω)
+# @param xc: real — capacitive reactance X_C (Ω)
+# @return real — An impedance magnitude in ohms (Ω)
 rlc_impedance(res_r, xl, xc)            = √((res_r ^ 2) + ((xl - xc) ^ 2))
+# @desc Calculates the resonant frequency f₀ = 1 / (2π·√(L·C)) of a series or parallel RLC circuit where inductive and capacitive reactances cancel. Formula: rlc_resonant_freq(ind_l, cap_c) = 1 / (2π · √(ind_l · cap_c))
+# @param ind_l: real — Inductance L in henries (H)
+# @param cap_c: real — Capacitance C in farads (F)
+# @return real — Resonant frequency f₀ in hertz (Hz)
 rlc_resonant_freq(ind_l, cap_c)         = 1 / (2π * √(ind_l * cap_c))
+# @desc Secondary voltage of an ideal transformer via turns ratio. Define: transformer_v2(v1, n1, n2) = v1·(n2 / n1)
+# @param v1: real — primary voltage (V)
+# @param n1: real — primary turns
+# @param n2: real — secondary turns
+# @return real — A voltage in volts (V)
 transformer_v2(v1, n1, n2)              = v1 * (n2 / n1)
 
 # 9. Waves, Acoustics, Geometrical/Wave Optics, Quantum & Special Relativity
+# @desc Observed frequency under the Doppler effect. Define: doppler_freq(f0, v_sound, v_obs, v_src) = f0·((v_sound + v_obs) / (v_sound - v_src))
+# @param f0: real — emitted frequency (Hz)
+# @param v_sound: real — wave speed in the medium (m/s)
+# @param v_obs: real — observer velocity, + towards the source (m/s)
+# @param v_src: real — source velocity, + towards the observer (m/s)
+# @return real — An observed frequency in hertz (Hz)
 doppler_freq(f0, v_sound, v_obs, v_src) =
     f0 * ((v_sound + v_obs) / (v_sound - v_src))
+# @desc Beat frequency of two close tones |f₁ − f₂|. Define: beat_freq(f1, f2) = @abs(f1 - f2)
+# @param f1: real — first tone frequency (Hz)
+# @param f2: real — second tone frequency (Hz)
+# @return real — A beat frequency in hertz (Hz)
 beat_freq(f1, f2)             = @abs(f1 - f2)
+# @desc Sound intensity level in decibels from intensity. Define: sound_db(intensity_i) = 10·log₁₀(intensity_i / (10^-12))
+# @param intensity_i: real — sound intensity (W/m²)
+# @return real — Intensity level in decibels (dB)
 sound_db(intensity_i)         = 10 * log10(intensity_i / (10 ^ -12))
 
+# @desc Refraction angle from Snell law n₁sinθ₁ = n₂sinθ₂. Define: snell_angle2(n1, theta1_deg, n2) = rad2deg(asin(n1·sin(deg2rad(theta1_deg)) / n2))
+# @param n1: real — refractive index of medium 1
+# @param theta1_deg: real — incidence angle θ₁ (°)
+# @param n2: real — refractive index of medium 2
+# @return real — An angle in degrees (°)
 snell_angle2(n1, theta1_deg, n2) =
     rad2deg(asin(n1 * sin(deg2rad(theta1_deg)) / n2))
+# @desc Calculates the thin-lens focal length f from object distance d_o and image distance d_i via the Gaussian lens formula 1/f = 1/d_o + 1/d_i. Formula: lens_focal(do_dist, di_dist) = (do_dist · di_dist) / (do_dist + di_dist)
+# @param do_dist: real — Object distance d_o from the lens (m or cm)
+# @param di_dist: real — Image distance d_i from the lens (in the same length unit)
+# @return real — Focal length f of the lens in the same length unit as do_dist and di_dist
 lens_focal(do_dist, di_dist)     = (do_dist * di_dist) / (do_dist + di_dist)
+# @desc Spherical-mirror image distance via mirror formula. Define: mirror_image_v(f_len, u_obj) = (f_len·u_obj) / (u_obj - f_len)
+# @param f_len: real — focal length (m)
+# @param u_obj: real — object distance (m, sign convention)
+# @return real — An image distance in the input length unit
 mirror_image_v(f_len, u_obj)     = (f_len * u_obj) / (u_obj - f_len)
+# @desc Lens magnification m = v/u. Define: magnification_lens(v_img, u_obj) = v_img / u_obj
+# @param v_img: real — image distance
+# @param u_obj: real — object distance
+# @return real — A magnification as a × factor (negative = inverted)
 magnification_lens(v_img, u_obj) = v_img / u_obj
+# @desc Calculates the optical refractive power P = 1 / f of a lens in dioptres (D) from its focal length in metres. Formula: lens_power_dioptre(f_meters) = 1 / f_meters
+# @param f_meters: real — Focal length f of the lens in metres (m; positive for converging, negative for diverging)
+# @return real — Optical lens power P in dioptres (D = m⁻¹)
 lens_power_dioptre(f_meters)     = 1 / f_meters
+# @desc Double-slit fringe width β = λD/d. Define: young_fringe_width(wavelength_m, screen_d, slit_sep_d) = (wavelength_m·screen_d) / slit_sep_d
+# @param wavelength_m: real — light wavelength λ (m)
+# @param screen_d: real — slit-screen distance D (m)
+# @param slit_sep_d: real — slit separation d (m)
+# @return real — A fringe width in the input length unit
 young_fringe_width(wavelength_m, screen_d, slit_sep_d) =
     (wavelength_m * screen_d) / slit_sep_d
+# @desc Transmitted polarised intensity through an analyser I = I₀cos²θ. Define: malus_law(i0, theta_deg) = i0·(cos(deg2rad(theta_deg))^2)
+# @param i0: real — incident polarised intensity I₀
+# @param theta_deg: real — angle between polariser and analyser (°)
+# @return real — A transmitted intensity in the input’s intensity unit
 malus_law(i0, theta_deg)         = i0 * (cos(deg2rad(theta_deg)) ^ 2)
+# @desc Brewster (polarising) angle θ_B = atan(n₂/n₁). Define: brewster_angle(n1, n2) = rad2deg(atan(n2 / n1))
+# @param n1: real — incidence-side refractive index
+# @param n2: real — transmission-side refractive index
+# @return real — An angle in degrees (°)
 brewster_angle(n1, n2)           = rad2deg(atan(n2 / n1))
 
+# @desc Calculates the quantum energy E = h · f of a photon from its frequency using Planck's constant h = 6.62607015×10⁻³⁴ J·s. Formula: photon_energy(freq_hz) = h_planck · freq_hz
+# @param freq_hz: real — Electromagnetic wave frequency f in hertz (Hz)
+# @return real — Photon energy E in joules (J)
 photon_energy(freq_hz)           = h_planck * freq_hz
+# @desc Calculates the quantum energy E = h · c₀ / λ of a photon in joules from its wavelength in metres. Formula: photon_wavelength(wavelength_m) = h_planck · c0 / wavelength_m
+# @param wavelength_m: real — Photon wavelength λ in vacuum in metres (m)
+# @return real — Photon energy E = h·c₀/λ in joules (J)
 photon_wavelength(wavelength_m)  = h_planck * c0 / wavelength_m
+# @desc Calculates the maximum kinetic energy K_max = h·f − Φ of photoelectrons via Einstein's photoelectric equation. Formula: photoelectric_ke_max(freq_hz, work_fn_j) = h_planck · freq_hz - work_fn_j
+# @param freq_hz: real — Incident photon frequency f in hertz (Hz)
+# @param work_fn_j: real — Metal work function Φ in joules (J)
+# @return real — Maximum photoelectron kinetic energy K_max in joules (J)
 photoelectric_ke_max(freq_hz, work_fn_j) = h_planck * freq_hz - work_fn_j
+# @desc De Broglie matter-wave wavelength λ = h/p. Define: de_broglie(mass, vel) = h_planck / (mass·vel)
+# @param mass: real — mass of the particle (kg)
+# @param vel: real — particle speed (m/s)
+# @return real — A wavelength in metres (m)
 de_broglie(mass, vel)            = h_planck / (mass * vel)
+# @desc Bohr radius of the nth hydrogen orbit. Define: bohr_radius_n(n_orbit) = 5.29177210903·(10^-11)·(n_orbit^2)
+# @param n_orbit: real — orbit index n (1, 2, 3, …)
+# @return real — Orbital radius in metres (m)
 bohr_radius_n(n_orbit)           = 5.29177210903 * (10 ^ -11) * (n_orbit ^ 2)
+# @desc Hydrogen Bohr level energy in electron-volts. Define: bohr_energy_ev(n_orbit, z_atomic) = -13.6·((z_atomic^2) / (n_orbit^2)). Default z atomic = 1
+# @param n_orbit: real — orbit index n (1, 2, 3, …)
+# @param z_atomic: real — atomic number Z (1 for hydrogen)
+# @return real — Level energy in electron-volts (eV, negative for bound states)
 bohr_energy_ev(n_orbit, z_atomic = 1) = -13.6 * ((z_atomic ^ 2) / (n_orbit ^ 2))
+# @desc Hydrogen spectral-line wavelength via the Rydberg formula. Define: rydberg_wavelength(n1, n2) = 1 / (rydberg_R·((1 / (n1^2)) - (1 / (n2^2))))
+# @param n1: real — lower shell n (int, 1, 2, …)
+# @param n2: real — upper shell n (int, n2 > n1)
+# @return real — A wavelength in metres (m)
 rydberg_wavelength(n1, n2)       = 1 / (rydberg_R * ((1 / (n1 ^ 2)) - (1 / (n2 ^ 2))))
 
+# @desc Lorentz factor γ = 1/√(1 − β²). Define: lorentz_gamma(vel) = 1 / √(1 - (vel / c0)^2)
+# @param vel: real — relative speed v (m/s)
+# @return real — Lorentz factor γ ≥ 1 (dimensionless)
 lorentz_gamma(vel)               = 1 / √(1 - (vel / c0) ^ 2)
+# @desc Total relativistic energy E = γm₀c². Define: rel_energy(mass, vel) = lorentz_gamma(vel)·mass·(c0^2)
+# @param mass: real — rest mass m₀ (kg)
+# @param vel: real — relative speed (m/s)
+# @return real — A total energy in joules (J)
 rel_energy(mass, vel)            = lorentz_gamma(vel) * mass * (c0 ^ 2)
+# @desc Special-relativistic time dilation Δt′ = Δt·γ. Define: time_dilation(t_proper, vel) = t_proper·lorentz_gamma(vel)
+# @param t_proper: real — proper time interval Δt
+# @param vel: real — relative speed v (m/s)
+# @return real — The dilated time in the input’s time unit
 time_dilation(t_proper, vel)     = t_proper * lorentz_gamma(vel)
+# @desc Special-relativistic length contraction L = L₀/γ. Define: length_contraction(l_proper, vel) = l_proper / lorentz_gamma(vel)
+# @param l_proper: real — proper (rest-frame) length L₀
+# @param vel: real — relative speed v (m/s)
+# @return real — The contracted length in the input’s length unit
 length_contraction(l_proper, vel)= l_proper / lorentz_gamma(vel)

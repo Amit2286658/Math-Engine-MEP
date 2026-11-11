@@ -308,14 +308,60 @@
 # ==============================================================================
 # 3. Plain function layer (ISO codes, no symbol aliases needed)
 # ==============================================================================
+# @desc Converts a monetary amount between any two 3-letter ISO-4217 currency codes using live/cached FX rates. Formula: convert(amount, from, to) = @currency_convert(from, to, amount)
+# @param amount: real — Monetary amount in the source currency
+# @param from: str — Source 3-letter ISO-4217 currency code (e.g. "USD")
+# @param to: str — Target 3-letter ISO-4217 currency code (e.g. "INR")
+# @return real — Converted amount in the target currency
 convert(amount: real, from: str, to: str) = @currency_convert(from, to, amount)
 
-# Ready-to-display string form: "(converted) <to>"
+# @desc Converts a monetary amount between two ISO-4217 currencies and formats it with the target currency code suffix. Formula: convert_str(amount, from, to) = fmt("%g %s", convert(amount, from, to), to)
+# @param amount: real — Monetary amount in the source currency
+# @param from: str — Source 3-letter ISO-4217 currency code
+# @param to: str — Target 3-letter ISO-4217 currency code
+# @return str — Formatted string showing the converted amount followed by the target ISO code
 convert_str(amount: real, from: str, to: str) -> str = fmt("%g %s", convert(amount, from, to), to)
 
-# Batch form: convert a vec of `from`-denominated amounts in one call.
+# @desc Converts every monetary amount in a vector from one ISO-4217 currency to another in a single batch call. Formula: convert_all(amounts, from, to) = [convert(a, from, to) for a in amounts]
+# @param amounts: vec — Vector of numeric amounts denominated in the source currency
+# @param from: str — Source 3-letter ISO-4217 currency code
+# @param to: str — Target 3-letter ISO-4217 currency code
+# @return vec — Vector of converted amounts in the target currency
 convert_all(amounts: vec, from: str, to: str) -> vec = [convert(a, from, to) for a in amounts]
 
-# Live exchange rate & calculator convenience aliases
+# @desc Returns the live/cached exchange rate multiplier (value of 1 unit of `from` in `to`). Formula: fx_rate(from, to) = @currency_convert(from, to, 1)
+# @param from: str — Base 3-letter ISO-4217 currency code (e.g. "USD")
+# @param to: str — Quote 3-letter ISO-4217 currency code (e.g. "INR")
+# @return real — Exchange rate multiplier (1 unit of `from` expressed in `to`)
 fx_rate(from: str, to: str) = @currency_convert(from, to, 1)
+# @desc Converts a monetary amount between any two 3-letter ISO-4217 currency codes using live/cached FX rates. Formula: convert_fx(amount, from, to) = @currency_convert(from, to, amount)
+# @param amount: real — Monetary amount in the source currency
+# @param from: str — Source 3-letter ISO-4217 currency code (e.g. "USD")
+# @param to: str — Target 3-letter ISO-4217 currency code (e.g. "INR")
+# @return real — Converted amount in the target currency
 convert_fx(amount: real, from: str, to: str) = @currency_convert(from, to, amount)
+
+# @desc Converts a monetary amount from US Dollars (USD) to Indian Rupees (INR) using the live/cached exchange rate table. Formula: usd_to_inr(amount) = @currency_convert("USD", "INR", amount)
+# @param amount: real — Monetary amount in US Dollars (USD)
+# @return real — Equivalent monetary amount in Indian Rupees (INR)
+usd_to_inr(amount: real) = @currency_convert("USD", "INR", amount)
+# @desc Converts a monetary amount from Indian Rupees (INR) to US Dollars (USD) using the live/cached exchange rate table. Formula: inr_to_usd(amount) = @currency_convert("INR", "USD", amount)
+# @param amount: real — Monetary amount in Indian Rupees (INR)
+# @return real — Equivalent monetary amount in US Dollars (USD)
+inr_to_usd(amount: real) = @currency_convert("INR", "USD", amount)
+# @desc Converts a monetary amount from US Dollars (USD) to Euros (EUR) using the live/cached exchange rate table. Formula: usd_to_eur(amount) = @currency_convert("USD", "EUR", amount)
+# @param amount: real — Monetary amount in US Dollars (USD)
+# @return real — Equivalent monetary amount in Euros (EUR)
+usd_to_eur(amount: real) = @currency_convert("USD", "EUR", amount)
+# @desc Converts a monetary amount from Euros (EUR) to US Dollars (USD) using the live/cached exchange rate table. Formula: eur_to_usd(amount) = @currency_convert("EUR", "USD", amount)
+# @param amount: real — Monetary amount in Euros (EUR)
+# @return real — Equivalent monetary amount in US Dollars (USD)
+eur_to_usd(amount: real) = @currency_convert("EUR", "USD", amount)
+# @desc Converts a monetary amount from US Dollars (USD) to British Pounds (GBP) using the live/cached exchange rate table. Formula: usd_to_gbp(amount) = @currency_convert("USD", "GBP", amount)
+# @param amount: real — Monetary amount in US Dollars (USD)
+# @return real — Equivalent monetary amount in British Pounds (GBP)
+usd_to_gbp(amount: real) = @currency_convert("USD", "GBP", amount)
+# @desc Converts a monetary amount from British Pounds (GBP) to US Dollars (USD) using the live/cached exchange rate table. Formula: gbp_to_usd(amount) = @currency_convert("GBP", "USD", amount)
+# @param amount: real — Monetary amount in British Pounds (GBP)
+# @return real — Equivalent monetary amount in US Dollars (USD)
+gbp_to_usd(amount: real) = @currency_convert("GBP", "USD", amount)

@@ -6,50 +6,177 @@
 <[arith]
 
 # 1. Circular Trigonometric Functions (radians)
+# @desc Sine of x (radians; honours the calculator’s deg/rad mode). Define: sin(x) = @sin(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A value in [−1, 1] (sine rises and falls within this band)
 sin(x) = @sin(x)
+# @desc Cosine of x (radians; honours the deg/rad mode). Define: cos(x) = @cos(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A value in [−1, 1]
 cos(x) = @cos(x)
+# @desc Tangent of x; asymptotes reported as errors, not huge values. Define: tan(x) = @tan(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A real number (unbounded; tangent asymptotes report errors)
 tan(x) = @tan(x)
+# @desc Secant = 1/cos(x). Define: sec(x) = 1 / @cos(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A real number (|value| ≥ 1 outside rounding)
 sec(x) = 1 / @cos(x)
+# @desc Computes the trigonometric cosecant csc(x) = 1 / sin(x) (honours calculator deg/rad angle mode). Formula: csc(x) = 1 / @sin(x)
+# @param x: real — Angle in radians (or degrees when calculator Degree mode is active; sin(x) ≠ 0)
+# @return real — Cosecant value 1 / sin(x) with |csc(x)| ≥ 1
 csc(x)   = 1 / @sin(x)
+# @desc Cosecant = 1/sin(x). Define: cosec(x) = csc(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A real number (|value| ≥ 1 outside rounding)
 cosec(x) = csc(x)
+# @desc Cotangent = 1/tan(x). Define: cot(x) = @cos(x) / @sin(x)
+# @param x: real — argument in radians (the calculator’s deg/rad mode also honours tagged values)
+# @return real — A real number
 cot(x) = @cos(x) / @sin(x)
 
 # 2. Inverse Circular Trigonometric Functions
+# @desc Inverse sine, principal value. Define: asin(x) = @asin(x)
+# @param x: real — ratio value to invert, within the function’s valid domain
+# @return real — An angle in radians, principal value in [−π/2, π/2]
 asin(x)     = @asin(x)
+# @desc Inverse cosine, principal value. Define: acos(x) = @acos(x)
+# @param x: real — ratio value to invert, within the function’s valid domain
+# @return real — An angle in radians, principal value in [0, π]
 acos(x)     = @acos(x)
+# @desc Inverse tangent, principal value. Define: atan(x) = @atan(x)
+# @param x: real — ratio value to invert, within the function’s valid domain
+# @return real — An angle in radians, principal value in (−π/2, π/2)
 atan(x)     = @atan(x)
+# @desc Computes the 4-quadrant inverse tangent atan2(y, x), returning the directed angle θ ∈ (−π, π] from the positive X-axis to the point (x, y). Formula: atan2(y, x) = @atan2(y, x)
+# @param y: real — Vertical Y-coordinate component
+# @param x: real — Horizontal X-coordinate component
+# @return real — Directed angle in radians in (−π, π] (or degrees when Degree mode is active)
 atan2(y, x) = @atan2(y, x)
+# @desc Inverse secant, principal value. Define: asec(x) = acos(1 / x)
+# @param x: real — ratio value to invert, within the function’s valid domain
+# @return real — An angle in radians, principal value
 asec(x)     = acos(1 / x)
+# @desc Inverse cosecant, principal value. Define: acsc(x) = asin(1 / x)
+# @param x: real — ratio value to invert, within the function’s valid domain
+# @return real — An angle in radians, principal value
 acsc(x)     = asin(1 / x)
+# @desc Inverse cosecant, principal value. Define: acosec(x) = asin(1 / x)
+# @param x: real — ratio value to invert, within the function’s valid domain
+# @return real — An angle in radians, principal value
 acosec(x)   = asin(1 / x)
+# @desc Inverse cotangent, principal value. Define: acot(x) = atan(1 / x)
+# @param x: real — ratio value to invert, within the function’s valid domain
+# @return real — An angle in radians, principal value
 acot(x)     = atan(1 / x)
 
 # 3. Hyperbolic & Inverse Hyperbolic Functions (Pure MEP over `@exp` & `@ln`)
+# @desc Hyperbolic sine (e^x − e^−x)/2. Define: sinh(x) = ½·(@exp(x) - @exp(-x))
+# @param x: real — real argument
+# @return real — A real number (unbounded)
 sinh(x)  = 0.5 * (@exp(x) - @exp(-x))
+# @desc Hyperbolic cosine (e^x + e^−x)/2. Define: cosh(x) = ½·(@exp(x) + @exp(-x))
+# @param x: real — real argument
+# @return real — A value in [1, ∞)
 cosh(x)  = 0.5 * (@exp(x) + @exp(-x))
+# @desc Hyperbolic tangent. Define: tanh(x) = (@exp(x) - @exp(-x)) / (@exp(x) + @exp(-x))
+# @param x: real — real argument
+# @return real — A value in (−1, 1)
 tanh(x)  = (@exp(x) - @exp(-x)) / (@exp(x) + @exp(-x))
+# @desc Computes the inverse hyperbolic sine arsinh(x) = ln(x + √(x² + 1)) over all real numbers. Formula: asinh(x) = @ln(x + @sqrt(x^2 + 1))
+# @param x: real — Any real number (−∞, ∞)
+# @return real — Inverse hyperbolic sine arsinh(x)
 asinh(x) = @ln(x + √(x^2 + 1))
+# @desc Computes the principal inverse hyperbolic cosine arcosh(x) = ln(x + √(x² − 1)) for x ≥ 1. Formula: acosh(x) = @ln(x + @sqrt(x^2 - 1))
+# @param x: real — Real argument in the domain [1, ∞)
+# @return real — Non-negative inverse hyperbolic cosine arcosh(x) ≥ 0
 acosh(x) = @ln(x + √(x^2 - 1))
+# @desc Computes the inverse hyperbolic tangent artanh(x) = ½·ln((1 + x) / (1 − x)) for |x| < 1. Formula: atanh(x) = 0.5 · @ln((1 + x) / (1 - x))
+# @param x: real — Real argument strictly inside (−1, 1)
+# @return real — Inverse hyperbolic tangent artanh(x)
 atanh(x) = 0.5 * @ln((1 + x) / (1 - x))
 
 # 4. Exponential, Logarithmic & Root Functions
+# @desc Natural logarithm (base e). Define: ln(x) = @ln(x)
+# @param x: real — positive real argument
+# @return real — A real number (defined for x > 0)
 ln(x)         = @ln(x)
+# @desc Common logarithm (base 10). Define: log10(x) = @ln(x) / @ln(10)
+# @param x: real — positive real argument
+# @return real — A real number (defined for x > 0)
 log10(x)      = @ln(x) / @ln(10)
+# @desc Binary logarithm (base 2). Define: log2(x) = @ln(x) / @ln(2)
+# @param x: real — positive real argument
+# @return real — A real number (defined for x > 0)
 log2(x)       = @ln(x) / @ln(2)
+# @desc Computes the logarithm of x to any custom positive base b (log_b(x) = ln(x) / ln(base)). Formula: logb(x, base) = @ln(x) / @ln(base)
+# @param x: real — Positive real argument (x > 0)
+# @param base: real — Logarithm base (base > 0, base ≠ 1)
+# @return real — Base-b logarithm log_base(x)
 logb(x, base) = @ln(x) / @ln(base)
+# @desc Natural exponential e^x. Define: exp(x) = @exp(x)
+# @param x: real — exponent of the natural base e
+# @return real — A positive real number e^x
 exp(x)        = @exp(x)
+# @desc Principal square root. Define: sqrt(x) = @sqrt(x)
+# @param x: real — non-negative real argument
+# @return real — A non-negative real number (principal root)
 sqrt(x)       = @sqrt(x)
+# @desc Real cube root (handles negative operands). Define: cbrt(x) = @cbrt(x)
+# @param x: real — real argument (negative allowed, yields negative root)
+# @return real — A real number (signed root)
 cbrt(x)       = @cbrt(x)
+# @desc Computes the real n-th root x^(1/n) of x, supporting negative radicands when n is an odd integer. Formula: root(x, n) = x^(1 / n)
+# @param x: real — Radicand value (x ≥ 0 for even n; any real for odd integer n)
+# @param n: real — Root degree n (n ≠ 0)
+# @return real — Principal real n-th root of x
 root(x, n)    = x ^ (1 / n)
+# @desc Computes the real n-th root x^(1/n) of x (supporting real odd roots of negative numbers). Formula: nthroot(x, n) = root(x, n)
+# @param x: real — Radicand value under the root (x ≥ 0 for even n; any real for odd integer n)
+# @param n: real — Root degree n (n ≠ 0)
+# @return real — Principal real n-th root of x
 nthroot(x, n) = root(x, n)
+# @desc Computes the 2D Euclidean hypotenuse √(a² + b²) without intermediate overflow or underflow. Formula: hypot(a, b) = √(a^2 + b^2)
+# @param a: real — First orthogonal leg or coordinate component
+# @param b: real — Second orthogonal leg or coordinate component
+# @return real — Euclidean length √(a² + b²) ≥ 0 (preserves shared length units)
 hypot(a, b)   = √(a^2 + b^2)
+# @desc Evaluates the standard logistic sigmoid activation function σ(x) = 1 / (1 + e^(−x)), mapping any real input smoothly into (0, 1). Formula: sigmoid(x) = 1 / (1 + @exp(-x))
+# @param x: real — Real log-odds or logit input value
+# @return real — Logistic probability value σ(x) in (0, 1)
 sigmoid(x)    = 1 / (1 + @exp(-x))
 
 # 5. Error Functions, Gamma/Beta Special Functions & Normal Distribution
+# @desc Evaluates the Gauss error function erf(x) = (2/√π) ∫₀^x e^(−t²) dt, giving the probability of a normal variate falling within ±x√2 σ. Formula: erf(x) = @erf(x)
+# @param x: real — Real integration upper limit
+# @return real — Error function value erf(x) strictly within (−1, 1)
 erf(x)        = @erf(x)
+# @desc Complementary error function 1 − erf(x), Gaussian-tail integral. Define: erfc(x) = 1 - @erf(x)
+# @param x: real — argument of the Gaussian-tail integral
+# @return real — A value in (0, 2)
 erfc(x)       = 1 - @erf(x)
+# @desc Evaluates Euler's Gamma function Γ(x) = ∫₀^∞ t^(x−1) e^(−t) dt, extending the factorial to real numbers (Γ(n + 1) = n!). Formula: gamma(x) = @tgamma(x)
+# @param x: real — Real argument (excluding 0 and negative integers)
+# @return real — Value of the Euler Gamma function Γ(x)
 gamma(x)      = @gamma(x)
+# @desc Logarithm of the absolute Gamma function. Define: lgamma(x) = @lgamma(x)
+# @param x: real — argument (not a non-positive integer)
+# @return real — A real number (log |Γ(x)|)
 lgamma(x)     = @lgamma(x)
+# @desc Computes Euler's Beta function B(a, b) = Γ(a)·Γ(b) / Γ(a + b) via log-Gamma. Formula: beta_fn(a, b) = exp(lgamma(a) + lgamma(b) - lgamma(a + b))
+# @param a: real — First positive shape parameter (a > 0)
+# @param b: real — Second positive shape parameter (b > 0)
+# @return real — Positive value of the Euler Beta integral B(a, b)
 beta_fn(a, b) = @exp(@lgamma(a) + @lgamma(b) - @lgamma(a + b))
+# @desc Evaluates the Gaussian (normal) probability density function f(x) = (1 / (s·√(2π))) · exp(−½·((x − mu)/s)²). Formula: norm_pdf(x, mu = 0, s = 1)
+# @param x: real — Evaluation point x
+# @param mu: real — Distribution mean μ (default 0)
+# @param s: real — Standard deviation σ > 0 (default 1)
+# @return real — Normal probability density f(x) ≥ 0 at x
 norm_pdf(x, mu = 0, s = 1) = (1 / (s * √(2π))) * @exp(-0.5 * (((x - mu) / s) ^ 2))
+# @desc Evaluates the normal (Gaussian) cumulative distribution function Φ((x − μ)/σ) = P(X ≤ x) = ½·[1 + erf((x − mu) / (s·√2))]. Formula: norm_cdf(x, mu = 0, s = 1)
+# @param x: real — Upper quantile value x
+# @param mu: real — Mean μ of the normal distribution (default 0)
+# @param s: real — Standard deviation σ > 0 (default 1)
+# @return real — Cumulative probability P(X ≤ x) in [0, 1]
 norm_cdf(x, mu = 0, s = 1) = 0.5 * (1 + @erf((x - mu) / (s * √2)))

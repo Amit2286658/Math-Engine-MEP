@@ -14,21 +14,64 @@
 <[vec]
 
 # 1. Shape Queries, Reshaping & Higher-Order Functional Pipelines on `$mat`
+# @desc Computes `mat_rank(m: mat)` in module [mat] (Shape Queries, Reshaping & Higher-Order Functional Pipelines on `$mat`). Formula: mat_rank(m:mat) = @mrank(m)
+# @param m: mat — Input matrix or map dictionary
+# @return any — Result returned by `mat_rank(m: mat)` in [mat]
 mat_rank(m:mat)                      = @mrank(m)
+# @desc Returns the total number of scalar cells (rows × cols) in matrix m. Formula: mat_len(m) = @mlen(m)
+# @param m: mat — Input matrix
+# @return int — Total element count in `m`
 mat_len(m:mat)                       = @mlen(m)
+# @desc Computes `mat_dim(m: mat, axis: real)` in module [mat] (Shape Queries, Reshaping & Higher-Order Functional Pipelines on `$mat`). Formula: mat_dim(m:mat, axis) = @mdim(m, axis)
+# @param m: mat — Input matrix or map dictionary
+# @param axis: real — Input parameter `axis` for `mat_dim`
+# @return any — Result returned by `mat_dim(m: mat, axis: real)` in [mat]
 mat_dim(m:mat, axis)                 = @mdim(m, axis)
+# @desc Returns the number of rows in matrix m. Formula: mat_rows(m) = @mdim(m, 0)
+# @param m: mat — Input matrix
+# @return int — Row count of `m`
 mat_rows(m:mat)                      = @mdim(m, 0)
+# @desc Returns the number of columns in matrix m. Formula: mat_cols(m) = @mdim(m, 1)
+# @param m: mat — Input matrix
+# @return int — Column count of `m`
 mat_cols(m:mat)                      = (mat_rank(m) >= 2) ? @mdim(m, 1) : @mdim(m, 0)
+# @desc Returns the dimension vector `[rows, cols]` of matrix m. Formula: mat_shape(m)
+# @param m: mat — Input matrix
+# @return vec — Shape vector `[rows, cols]`
 mat_shape(m:mat)          -> vec     = [@mdim(m, i) for i in 0..<mat_rank(m)]
+# @desc Reshapes a matrix or vector into a new r×c matrix with the same total element count in row-major order. Formula: reshape(m, r, c) = @mreshape(m, r, c)
+# @param m: mat | vec — Input matrix or vector with r × c elements
+# @param r: int — Target row count
+# @param c: int — Target column count
+# @return mat — Reshaped r×c matrix
 reshape(m:mat, r, c)      -> mat     = @mreshape(m, r, c)
 reshape(v:vec, r, c)      -> mat     = @mreshape(v, r, c)
+# @desc Flattens a 2D matrix into a 1D vector in row-major order. Formula: flatten(m) = [x for x in m]
+# @param m: mat — Input r×c matrix
+# @return vec — 1D vector containing all r × c elements of `m`
 flatten(m:mat)            -> vec     = [x for x in m]
+# @desc Constructs an r×c matrix with every cell initialized to value v. Formula: mat_fill(r, c, v)
+# @param r: int — Number of rows
+# @param c: int — Number of columns
+# @param v: real — Fill value for all cells
+# @return mat — r×c matrix filled with `v`
 mat_fill(r, c, v:real, T) -> mat, T  = {
     if (r <= 0 || c <= 0) { error("Matrix dimensions must be positive") }
     vec(r * c, v).reshape(r, c)
 }
+# @desc Constructs an r×c matrix filled entirely with 0.0. Formula: mat_zeros(r, c) = mat_fill(r, c, 0)
+# @param r: int — Number of rows
+# @param c: int — Number of columns
+# @return mat — r×c zero matrix
 mat_zeros(r, c)           -> mat     = mat_fill(r, c, 0)
+# @desc Constructs an r×c matrix filled entirely with 1.0. Formula: mat_ones(r, c) = mat_fill(r, c, 1)
+# @param r: int — Number of rows
+# @param c: int — Number of columns
+# @return mat — r×c all-ones matrix
 mat_ones(r, c)            -> mat     = mat_fill(r, c, 1)
+# @desc Constructs the n×n identity matrix I_n with 1s on the main diagonal and 0s elsewhere. Formula: mat_eye(n)
+# @param n: int — Positive matrix dimension (number of rows and columns)
+# @return mat — n×n identity matrix I_n
 mat_eye(n)                -> mat     = {
     if (n <= 0) { error("Identity matrix dimension must be positive") }
     out := mat_zeros(n, n)
@@ -36,19 +79,69 @@ mat_eye(n)                -> mat     = {
     out
 }
 
+# @desc Applies transformation function `f(x)` to every element of a vector or matrix, or constructs a key-value `$map` dictionary when called with key-value arguments. Formula: map(container, f)
+# @param m: vec | mat — Input vector or matrix to transform
+# @param f: fn — Element mapping function or lambda `x => ...`
+# @return vec | mat | map — Transformed container of the same shape, or a new `$map` dictionary
 map(m:mat, f:fn)          -> mat = @mreshape([f(x) for x in m], m, 0)
+# @desc Selects all elements from a vector or matrix for which predicate function `f(x)` returns true (non-zero). Formula: filter(m, f) = [x for x in m if f(x)]
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return vec — Vector of elements satisfying `f(x) != 0`
 filter(m:mat, f:fn)       -> vec = [x for x in m if f(x)]
+# @desc Folds a vector or matrix down to a single value by repeatedly applying binary accumulator `f(acc, x)`. Formula: reduce(m, f)
+# @param m: vec | mat — Non-empty input vector or matrix
+# @param f: fn — Binary reduction lambda `(acc, x) => ...`
+# @return any — Accumulated reduction result
 reduce(m:mat, f:fn)              = reduce(flatten(m), f)
 reduce(m:mat, init, f:fn)        = reduce(flatten(m), init, f)
+# @desc Folds a vector or matrix from an explicit initial accumulator value `init` using binary function `f(acc, x)`. Formula: fold(m, init, f)
+# @param m: vec | mat — Input vector or matrix
+# @param init: any — Initial accumulator value
+# @param f: fn — Binary reduction lambda `(acc, x) => ...`
+# @return any — Final accumulated value
 fold(m:mat, init, f:fn)          = reduce(flatten(m), init, f)
+# @desc Returns 1 (true) if at least one element in a vector or matrix satisfies predicate `f(x)`, or 0 otherwise. Formula: any(m, f)
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return bool — 1 if any element satisfies `f(x)`, else 0
 any(m:mat, f:fn)                 = any(flatten(m), f)
+# @desc Returns 1 (true) if every element in a vector or matrix satisfies predicate `f(x)`, or 0 otherwise. Formula: all(m, f)
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return bool — 1 if all elements satisfy `f(x)`, else 0
 all(m:mat, f:fn)                 = all(flatten(m), f)
+# @desc Returns the first element in a vector or matrix that satisfies predicate `f(x)`, or `nan` if none matches. Formula: find(m, f)
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return any — First matching element, or `nan` if not found
 find(m:mat, f:fn)                = find(flatten(m), f)
+# @desc Counts the number of elements in a vector or matrix that satisfy predicate `f(x)`. Formula: count_if(m, f)
+# @param m: vec | mat — Input vector or matrix
+# @param f: fn — Boolean predicate lambda `x => ...`
+# @return int — Count of elements for which `f(x)` is non-zero
 count_if(m:mat, f:fn)            = count_if(flatten(m), f)
+# @desc Returns a vector containing the first `k` elements of a vector or flattened matrix. Formula: take(m, k)
+# @param m: vec | mat — Input vector or matrix
+# @param k: int — Number of leading elements to take
+# @return vec — Vector of the first `k` elements
 take(m:mat, k)            -> vec = take(flatten(m), k)
+# @desc Returns a vector with the first `k` elements of a vector or flattened matrix skipped. Formula: drop(m, k)
+# @param m: vec | mat — Input vector or matrix
+# @param k: int — Number of leading elements to skip
+# @return vec — Vector of remaining elements after index `k - 1`
 drop(m:mat, k)            -> vec = drop(flatten(m), k)
+# @desc Sorts the elements of a vector or flattened matrix in ascending order of a key function `key_fn(x)`. Formula: sort_by(v, key_fn)
+# @param v: vec | mat — Input vector or matrix
+# @param key_fn: fn — Key projection lambda `x => ...` returning a comparable number
+# @return vec — Vector of elements ordered by ascending `key_fn(x)`
 sort_by(m:mat, key_fn:fn) -> vec = sort_by(flatten(m), key_fn)
 
+# @desc Combines two same-shape matrices `a` and `b` cell-by-cell using binary function `f(a[i,j], b[i,j])`. Formula: mat_zip(a, b, f)
+# @param a: mat — First r×c matrix
+# @param b: mat — Second r×c matrix
+# @param f: fn — Binary function `(x, y) => ...`
+# @return mat — r×c matrix of element-wise results
 mat_zip(a:mat, b:mat, f:fn) -> mat = {
     if (mat_shape(a) != mat_shape(b)) { error("Matrix shape mismatch") }
     va := [x for x in a]
@@ -131,6 +224,9 @@ mat_zip(a:mat, b:mat, f:fn) -> mat = {
 (a:mat)  ".^" (b:mat)  :>85 -> mat = mat_zip(a, b, (x, y) => x ^ y)
 
 # 4. Pure MEP `transpose`, `trace`, `det`, `inv` & `linsolve`
+# @desc Flips a matrix M over its main diagonal, turning an r×c matrix into a c×r matrix Mᵀ. Formula: transpose(m)
+# @param m: mat | mat2 — Input r×c matrix or 2×2 `$mat2` struct
+# @return mat | mat2 — Transposed c×r matrix Mᵀ
 transpose(m:mat, T) -> mat, T = {
     r := mat_rank(m)
     if (r == 1) { return @mreshape(m, mat_len(m), 1) }
@@ -146,6 +242,9 @@ transpose(m:mat, T) -> mat, T = {
     @mreshape(flat, cols, rows)
 }
 
+# @desc Computes the matrix trace tr(M) = ∑ M[i, i], the sum of elements along the main diagonal. Formula: trace(m)
+# @param m: mat | mat2 — Square matrix or `$mat2` struct
+# @return real — Sum of diagonal elements tr(m)
 trace(m:mat, T) -> real, T = {
     r := mat_rows(m)
     if (mat_rank(m) != 2 || r != mat_cols(m) || r == 0) { error("trace() requires a non-empty square 2D matrix") }
@@ -154,6 +253,9 @@ trace(m:mat, T) -> real, T = {
     s
 }
 
+# @desc Computes the scalar determinant det(M) of a square n×n matrix (via LU decomposition) or a 2×2 `$mat2` struct. Formula: det(m)
+# @param m: mat | mat2 — Square n×n matrix or `$mat2` struct
+# @return real — Scalar determinant det(m)
 det(m:mat) = {
     n := mat_rows(m)
     if (mat_rank(m) != 2 || n != mat_cols(m) || n == 0) { error("det() requires a square 2D matrix") }
@@ -185,6 +287,9 @@ det(m:mat) = {
     (@abs(d) < 1e-14) ? 0 : d
 }
 
+# @desc Computes the multiplicative inverse M⁻¹ of a non-singular square n×n matrix or `$mat2` struct such that M · M⁻¹ = I. Formula: inv(m)
+# @param m: mat | mat2 — Invertible square matrix (det(m) ≠ 0)
+# @return mat | mat2 — Inverse matrix M⁻¹
 inv(m:mat) -> mat = {
     n := mat_rows(m)
     if (mat_rank(m) != 2 || n != mat_cols(m) || n == 0) { error("inv() requires a square 2D matrix") }
@@ -224,6 +329,10 @@ inv(m:mat) -> mat = {
     B.map(x => (@abs(x) < 1e-15) ? 0 : x)
 }
 
+# @desc Solves the square linear system A · x = b for vector x using Gaussian elimination with partial pivoting. Formula: linsolve(a, b)
+# @param a: mat — Non-singular n×n coefficient matrix A
+# @param b: vec — Right-hand side n-element vector b
+# @return vec — Solution vector x of length n satisfying A · x = b
 linsolve(a:mat, b:vec) -> vec = {
     n := mat_rows(a)
     if (mat_rank(a) != 2 || n != mat_cols(a) || n == 0) { error("linsolve(A, b) requires a square 2D matrix A") }
@@ -284,6 +393,9 @@ linsolve(a:mat, b:mat) -> mat = {
 
 # 5. Diagonals, Reductions & Matrix Powers (`A ^ n`)
 
+# @desc Extracts the main diagonal of a matrix as a vector, or constructs a diagonal matrix from a vector `v`. Formula: diag(v)
+# @param v: vec | mat — Input vector (to build a diagonal matrix) or matrix (to extract its diagonal)
+# @return mat | vec — Diagonal n×n matrix or extracted diagonal vector
 diag(v:vec) -> mat = {
     n   := v.len()
     out := mat_zeros(n, n)
@@ -296,12 +408,31 @@ diag(m:mat, T) -> vec = {
     [m[i, i] for i in 0..<n]
 }
 
+# @desc Computes the sum of all scalar elements in matrix m. Formula: mat_sum(m)
+# @param m: mat — Input matrix
+# @return real — Total sum of all entries in `m`
 mat_sum(m:mat, T)        -> real, T = m.reduce((a, b) => a + b)
+# @desc Computes the arithmetic mean of all scalar elements in matrix m. Formula: mat_mean(m) = mat_sum(m) / mat_len(m)
+# @param m: mat — Input matrix
+# @return real — Mean of all entries in `m`
 mat_mean(m:mat, T)       -> real, T = mat_sum(m) / mat_len(m)
+# @desc Returns the smallest element in matrix m. Formula: mat_min(m)
+# @param m: mat — Input matrix
+# @return real — Minimum entry in `m`
 mat_min(m:mat, T)        -> real, T = m.reduce((a, b) => a < b ? a : b)
+# @desc Returns the largest element in matrix m. Formula: mat_max(m)
+# @param m: mat — Input matrix
+# @return real — Maximum entry in `m`
 mat_max(m:mat, T)        -> real, T = m.reduce((a, b) => a > b ? a : b)
+# @desc Computes the Frobenius norm ‖M‖_F = √(∑ |M_{i,j}|²) of matrix m. Formula: frobenius_norm(m) = √sum(m^2)
+# @param m: mat — Input matrix
+# @return real — Frobenius norm ‖M‖_F ≥ 0
 frobenius_norm(m:mat, T) -> real, T = √(m.map(x => x^2).reduce((a, b) => a + b))
 
+# @desc Raises a square matrix m to integer power n (n = 0 returns I, n < 0 computes inv(m)^|n|). Formula: mat_pow(m, n)
+# @param m: mat — Square n×n matrix
+# @param n: int — Integer exponent (positive, zero, or negative)
+# @return mat — Matrix power M^n
 mat_pow(m:mat, n:real, none) -> mat = {
     r := mat_rows(m)
     if (r != mat_cols(m)) { error("Matrix power requires a square matrix") }
@@ -351,6 +482,10 @@ mat_pow(m:mat, n:real, none) -> mat = {
     out
 }
 
+# @desc Computes the outer product matrix M[i, j] = a[i] · b[j] of two vectors `a` and `b`. Formula: outer(a, b)
+# @param a: vec — Column vector of length m
+# @param b: vec — Row vector of length n
+# @return mat — m×n outer product matrix `a ⊗ b`
 outer(a:vec, b:vec) -> mat = {
     na  := a.len()
     nb  := b.len()
@@ -361,6 +496,10 @@ outer(a:vec, b:vec) -> mat = {
     out
 }
 
+# @desc Stacks two matrices `a` and `b` with the same column count vertically on top of each other. Formula: vstack(a, b)
+# @param a: mat — Top matrix (r₁ × c)
+# @param b: mat — Bottom matrix (r₂ × c)
+# @return mat — Vertically stacked (r₁ + r₂) × c matrix
 vstack(a:mat, b:mat) -> mat = {
     ra := (mat_rank(a) == 1) ? 1 : mat_rows(a)
     ca := (mat_rank(a) == 1) ? mat_len(a) : mat_cols(a)
@@ -375,6 +514,10 @@ vstack(a:mat, b:mat) -> mat = {
     out
 }
 
+# @desc Concatenates two matrices `a` and `b` with the same row count horizontally side-by-side `[a | b]`. Formula: hstack(a, b)
+# @param a: mat — Left matrix (r × c₁)
+# @param b: mat — Right matrix (r × c₂)
+# @return mat — Horizontally augmented r × (c₁ + c₂) matrix
 hstack(a:mat, b:mat) -> mat = {
     ra := (mat_rank(a) == 1) ? 1 : mat_rows(a)
     ca := (mat_rank(a) == 1) ? mat_len(a) : mat_cols(a)
@@ -391,6 +534,10 @@ hstack(a:mat, b:mat) -> mat = {
     out
 }
 
+# @desc Computes the Kronecker tensor product A ⊗ B of two matrices `a` and `b`. Formula: kron(a, b)
+# @param a: mat — First matrix (r₁ × c₁)
+# @param b: mat — Second matrix (r₂ × c₂)
+# @return mat — Block Kronecker product matrix of size (r₁·r₂) × (c₁·c₂)
 kron(a:mat, b:mat)   -> mat = {
     ra  := mat_rows(a)
     ca  := mat_cols(a)
@@ -410,6 +557,10 @@ kron(a:mat, b:mat)   -> mat = {
     out
 }
 
+# @desc Extracts the lower-triangular part of matrix m on and below diagonal offset k (k = 0 is the main diagonal). Formula: tril(m, k = 0)
+# @param m: mat — Input matrix
+# @param k: int — Diagonal offset (0 = main diagonal, k > 0 above, k < 0 below; default 0)
+# @return mat — Matrix with entries above the k-th diagonal zeroed out
 tril(m:mat, k = 0) -> mat = {
     r   := mat_rows(m)
     c   := mat_cols(m)
@@ -422,6 +573,10 @@ tril(m:mat, k = 0) -> mat = {
     out
 }
 
+# @desc Extracts the upper-triangular part of matrix m on and above diagonal offset k (k = 0 is the main diagonal). Formula: triu(m, k = 0)
+# @param m: mat — Input matrix
+# @param k: int — Diagonal offset (0 = main diagonal, k > 0 above, k < 0 below; default 0)
+# @return mat — Matrix with entries below the k-th diagonal zeroed out
 triu(m:mat, k = 0) -> mat = {
     r   := mat_rows(m)
     c   := mat_cols(m)
@@ -435,6 +590,10 @@ triu(m:mat, k = 0) -> mat = {
 }
 
 # 7. Matrix Decompositions (LU, QR, Cholesky, Eigenvalues/Vectors, SVD), Pseudoinverse, Least Squares & Norms
+# @desc Computes `lu_helper(m: mat, mode: real)` in module [mat] (Matrix Decompositions (LU, QR, Cholesky, Eigenvalues/Vectors, SVD), Pseudoinverse, Least Squares & Norms).
+# @param m: mat — Input matrix or map dictionary
+# @param mode: real — Input parameter `mode` for `lu_helper`
+# @return mat — Result returned by `lu_helper(m: mat, mode: real)` in [mat]
 lu_helper(m:mat, mode) -> mat = {
     n := mat_rows(m)
     if (mat_rank(m) != 2 || n != mat_cols(m) || n == 0) { error("LU decomposition requires a non-empty square 2D matrix") }
@@ -472,10 +631,22 @@ lu_helper(m:mat, mode) -> mat = {
     (mode == 0) ? L : ((mode == 1) ? U : P)
 }
 
+# @desc Computes the unit lower-triangular factor L in the PA = L · U decomposition with partial pivoting. Formula: lu_l(m)
+# @param m: mat — Square n×n matrix
+# @return mat — Unit lower-triangular matrix L
 lu_l(m:mat)             -> mat = lu_helper(m, 0)
+# @desc Computes the upper-triangular factor U in the PA = L · U decomposition with partial pivoting. Formula: lu_u(m)
+# @param m: mat — Square n×n matrix
+# @return mat — Upper-triangular matrix U
 lu_u(m:mat)             -> mat = lu_helper(m, 1)
+# @desc Computes the row-permutation matrix P in the PA = L · U decomposition with partial pivoting. Formula: lu_p(m)
+# @param m: mat — Square n×n matrix
+# @return mat — Permutation matrix P
 lu_p(m:mat)             -> mat = lu_helper(m, 2)
 
+# @desc Computes the orthonormal matrix Q in the Modified Gram-Schmidt QR decomposition M = Q · R. Formula: qr_q(m)
+# @param m: mat — Input m×n matrix with linearly independent columns
+# @return mat — Orthonormal matrix Q where Qᵀ · Q = I
 qr_q(m:mat)             -> mat = {
     r := mat_rows(m)
     c := mat_cols(m)
@@ -499,8 +670,14 @@ qr_q(m:mat)             -> mat = {
     Q
 }
 
+# @desc Computes the upper-triangular matrix R = Qᵀ · M in the QR decomposition M = Q · R. Formula: qr_r(m) = transpose(qr_q(m)) · m
+# @param m: mat — Input m×n matrix
+# @return mat — Upper-triangular factor matrix R
 qr_r(m:mat)             -> mat = transpose(qr_q(m)) * m
 
+# @desc Computes the lower-triangular Cholesky factor L of a symmetric positive-definite matrix M such that M = L · Lᵀ. Formula: chol(m)
+# @param m: mat — Symmetric positive-definite n×n matrix
+# @return mat — Lower-triangular Cholesky factor L
 chol(m:mat)             -> mat = {
     n := mat_rows(m)
     if (mat_rank(m) != 2 || n != mat_cols(m) || n == 0) { error("chol() requires a non-empty square symmetric positive-definite matrix") }
@@ -520,6 +697,10 @@ chol(m:mat)             -> mat = {
     L
 }
 
+# @desc Computes `jacobi_helper(m: mat, mode: real)` in module [mat] (Matrix Decompositions (LU, QR, Cholesky, Eigenvalues/Vectors, SVD), Pseudoinverse, Least Squares & Norms).
+# @param m: mat — Input matrix or map dictionary
+# @param mode: real — Input parameter `mode` for `jacobi_helper`
+# @return mat — Result returned by `jacobi_helper(m: mat, mode: real)` in [mat]
 jacobi_helper(m:mat, mode) -> mat = {
     n := mat_rows(m)
     if (mat_rank(m) != 2 || n != mat_cols(m) || n == 0) { error("eigvals/eigvecs requires a square 2D matrix") }
@@ -580,6 +761,9 @@ jacobi_helper(m:mat, mode) -> mat = {
     (mode == 0) ? A : V.map(x => (@abs(x) < 1e-14) ? 0 : x)
 }
 
+# @desc Computes the real eigenvalues of a symmetric square matrix using cyclic Jacobi rotations. Formula: eigvals(m)
+# @param m: mat — Symmetric n×n matrix
+# @return vec — Vector of n real eigenvalues
 eigvals(m:mat) -> vec = {
     if (mat_rank(m) != 2 || mat_rows(m) != mat_cols(m) || mat_rows(m) == 0) {
         error("eigvals() requires a square 2D matrix")
@@ -607,8 +791,14 @@ eigvals(m:mat) -> vec = {
     [(@abs(A[i, i]) < 1e-13) ? 0 : A[i, i] for i in 0..<n]
 }
 
+# @desc Computes the orthonormal eigenvector matrix V (columns are eigenvectors) of a symmetric square matrix via Jacobi rotations. Formula: eigvecs(m)
+# @param m: mat — Symmetric n×n matrix
+# @return mat — n×n orthogonal matrix whose columns are the eigenvectors of `m`
 eigvecs(m:mat) -> mat = jacobi_helper(m, 1)
 
+# @desc Computes the singular values `[σ₁, σ₂, ...]` of matrix m in descending order. Formula: svd_s(m)
+# @param m: mat — Rectangular m×n matrix
+# @return vec — Vector of non-negative singular values sorted descending
 svd_s(m:mat) -> vec = {
     if (mat_rank(m) != 2) { error("SVD requires a 2D matrix") }
     M   := mat_rows(m)
@@ -618,11 +808,17 @@ svd_s(m:mat) -> vec = {
     [(D[i, i] > 1e-24) ? √D[i, i] : 0 for i in 0..<K]
 }
 
+# @desc Computes the right singular vector matrix V in the Singular Value Decomposition M = U · Σ · Vᵀ. Formula: svd_v(m)
+# @param m: mat — Input m×n matrix
+# @return mat — Orthogonal right singular vector matrix V
 svd_v(m:mat) -> mat = {
     if (mat_rank(m) != 2) { error("SVD requires a 2D matrix") }
     jacobi_helper(transpose(m) * m, 1)
 }
 
+# @desc Computes the left singular vector matrix U in the Singular Value Decomposition M = U · Σ · Vᵀ. Formula: svd_u(m)
+# @param m: mat — Input m×n matrix
+# @return mat — Orthonormal left singular vector matrix U
 svd_u(m:mat) -> mat = {
     if (mat_rank(m) != 2) { error("SVD requires a 2D matrix") }
     M   := mat_rows(m)
@@ -645,6 +841,9 @@ svd_u(m:mat) -> mat = {
     U
 }
 
+# @desc Computes the Moore-Penrose pseudoinverse M⁺ of any rectangular m×n matrix via Singular Value Decomposition (SVD). Formula: pinv(m)
+# @param m: mat — Rectangular m×n matrix
+# @return mat — n×m Moore-Penrose pseudoinverse matrix M⁺
 pinv(m:mat)             -> mat = {
     s    := svd_s(m)
     u    := svd_u(m)
@@ -654,9 +853,17 @@ pinv(m:mat)             -> mat = {
     v * diag(sinv) * transpose(u)
 }
 
+# @desc Computes the ordinary least-squares solution x = A⁺ · b minimizing ‖A·x − b‖₂ for an overdetermined or underdetermined linear system. Formula: lstsq(a, b) = pinv(a) · b
+# @param a: mat — m×n design matrix A
+# @param b: vec — m-element observation target vector b
+# @return vec — n-element least-squares coefficient vector x
 lstsq(a:mat, b:vec)     -> vec = pinv(a) * b
 lstsq(a:mat, b:mat)     -> mat = pinv(a) * b
 
+# @desc Approximates the dominant unit eigenvector of square matrix m using `steps` iterations of the power method. Formula: power_vec(m, steps = 40)
+# @param m: mat — Square n×n matrix
+# @param steps: int — Number of power-iteration steps (default 40)
+# @return vec — Dominant unit eigenvector
 power_vec(m:mat, steps = 40) -> vec = {
     n := mat_rows(m)
     if (n != mat_cols(m) || n == 0) { error("power_vec() requires a non-empty square matrix") }
@@ -672,21 +879,35 @@ power_vec(m:mat, steps = 40) -> vec = {
     v
 }
 
+# @desc Approximates the dominant eigenvalue λ_max of square matrix m using `steps` iterations of the power method. Formula: power_iter(m, steps = 40)
+# @param m: mat — Square n×n matrix
+# @param steps: int — Number of power-iteration steps (default 40)
+# @return real — Dominant eigenvalue approximation λ_max
 power_iter(m:mat, steps = 40) = {
     v := power_vec(m, steps)
     dot(v, m * v) / dot(v, v)
 }
 
+# @desc Computes the numerical rank of matrix m by counting singular values greater than tolerance `tol`. Formula: matrix_rank(m, tol = 1e-9)
+# @param m: mat — Input matrix
+# @param tol: real — Singular value cutoff threshold (default 1e-9)
+# @return int — Numerical rank (number of linearly independent rows/columns)
 matrix_rank(m:mat, tol = 1e-9) = {
     sv := svd_s(m)
     sv.count_if(s => s > tol)
 }
 
+# @desc Computes the L₂ spectral operator norm ‖M‖₂ (largest singular value σ_max) of matrix m. Formula: spectral_norm(m)
+# @param m: mat — Input matrix
+# @return real — Spectral norm σ_max(m) ≥ 0
 spectral_norm(m:mat) = {
     sv := svd_s(m)
     sv[0]
 }
 
+# @desc Computes the L₂ condition number κ(M) = σ_max(M) / σ_min(M) measuring sensitivity of linear systems involving M. Formula: cond(m)
+# @param m: mat — Input matrix
+# @return real — Condition number κ(M) ≥ 1 (or ∞ if singular)
 cond(m:mat) = {
     sv   := svd_s(m)
     smin := sv[sv.len() - 1]
@@ -694,6 +915,9 @@ cond(m:mat) = {
     sv[0] / smin
 }
 
+# @desc Computes the induced L₁ matrix norm ‖M‖₁ (maximum absolute column sum) of matrix m. Formula: mat_norm1(m)
+# @param m: mat — Input matrix
+# @return real — Maximum absolute column sum ‖M‖₁ ≥ 0
 mat_norm1(m:mat) = {
     r    := mat_rows(m)
     c    := mat_cols(m)
@@ -706,6 +930,9 @@ mat_norm1(m:mat) = {
     best
 }
 
+# @desc Computes the induced L_∞ matrix norm ‖M‖_∞ (maximum absolute row sum) of matrix m. Formula: mat_norm_inf(m)
+# @param m: mat — Input matrix
+# @return real — Maximum absolute row sum ‖M‖_∞ ≥ 0
 mat_norm_inf(m:mat) = {
     r    := mat_rows(m)
     c    := mat_cols(m)

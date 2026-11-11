@@ -23,7 +23,14 @@
 (a:str) ">"  (b:str) :<30        = @gt(a, b)
 (a:str) ">=" (b:str) :<30        = @ge(a, b)
 
+# @desc Returns the number of elements in a vector/map or the character length of a string. Formula: len(x) = @vlen(x)
+# @param x: vec | map | str — Input vector, dictionary map, or string
+# @return int — Number of elements or characters in `x`
 len(s:str)                = @vlen(s)
+# @desc Returns the element or character at 0-based index `idx` (supports negative wrap-around indices). Formula: at(v, idx) = @vget(v, idx)
+# @param v: vec | str — Input vector or string
+# @param idx: int — 0-based index (negative indices count backward from the end)
+# @return any — Element or single-character string at `idx`
 at(s:str, idx)     -> str = @vget(s, idx)
 at(s:str, rng:vec) -> str = {
     n   := len(s)
@@ -36,8 +43,16 @@ at(s:str, rng:vec) -> str = {
 }
 
 # 2. Pure MEP String Manipulation & Predicate Functions
+# @desc Computes `is_empty(v: vec)` in module [vec] (Constructors & Mutating / Query Methods for `vec<T>`, `list<T>`, `stack<T>`, `queue<T>`). Formula: is_empty(v:vec) = (len(v) == 0)
+# @param v: vec — Input vector
+# @return any — Result returned by `is_empty(v: vec)` in [vec]
 is_empty(s:str) = (len(s) == 0)
 
+# @desc Extracts the substring of `s` from 0-based index `start` (inclusive) to `stop` (exclusive). Formula: substr(s, start, stop)
+# @param s: str — Input string
+# @param start: int — Inclusive start index
+# @param stop: int — Exclusive end index
+# @return str — Extracted substring `s[start..<stop]`
 substr(s:str, start, stop) -> str = {
     n := len(s)
     if (n == 0) { return("") }
@@ -49,6 +64,10 @@ substr(s:str, start, stop) -> str = {
     s[a...b]
 }
 
+# @desc Repeats string `s` `n` times and concatenates the copies. Formula: str_repeat(s, n)
+# @param s: str — String pattern to repeat
+# @param n: int — Non-negative repetition count
+# @return str — Repeated string
 str_repeat(s:str, n) -> str = {
     out := ""
     if (n > 0) {
@@ -57,12 +76,19 @@ str_repeat(s:str, n) -> str = {
     out
 }
 
+# @desc Reverses the character sequence of string `s`. Formula: str_reverse(s)
+# @param s: str — Input string
+# @return str — Reversed string
 str_reverse(s:str) -> str = {
     n := len(s)
     if (n <= 1) { return s }
     s[(n - 1)...0]
 }
 
+# @desc Returns 1 (true) if string `s` begins with `prefix`, or 0 otherwise. Formula: starts_with(s, prefix)
+# @param s: str — Input string
+# @param prefix: str — Leading prefix to test
+# @return bool — 1 if `s` starts with `prefix`, else 0
 starts_with(s:str, prefix:str) = {
     np := len(prefix)
     if (np > len(s)) { return 0 }
@@ -70,6 +96,10 @@ starts_with(s:str, prefix:str) = {
     s[0..<np] == prefix
 }
 
+# @desc Returns 1 (true) if string `s` ends with `suffix`, or 0 otherwise. Formula: ends_with(s, suffix)
+# @param s: str — Input string
+# @param suffix: str — Trailing suffix to test
+# @return bool — 1 if `s` ends with `suffix`, else 0
 ends_with(s:str, suffix:str) = {
     ns := len(suffix)
     n  := len(s)
@@ -78,8 +108,15 @@ ends_with(s:str, suffix:str) = {
     s[(n - ns)..<n] == suffix
 }
 
+# @desc Splits string `s` into a vector of single-character strings. Formula: chars(s) = [c for c in s]
+# @param s: str — Input string
+# @return vec<str> — Vector of single-character strings
 chars(s:str) -> vec<str> = [c for c in s]
 
+# @desc Joins all elements of vector `v` into a single string separated by delimiter `sep` (defaults to `""`). Formula: str_join(v, sep = "")
+# @param v: vec — Vector of strings or values to join
+# @param sep: str — Delimiter inserted between consecutive elements (default `""`)
+# @return str — Concatenated string
 str_join(v:vec, sep:str = "") -> str = {
     out := ""
     (i, item in v) {
@@ -90,25 +127,44 @@ str_join(v:vec, sep:str = "") -> str = {
 }
 
 # 3. String Formatting (`fmt` / `format`), Base Formatters (`to_hex` / `to_bin`), Case, Trimming, Padding, Search, Replace & Split
+# @desc Formats values into a string using printf-style format specifiers (`%g`, `%f`, `%d`, `%s`). Formula: fmt(f, a, ...) = @str_fmt(f, a, ...)
+# @param f: str — Format template string (e.g. `"%.4f"`)
+# @param a: any — Value(s) to format into template `f`
+# @return str — Formatted output string
 fmt(f:str, a:T)                     -> str = @str_fmt(f, a)
 fmt(f:str, a:T, b:T)                -> str = @str_fmt(f, a, b)
 fmt(f:str, a:T, b:T, c:T)           -> str = @str_fmt(@str_fmt(f, a, b), c)
 fmt(f:str, a:T, b:T, c:T, d:T)      -> str = @str_fmt(@str_fmt(f, a, b), c, d)
+# @desc Formats values into a string using printf-style format specifiers (`%g`, `%f`, `%d`, `%s`). Formula: format(f, a, ...) = @str_fmt(f, a, ...)
+# @param f: str — Format template string
+# @param a: any — Value(s) to format into template `f`
+# @return str — Formatted output string
 format(f:str, a:T)                  -> str = @str_fmt(f, a)
 format(f:str, a:T, b:T)             -> str = @str_fmt(f, a, b)
 format(f:str, a:T, b:T, c:T)        -> str = @str_fmt(@str_fmt(f, a, b), c)
 format(f:str, a:T, b:T, c:T, d:T)   -> str = @str_fmt(@str_fmt(f, a, b), c, d)
 
+# @desc Formats an integer `n` as a lowercase hexadecimal string with `0x` prefix (e.g. `to_hex(255)` → `"0xff"`). Formula: to_hex(n)
+# @param n: int — Integer value to format in base 16
+# @return str — Hexadecimal string with `0x` prefix
 to_hex(n:real, none) -> str = {
     if (n != floor(n)) { error("Base formatting requires an exact integer") }
     (n < 0) ? ("-0x" + fmt("{:X}", -n)) : ("0x" + fmt("{:X}", n))
 }
 
+# @desc Formats an integer `n` as a binary string with `0b` prefix (e.g. `to_bin(42)` → `"0b101010"`). Formula: to_bin(n)
+# @param n: int — Integer value to format in base 2
+# @return str — Binary string with `0b` prefix
 to_bin(n:real, none) -> str = {
     if (n != floor(n)) { error("Base formatting requires an exact integer") }
     (n < 0) ? ("-0b" + fmt("{:b}", -n)) : ("0b" + fmt("{:b}", n))
 }
 
+# @desc Returns the 0-based character index of the first occurrence of `sub` in `s` at or after `start`, or −1 if not found. Formula: index_of(s, sub, start = 0)
+# @param s: str — Input string
+# @param sub: str — Substring to locate
+# @param start: int — Starting 0-based search index (default 0)
+# @return int — 0-based match index, or −1 when `sub` is not found
 index_of(s:str, sub:str, start = 0) = {
     n := len(s)
     m := len(sub)
@@ -121,9 +177,16 @@ index_of(s:str, sub:str, start = 0) = {
     -1
 }
 
+# @desc Returns 1 (true) if string `s` contains substring `sub`, or 0 otherwise. Formula: contains(s, sub) = (index_of(s, sub, 0) >= 0)
+# @param s: str — Haystack string to search within
+# @param sub: str — Needle substring to look for
+# @return bool — 1 if `sub` occurs in `s`, else 0
 contains(s:str, sub:str)        = (index_of(s, sub, 0) >= 0)
 (sub:str) in (s:str) :<42       = contains(s, sub)
 
+# @desc Converts all ASCII lowercase letters in string `s` to uppercase. Formula: upper(s)
+# @param s: str — Input string
+# @return str — Uppercase string
 upper(s:str) -> str = {
     lo  := "abcdefghijklmnopqrstuvwxyz"
     hi  := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -134,8 +197,14 @@ upper(s:str) -> str = {
     }
     out
 }
+# @desc Converts all ASCII lowercase letters in string `s` to uppercase. Formula: to_upper(s) = upper(s)
+# @param s: str — Input string
+# @return str — Uppercase string
 to_upper(s:str) -> str = upper(s)
 
+# @desc Converts all ASCII uppercase letters in string `s` to lowercase. Formula: lower(s)
+# @param s: str — Input string
+# @return str — Lowercase string
 lower(s:str) -> str = {
     lo  := "abcdefghijklmnopqrstuvwxyz"
     hi  := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -146,24 +215,50 @@ lower(s:str) -> str = {
     }
     out
 }
+# @desc Converts all ASCII uppercase letters in string `s` to lowercase. Formula: to_lower(s) = lower(s)
+# @param s: str — Input string
+# @return str — Lowercase string
 to_lower(s:str) -> str = lower(s)
 
+# @desc Strips leading whitespace from the start of string `s`. Formula: ltrim(s)
+# @param s: str — Input string
+# @return str — Left-trimmed string
 ltrim(s:str) -> str = @regex_replace(s, "^\s+", "")
+# @desc Strips trailing whitespace from the end of string `s`. Formula: rtrim(s)
+# @param s: str — Input string
+# @return str — Right-trimmed string
 rtrim(s:str) -> str = @regex_replace(s, "\s+$", "")
+# @desc Strips leading and trailing whitespace characters from string `s`. Formula: trim(s) = rtrim(ltrim(s))
+# @param s: str — Input string
+# @return str — Whitespace-trimmed string
 trim(s:str)  -> str = rtrim(ltrim(s))
 
+# @desc Left-pads string `s` with fill character `ch` (defaults to space `" "`) up to minimum length `width`. Formula: pad_left(s, width, ch = " ")
+# @param s: str — Input string
+# @param width: int — Target minimum character width
+# @param ch: str — Padding character (default `" "`)
+# @return str — Left-padded string of length at least `width`
 pad_left(s:str, width, ch:str = " ") -> str = {
     n := len(s)
     if (n >= width || len(ch) == 0) { return s }
     str_repeat(ch[0], width - n) + s
 }
 
+# @desc Right-pads string `s` with fill character `ch` (defaults to space `" "`) up to minimum length `width`. Formula: pad_right(s, width, ch = " ")
+# @param s: str — Input string
+# @param width: int — Target minimum character width
+# @param ch: str — Padding character (default `" "`)
+# @return str — Right-padded string of length at least `width`
 pad_right(s:str, width, ch:str = " ") -> str = {
     n := len(s)
     if (n >= width || len(ch) == 0) { return s }
     s + str_repeat(ch[0], width - n)
 }
 
+# @desc Splits string `s` around occurrences of delimiter `sep` (defaults to `" "`) into a vector of substrings. Formula: split(s, sep = " ")
+# @param s: str — Input string to split
+# @param sep: str — Delimiter substring (default `" "`)
+# @return vec<str> — Vector of split substring tokens
 split(s:str, sep:str = " ") -> vec<str> = {
     out := vec<str>()
     n   := len(s)
@@ -187,11 +282,21 @@ split(s:str, sep:str = " ") -> vec<str> = {
     out
 }
 
+# @desc Replaces all occurrences of substring `old_s` in string `s` with `new_s`. Formula: replace(s, old_s, new_s) = str_join(split(s, old_s), new_s)
+# @param s: str — Input source string
+# @param old_s: str — Substring to search for
+# @param new_s: str — Replacement string
+# @return str — String with all occurrences of `old_s` replaced by `new_s`
 replace(s:str, old_s:str, new_s:str) -> str = {
     if (len(old_s) == 0) { return s }
     str_join(split(s, old_s), new_s)
 }
 
+# @desc Replaces only the first occurrence of substring `old_s` in string `s` with `new_s`. Formula: replace_first(s, old_s, new_s)
+# @param s: str — Input source string
+# @param old_s: str — Substring to find
+# @param new_s: str — Replacement string
+# @return str — String with the first match of `old_s` replaced
 replace_first(s:str, old_s:str, new_s:str) -> str = {
     idx := index_of(s, old_s, 0)
     if (idx < 0) { return s }
@@ -201,43 +306,128 @@ replace_first(s:str, old_s:str, new_s:str) -> str = {
     pre + new_s + suf
 }
 
+# @desc Counts the number of non-overlapping occurrences of substring `sub` inside `s`. Formula: str_count(s, sub)
+# @param s: str — Input string
+# @param sub: str — Non-empty substring to count
+# @return int — Number of occurrences of `sub` in `s`
 str_count(s:str, sub:str) = {
     if (len(sub) == 0) { return 0 }
     parts := split(s, sub)
     parts.len() - 1
 }
 
+# @desc Splits multi-line text `s` on newline (`\n`) into a vector of line strings. Formula: lines(s) = split(s, "\n")
+# @param s: str — Multi-line input text
+# @return vec<str> — Vector of individual lines
 lines(s:str)                        -> vec<str> = split(s, "
 ")
+# @desc Splits string `s` on whitespace into a vector of non-empty word tokens. Formula: words(s) = @regex_find_all(s, "\\S+")
+# @param s: str — Input text string
+# @return vec<str> — Vector of whitespace-separated words
 words(s:str)                        -> vec<str> = @regex_find_all(s, "\S+")
 
 # 4. Regular Expression Matching, Search, Extraction, Replacement & Splitting
+# @desc Returns 1 (true) if regular expression pattern `pat` matches string `s`, or 0 otherwise. Formula: regex_match(s, pat) = @regex_match(s, pat)
+# @param s: str — Input string to test
+# @param pat: str — Regular expression pattern
+# @return bool — 1 if `pat` matches `s`, else 0
 regex_match(s:str, pat:str)                  = @regex_match(s, pat)
+# @desc Returns the first substring in `s` matching regular expression `pat`, or `""` if no match exists. Formula: regex_find(s, pat) = @regex_find(s, pat)
+# @param s: str — Input string to search
+# @param pat: str — Regular expression pattern
+# @return str — First matching substring, or `""`
 regex_find(s:str, pat:str)            -> str = @regex_find(s, pat)
+# @desc Returns a vector of all non-overlapping substrings in `s` matching regular expression `pat`. Formula: regex_find_all(s, pat) = @regex_find_all(s, pat)
+# @param s: str — Input string to search
+# @param pat: str — Regular expression pattern
+# @return vec<str> — Vector of all matching substrings
 regex_find_all(s:str, pat:str)        -> vec<str> = @regex_find_all(s, pat)
+# @desc Replaces matches of regular expression `pat` in string `s` with replacement `rep`. Formula: regex_replace(s, pat, rep) = @regex_replace(s, pat, rep)
+# @param s: str — Input string
+# @param pat: str — Regular expression pattern
+# @param rep: str — Replacement string
+# @return str — String with regex matches replaced
 regex_replace(s:str, pat:str, rep:str)-> str = @regex_replace(s, pat, rep)
+# @desc Splits string `s` around matches of regular expression `pat`. Formula: regex_split(s, pat) = @regex_split(s, pat)
+# @param s: str — Input string
+# @param pat: str — Delimiter regular expression pattern
+# @return vec<str> — Vector of split substrings
 regex_split(s:str, pat:str)           -> vec<str> = @regex_split(s, pat)
 
 # 5. Sandboxed File I/O, RFC 8259 JSON Parsing/Serialization & CSV Utilities
+# @desc Reads the full UTF-8 text contents of a sandboxed file inside the active project directory. Formula: read_file(path) = @file_read(path)
+# @param path: str — Relative filename inside the active project folder (e.g. `"sensor_data.csv"`)
+# @return str — UTF-8 text contents of the file
 read_file(path:str)                 -> str = @file_read(path)
+# @desc Writes UTF-8 text content to a sandboxed file inside the active project directory. Formula: write_file(path, content) = @file_write(path, content)
+# @param path: str — Relative filename inside the active project folder
+# @param content: str | any — Content to write to disk
+# @return real — 1.0 when the write succeeds
 write_file(path:str, content:T)            = @file_write(path, content)
+# @desc Appends UTF-8 text content to the end of a sandboxed file in the active project directory. Formula: append_file(path, content) = @file_append(path, content)
+# @param path: str — Relative filename inside the active project folder
+# @param content: str | any — Content to append
+# @return real — 1.0 when the append succeeds
 append_file(path:str, content:T)           = @file_append(path, content)
+# @desc Returns 1 (true) if `path` exists inside the active project sandbox directory, or 0 otherwise. Formula: file_exists(path) = @file_exists(path)
+# @param path: str — Relative filename inside the active project folder
+# @return bool — 1 if the file exists, else 0
 file_exists(path:str)                      = @file_exists(path)
+# @desc Reads a text file from the active project directory and splits it into a vector of lines. Formula: read_lines(path) = lines(@file_read(path))
+# @param path: str — Relative filename inside the active project folder
+# @return vec<str> — Vector of lines from the file
 read_lines(path:str)                -> vec<str> = lines(@file_read(path))
+# @desc Joins a vector of strings with newlines and writes them to `path` in the active project directory. Formula: write_lines(path, v)
+# @param path: str — Relative destination filename
+# @param v: vec — Vector of line strings to write
+# @return real — 1.0 when the file write succeeds
 write_lines(path:str, v:vec)               = @file_write(path, str_join(v, "\n") + "\n")
 
+# @desc Parses an RFC 8259 JSON string into native MEP `$map` objects, `$vec` arrays, strings, or numbers. Formula: json_parse(s) = @json_parse(s)
+# @param s: str — Valid RFC 8259 JSON text
+# @return map | vec | str | real — Parsed native MEP value
 json_parse(s:str)                   -> T   = @json_parse(s)
+# @desc Serializes any native MEP value (`$map`, `$vec`, struct, string, or number) into a compact RFC 8259 JSON string. Formula: json_stringify(v) = @json_stringify(v, 0)
+# @param v: any — Value to serialize to JSON
+# @return str — Compact RFC 8259 JSON string
 json_stringify(v:T)                 -> str = @json_stringify(v, 0)
+# @desc Serializes any native MEP value into a compact RFC 8259 JSON string. Formula: to_json(v) = @json_stringify(v, 0)
+# @param v: any — Value to serialize to JSON
+# @return str — RFC 8259 JSON string
 to_json(v:T)                        -> str = @json_stringify(v, 0)
+# @desc Serializes any native MEP value into an indented, human-readable RFC 8259 JSON string. Formula: json_pretty(v, indent = 2) = @json_stringify(v, indent)
+# @param v: any — Value to serialize to JSON
+# @param indent: int — Spaces per indentation level (default 2)
+# @return str — Pretty-printed RFC 8259 JSON string
 json_pretty(v:T, indent = 2)        -> str = @json_stringify(v, indent)
+# @desc Reads a JSON file from the active project sandbox directory and parses it into a `$map` or `$vec`. Formula: read_json(path) = @json_parse(@file_read(path))
+# @param path: str — Relative JSON filename inside the active project folder (e.g. `"config.json"`)
+# @return map | vec — Parsed JSON object or array
 read_json(path:str)                 -> T   = @json_parse(@file_read(path))
+# @desc Serializes value `v` as formatted JSON and writes it to `path` in the active project sandbox directory. Formula: write_json(path, v, indent = 2)
+# @param path: str — Relative destination filename
+# @param v: any — Value to serialize as JSON
+# @param indent: int — Indentation spaces (default 2)
+# @return real — 1.0 when the JSON file is written
 write_json(path:str, v:T, indent = 2)      = @file_write(path, @json_stringify(v, indent))
 
+# @desc Splits a single CSV line by delimiter `sep` (default `","`) and trims whitespace around each cell. Formula: csv_parse_row(line, sep = ",")
+# @param line: str — Single line of CSV text
+# @param sep: str — Column delimiter string (default `","`)
+# @return vec<str> — Vector of trimmed cell strings
 csv_parse_row(line:str, sep:str = ",") -> vec<str> = [trim(cell) for cell in split(line, sep)]
 
+# @desc Parses multi-line CSV text into a vector of row vectors (`vec<vec<str>>`). Formula: csv_parse(text, sep = ",")
+# @param text: str — Full multi-line CSV text
+# @param sep: str — Column delimiter string (default `","`)
+# @return vec — Vector of parsed row vectors
 csv_parse(text:str, sep:str = ",") -> vec =
     [csv_parse_row(ln, sep) for ln in lines(trim(text)) if len(trim(ln)) > 0]
 
+# @desc Parses multi-line CSV text using the first row as column headers and returns a vector of `$map` dictionaries (`vec<map>`). Formula: csv_to_maps(text, sep = ",")
+# @param text: str — Multi-line CSV text with a header row on line 1
+# @param sep: str — Column delimiter string (default `","`)
+# @return vec<map> — Vector of row dictionaries keyed by column header names
 csv_to_maps(text:str, sep:str = ",") -> vec<map> = {
     rows := csv_parse(text, sep)
     n    := rows.len()
@@ -257,9 +447,18 @@ csv_to_maps(text:str, sep:str = ",") -> vec<map> = {
     out
 }
 
+# @desc Serializes a vector of row vectors (`rows`) into newline-delimited CSV text using column separator `sep`. Formula: csv_stringify(rows, sep = ",")
+# @param rows: vec — Vector of row vectors
+# @param sep: str — Column delimiter string (default `","`)
+# @return str — Formatted CSV text
 csv_stringify(rows:vec, sep:str = ",") -> str =
     str_join([str_join(r, sep) for r in rows], "\n")
 
-# Overloaded `vec_sum` and `sum` on `vec<str>` (concatenates all strings)
+# @desc Computes the sum of all elements in a vector (supporting numeric vectors, string vectors, `vec<vec2>`, and `vec<vec3>`). Formula: vec_sum(v)
+# @param v: vec — Input vector
+# @return real | str | vec2 | vec3 — Sum of all elements in `v`
 vec_sum(v:vec<str>) -> str = str_join(v, "")
+# @desc Computes the sum of all elements in a vector (or concatenates a vector of strings, or sums 2D/3D point vectors). Formula: sum(v)
+# @param v: vec — Input vector of numbers, strings, or 2D/3D points
+# @return real | str | vec2 | vec3 — Total sum of all elements in `v`
 sum(v:vec<str>)     -> str = str_join(v, "")
