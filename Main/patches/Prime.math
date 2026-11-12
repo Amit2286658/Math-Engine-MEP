@@ -1,20 +1,238 @@
+# ==============================================================================
+# patches/Prime.math — Prime & Number-Theory Toolkit (`[prime]`)
+# ==============================================================================
+# Builds on the stdlib `[arith]` module (`is_prime`, `gcd`, `lcm`, `mod_pow`).
+# All functions take integer-valued reals; results are exact for n < 2^53
+# (double mantissa). Primality is 6k±1 trial division via stdlib `is_prime`.
+# ==============================================================================
 [prime]
 <[arith]
 
-# @desc Counts how many elements in a numeric vector x have a non-integer square root. Formula: prime_count(x: vec)
-# @param x: vec — Input vector of numbers (such as `1...100` or `[2, 3, 4, 5]`)
-# @return real — Count of elements in vector x whose square root is non-integer
+# 1. Prime Counting (π(n)) — corrected semantics: counts PRIMES
+#    (the previous implementation counted non-perfect-squares instead).
+
+# @desc Counts how many elements of a numeric vector are prime. Formula: prime_count(x) = #{i in x : is_prime(i)}
+# @param x: vec — Input vector of integers (such as `1...100` or `[2, 3, 4, 5]`)
+# @return real — Number of prime elements in x
 prime_count(x:vec) -> real = {
-    y := 0;
-    (i in x){
-        if ((√i) % 1 != 0){
-            y = y++
-        }
+    c := 0
+    (i in x) {
+        if (is_prime(i)) { c = c + 1 }
     }
-    y
+    c
 }
 
-# @desc Counts how many integers from 1 up to n have a non-integer square root. Formula: prime_count(n: real) = prime_count(1...n)
-# @param n: real — Upper integer bound n ≥ 1
-# @return real — Count of integers in 1...n whose square root is non-integer
-prime_count(n:real) -> real = prime_count(1...n)
+# @desc Counts primes ≤ n — the prime-counting function π(n). Formula: prime_count(n) = #{p : 2 ≤ p ≤ n, is_prime(p)}
+# @param n: real — Upper bound n ≥ 2
+# @return real — Number of primes in [2, n] (0 for n < 2)
+prime_count(n:real) -> real = {
+    c := 0
+    d := 2
+    (d <= n) ?? {
+        if (is_prime(d)) { c = c + 1 }
+        d = d + 1
+    }
+    c
+}
+
+# 2. Prime Generation
+
+# @desc Vector of all primes in the inclusive interval [a, b], ascending. Formula: primes_in(a, b) = [p : a ≤ p ≤ b, is_prime(p)]
+# @param a: real — Lower bound of the search interval
+# @param b: real — Upper bound of the search interval (b ≥ a)
+# @return vec — Primes p with a ≤ p ≤ b in ascending order (empty when b < 2 or b < a)
+primes_in(a, b) -> vec = {
+    out := vec<real>()
+    p   := a
+    (p <= b) ?? {
+        if (is_prime(p)) { p into out }
+        p = p + 1
+    }
+    out
+}
+
+# @desc Vector of all primes ≤ n. Formula: primes_upto(n) = primes_in(2, n)
+# @param n: real — Upper bound n ≥ 2
+# @return vec — All primes p ≤ n in ascending order
+primes_upto(n) -> vec = primes_in(2, n)
+
+# @desc The k-th prime number, 1-indexed (nth_prime(1) = 2, nth_prime(10) = 29, nth_prime(100) = 541).
+# @param k: real — 1-based ordinal k ≥ 1
+# @return real — The k-th prime
+nth_prime(k) -> real = {
+    c := 0
+    d := 1
+    (c < k) ?? {
+        d = d + 1
+        if (is_prime(d)) { c = c + 1 }
+    }
+    d
+}
+
+# 3. Factorization
+
+# @desc Prime factorization of n with multiplicity, ascending. Formula: factorize(360) = [2, 2, 2, 3, 3, 5]
+# @param n: real — Integer n ≥ 2
+# @return vec — Prime factors with multiplicity (empty vec for n < 2)
+factorize(n) -> vec = {
+    f   := vec<real>()
+    rem := n
+    d   := 2
+    (d * d <= rem) ?? {
+        (rem % d == 0) ?? {
+            d into f
+            rem = rem / d
+        }
+        d = d + 1
+    }
+    if (rem > 1) { rem into f }
+    f
+}
+
+# @desc Distinct prime factors of n, ascending. Formula: prime_factors(360) = [2, 3, 5]
+# @param n: real — Integer n ≥ 2
+# @return vec — Distinct prime factors in ascending order (empty vec for n < 2)
+prime_factors(n) -> vec = {
+    out := vec<real>()
+    rem := n
+    d   := 2
+    (d * d <= rem) ?? {
+        if (rem % d == 0) {
+            d into out
+            (rem % d == 0) ?? { rem = rem / d }
+        }
+        d = d + 1
+    }
+    if (rem > 1) { rem into out }
+    out
+}
+
+# 4. Divisor Functions
+
+# @desc Number of positive divisors τ(n) = ∏(eᵢ + 1) over the prime factorization n = ∏ pᵢ^eᵢ. Formula: divisor_count(360) = (3+1)(2+1)(1+1) = 24
+# @param n: real — Integer n ≥ 1
+# @return real — Count of positive divisors of n
+divisor_count(n) -> real = {
+    cnt := 1
+    rem := n
+    d   := 2
+    (d * d <= rem) ?? {
+        if (rem % d == 0) {
+            e := 0
+            (rem % d == 0) ?? {
+                rem = rem / d
+                e   = e + 1
+            }
+            cnt = cnt * (e + 1)
+        }
+        d = d + 1
+    }
+    if (rem > 1) { cnt = cnt * 2 }
+    cnt
+}
+
+# @desc Sum of positive divisors σ(n) = ∏ (pᵢ^(eᵢ+1) − 1) / (pᵢ − 1). Formula: divisor_sum(360) = 1170
+# @param n: real — Integer n ≥ 1
+# @return real — Sum of all positive divisors of n (1 for n = 1)
+divisor_sum(n) -> real = {
+    s   := 1
+    rem := n
+    d   := 2
+    (d * d <= rem) ?? {
+        if (rem % d == 0) {
+            pe := d
+            (rem % d == 0) ?? {
+                rem = rem / d
+                pe  = pe * d
+            }
+            s = s * ((pe - 1) / (d - 1))
+        }
+        d = d + 1
+    }
+    if (rem > 1) { s = s * (1 + rem) }
+    s
+}
+
+# @desc Tests whether n is a perfect number — equal to the sum of its proper divisors (σ(n) = 2n; e.g. 6, 28, 496, 8128).
+# @param n: real — Integer n ≥ 2
+# @return real — 1 if n is perfect, else 0
+is_perfect(n) -> real = if (n >= 2) { ((divisor_sum(n) == 2 * n) ? 1 : 0) } else { 0 }
+
+# 5. Euler Totient & Möbius
+
+# @desc Euler's totient φ(n) — count of integers in [1, n] coprime to n, via φ(n) = n · ∏ (1 − 1/pᵢ). Formula: totient(12) = 4
+# @param n: real — Integer n ≥ 1
+# @return real — φ(n) (1 for n = 1)
+totient(n) -> real = {
+    res := n
+    rem := n
+    d   := 2
+    (d * d <= rem) ?? {
+        if (rem % d == 0) {
+            res = res - res / d
+            (rem % d == 0) ?? { rem = rem / d }
+        }
+        d = d + 1
+    }
+    if (rem > 1) { res = res - res / rem }
+    res
+}
+
+# @desc Möbius function μ(n): 1 for n = 1, 0 if n has a squared prime factor, else (−1)^k with k distinct prime factors. Formula: mobius(30) = −1, mobius(12) = 0
+# @param n: real — Integer n ≥ 1
+# @return real — The Möbius value μ(n) ∈ {−1, 0, 1}
+mobius(n) -> real = {
+    fs   := factorize(n)
+    k    := 0
+    sq   := 0
+    prev := 0
+    (p in fs) {
+        if (p == prev) { sq = 1 } else { k = k + 1 }
+        prev = p
+    }
+    if (sq == 1) { 0 } else { ((k % 2 == 0) ? 1 : -1) }
+}
+
+# 6. Prime Pairs & Curiosities
+
+# @desc Counts twin-prime pairs (p, p+2) with p + 2 ≤ n (twin_prime_count(100) = 8). Formula: π₂(n) = #{p : p + 2 ≤ n, is_prime(p) & is_prime(p + 2)}
+# @param n: real — Upper bound n ≥ 5
+# @return real — Number of twin-prime pairs fully inside [2, n]
+twin_prime_count(n) -> real = {
+    c := 0
+    p := 2
+    (p + 2 <= n) ?? {
+        if (is_prime(p)) {
+            if (is_prime(p + 2)) { c = c + 1 }
+        }
+        p = p + 1
+    }
+    c
+}
+
+# @desc Goldbach decomposition n = a + b into the prime pair with the smallest a (every even n ≥ 4, Goldbach's conjecture). Formula: goldbach(28) = [5, 23]
+# @param n: real — Integer n (even n ≥ 4 for a guaranteed pair)
+# @return vec — `[a, b]` with a ≤ b both prime and a + b = n (empty vec for n < 4, odd n, or no pair)
+goldbach(n) -> vec = {
+    out   := vec<real>()
+    if ((n >= 4) & (n % 2 == 0)) {
+        a     := 2
+        found := 0
+        ((found == 0) & (a <= n / 2)) ?? {
+            if (is_prime(a)) {
+                if (is_prime(n - a)) {
+                    a into out
+                    (n - a) into out
+                    found = 1
+                }
+            }
+            a = a + 1
+        }
+    }
+    out
+}
+
+# @desc Tests whether 2^p − 1 is a Mersenne prime (requires prime exponent p; exact for p ≤ 52). Formula: mersenne_prime(7) = 1 (127 is prime)
+# @param p: real — Exponent p ≥ 2
+# @return real — 1 if p is prime and 2^p − 1 is prime, else 0
+mersenne_prime(p) -> real = if (is_prime(p)) { is_prime(2 ^ p - 1) } else { 0 }
