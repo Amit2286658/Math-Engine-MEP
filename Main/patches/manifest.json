@@ -90,6 +90,18 @@
       ],
       "sha256": "70bb648d13544fefd10f4a909cf45fff1ef93470368e17b6a845eab36195db13",
       "size": 46333
+    },
+    {
+      "file": "number_names.math",
+      "modules": [
+        "numname"
+      ],
+      "deps": [
+        "arith",
+        "string"
+      ],
+      "sha256": "4f04f048f7d8efac9a943a1621920d73311c9b290300b1809b621a9813bb05c4",
+      "size": 10879
     }
   ]
 }

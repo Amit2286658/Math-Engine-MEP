@@ -1,0 +1,230 @@
+# ==============================================================================
+# patches/number_names.math — Number-to-Words / Number-Name System (`[numname]`)
+# ==============================================================================
+# Converts integers to their spoken/written names in the most common systems:
+#   • Western short scale  (thousand, million, billion, trillion)
+#   • Indian naming         (thousand, lakh, crore, arab, kharab, ...)
+#   • Roman numerals        (I V X L C D M, up to 3999)
+#   • Ordinals              (first, second, twenty-third, ...)
+#   • Reverse parse         (words -> number, Western)
+# All functions take integer-valued reals; results are exact for |n| < 2^53.
+# ==============================================================================
+[numname]
+<[arith]
+<[string]
+
+# 1. Word tables (helpers)
+
+nw_one(d:real) -> str = (d == 1) ? "one" : (d == 2) ? "two" : (d == 3) ? "three" : (d == 4) ? "four" : (d == 5) ? "five" : (d == 6) ? "six" : (d == 7) ? "seven" : (d == 8) ? "eight" : (d == 9) ? "nine" : ""
+
+nw_teen(d:real) -> str = (d == 0) ? "ten" : (d == 1) ? "eleven" : (d == 2) ? "twelve" : (d == 3) ? "thirteen" : (d == 4) ? "fourteen" : (d == 5) ? "fifteen" : (d == 6) ? "sixteen" : (d == 7) ? "seventeen" : (d == 8) ? "eighteen" : (d == 9) ? "nineteen" : ""
+
+nw_ten(d:real) -> str = (d == 2) ? "twenty" : (d == 3) ? "thirty" : (d == 4) ? "forty" : (d == 5) ? "fifty" : (d == 6) ? "sixty" : (d == 7) ? "seventy" : (d == 8) ? "eighty" : (d == 9) ? "ninety" : ""
+
+nw_value(w:str) -> real = (w == "zero") ? 0 : (w == "one") ? 1 : (w == "two") ? 2 : (w == "three") ? 3 : (w == "four") ? 4 : (w == "five") ? 5 : (w == "six") ? 6 : (w == "seven") ? 7 : (w == "eight") ? 8 : (w == "nine") ? 9 : (w == "ten") ? 10 : (w == "eleven") ? 11 : (w == "twelve") ? 12 : (w == "thirteen") ? 13 : (w == "fourteen") ? 14 : (w == "fifteen") ? 15 : (w == "sixteen") ? 16 : (w == "seventeen") ? 17 : (w == "eighteen") ? 18 : (w == "nineteen") ? 19 : (w == "twenty") ? 20 : (w == "thirty") ? 30 : (w == "forty") ? 40 : (w == "fifty") ? 50 : (w == "sixty") ? 60 : (w == "seventy") ? 70 : (w == "eighty") ? 80 : (w == "ninety") ? 90 : -1
+
+nw_one_ord(d:real) -> str = (d == 1) ? "first" : (d == 2) ? "second" : (d == 3) ? "third" : (d == 4) ? "fourth" : (d == 5) ? "fifth" : (d == 6) ? "sixth" : (d == 7) ? "seventh" : (d == 8) ? "eighth" : (d == 9) ? "ninth" : ""
+
+nw_teen_ord(d:real) -> str = (d == 0) ? "tenth" : (d == 1) ? "eleventh" : (d == 2) ? "twelfth" : (d == 3) ? "thirteenth" : (d == 4) ? "fourteenth" : (d == 5) ? "fifteenth" : (d == 6) ? "sixteenth" : (d == 7) ? "seventeenth" : (d == 8) ? "eighteenth" : (d == 9) ? "nineteenth" : ""
+
+nw_ten_ord(d:real) -> str = (d == 2) ? "twentieth" : (d == 3) ? "thirtieth" : (d == 4) ? "fortieth" : (d == 5) ? "fiftieth" : (d == 6) ? "sixtieth" : (d == 7) ? "seventieth" : (d == 8) ? "eightieth" : (d == 9) ? "ninetieth" : ""
+
+# 2. Chunk helpers
+
+chunk_words(c:real) -> str = {
+    h := floor(c / 100)
+    t := floor((c % 100) / 10)
+    o := c % 10
+    out := ""
+    if (h > 0) { out = out + nw_one(h) + " hundred" }
+    rem2 := c % 100
+    if (rem2 > 0) {
+        if (out != "") { out = out + " " }
+        if (t == 1) {
+            out = out + nw_teen(o)
+        } else {
+            if (t >= 2) {
+                out = out + nw_ten(t)
+                if (o > 0) { out = out + "-" + nw_one(o) }
+            } else {
+                out = out + nw_one(o)
+            }
+        }
+    }
+    out
+}
+
+two_digit_words(c:real) -> str = {
+    t := floor(c / 10)
+    o := c % 10
+    if (t == 0) { return (o > 0) ? nw_one(o) : "" }
+    if (t == 1) { return nw_teen(o) }
+    if (o == 0) { return nw_ten(t) }
+    nw_ten(t) + "-" + nw_one(o)
+}
+
+# 3. Western short scale: number -> words
+
+# @desc Converts an integer to its English name in the Western short scale (thousand, million, billion, trillion). Formula: number_to_words(n)
+# @param n: real — Integer (|n| < 10^15 for full support)
+# @return str — Spoken form, e.g. number_to_words(1234567) = "one million two hundred thirty four thousand five hundred sixty seven"
+number_to_words(n:real) -> str = {
+    if (n == 0) { return "zero" }
+    neg := ""
+    if (n < 0) { neg = "minus "; n = -n }
+    if (n > 999999999999999) { return neg + "out of range" }
+    scales := vec("trillion", "billion", "million", "thousand", "")
+    chunks := vec<real>()
+    rem := n
+    (rem > 0) ?? {
+        (rem % 1000) into chunks
+        rem = floor(rem / 1000)
+    }
+    (len(chunks) < 5) ?? { 0 into chunks }
+    out := ""
+    i := 4
+    (i >= 0) ?? {
+        c := chunks[i]
+        if (c > 0) {
+            w := chunk_words(c)
+            sc := scales[4 - i]
+            if (out != "") { out = out + " " }
+            out = out + w
+            if (sc != "") { out = out + " " + sc }
+        }
+        i = i - 1
+    }
+    neg + out
+}
+
+# 4. Indian naming system: number -> words
+
+# @desc Converts an integer to its Indian-system name (thousand, lakh, crore, arab, kharab, ...). Formula: number_to_words_in(n)
+# @param n: real — Non-negative integer (Indian grouping: first 3 digits, then pairs)
+# @return str — Spoken form, e.g. number_to_words_in(123456789) = "twelve crore thirty four lakh fifty six thousand seven hundred eighty nine"
+number_to_words_in(n:real) -> str = {
+    if (n == 0) { return "zero" }
+    neg := ""
+    if (n < 0) { neg = "minus "; n = -n }
+    if (n > 999999999999999) { return neg + "out of range" }
+    scales := vec("", "thousand", "lakh", "crore", "arab", "kharab", "neel", "padma", "shankh")
+    groups := vec<real>()
+    rem := n
+    if (rem > 0) {
+        (rem % 1000) into groups
+        rem = floor(rem / 1000)
+        (rem > 0) ?? {
+            (rem % 100) into groups
+            rem = floor(rem / 100)
+        }
+    }
+    (len(groups) < 9) ?? { 0 into groups }
+    out := ""
+    i := len(groups) - 1
+    (i >= 0) ?? {
+        g := groups[i]
+        if (g > 0) {
+            w := if (i == 0) { chunk_words(g) } else { two_digit_words(g) }
+            sc := scales[i]
+            if (out != "") { out = out + " " }
+            out = out + w
+            if (sc != "") { out = out + " " + sc }
+        }
+        i = i - 1
+    }
+    neg + out
+}
+
+# 5. Roman numerals
+
+# @desc Converts an integer to Roman numerals (I V X L C D M, subtractive form). Formula: number_to_roman(n)
+# @param n: real — Integer in [1, 3999]
+# @return str — Roman numeral, e.g. number_to_roman(2024) = "MMXXIV" (empty string if out of range)
+number_to_roman(n:real) -> str = {
+    if (n <= 0 || n > 3999 || n != floor(n)) { return "" }
+    vals := vec(1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1)
+    syms := vec("M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I")
+    out := ""
+    i := 0
+    (i < 13) ?? {
+        (n >= vals[i]) ?? {
+            out = out + syms[i]
+            n = n - vals[i]
+        }
+        i = i + 1
+    }
+    out
+}
+
+# 6. Ordinals (full range via suffixing the last word)
+
+ordinalize_word(w:str) -> str = (w == "one") ? "first" : (w == "two") ? "second" : (w == "three") ? "third" : (w == "four") ? "fourth" : (w == "five") ? "fifth" : (w == "six") ? "sixth" : (w == "seven") ? "seventh" : (w == "eight") ? "eighth" : (w == "nine") ? "ninth" : (w == "ten") ? "tenth" : (w == "eleven") ? "eleventh" : (w == "twelve") ? "twelfth" : (w == "thirteen") ? "thirteenth" : (w == "fourteen") ? "fourteenth" : (w == "fifteen") ? "fifteenth" : (w == "sixteen") ? "sixteenth" : (w == "seventeen") ? "seventeenth" : (w == "eighteen") ? "eighteenth" : (w == "nineteen") ? "nineteenth" : (w == "twenty") ? "twentieth" : (w == "thirty") ? "thirtieth" : (w == "forty") ? "fortieth" : (w == "fifty") ? "fiftieth" : (w == "sixty") ? "sixtieth" : (w == "seventy") ? "seventieth" : (w == "eighty") ? "eightieth" : (w == "ninety") ? "ninetieth" : (w + "th")
+
+# @desc Converts an integer to its ordinal word (first, second, twenty-first, one hundred first, ...). Formula: number_to_ordinal(n)
+# @param n: real — Positive integer
+# @return str — Ordinal name, e.g. number_to_ordinal(21) = "twenty-first", number_to_ordinal(101) = "one hundred first"
+number_to_ordinal(n:real) -> str = {
+    if (n < 1) { return "" }
+    phrase := number_to_words(n)
+    # find last space
+    last_space := -1
+    i := len(phrase) - 1
+    (i >= 0) ?? {
+        c := at(phrase, i)
+        if (c == " ") { last_space = i; i = -1 } else { i = i - 1 }
+    }
+    prefix := if (last_space < 0) { "" } else { phrase[0..<(last_space + 1)] }
+    last_word := if (last_space < 0) { phrase } else { phrase[(last_space + 1)..<len(phrase)] }
+    # ordinalize last word, handling hyphenated compounds
+    hyphen_pos := -1
+    j := len(last_word) - 1
+    (j >= 0) ?? {
+        c := at(last_word, j)
+        if (c == "-") { hyphen_pos = j; j = -1 } else { j = j - 1 }
+    }
+    new_last := if (hyphen_pos < 0) { ordinalize_word(last_word) } else { last_word[0..<(hyphen_pos + 1)] + ordinalize_word(last_word[(hyphen_pos + 1)..<len(last_word)]) }
+    prefix + new_last
+}
+
+# 7. Reverse parse: words -> number (Western short scale)
+
+# @desc Parses an English number phrase back into a number (Western short scale). Formula: words_to_number(s)
+# @param s: str — Phrase like "one million two hundred thirty four thousand five hundred sixty seven"
+# @return real — Numeric value (0 on unparseable input)
+words_to_number(s:str) -> real = {
+    s = trim(lower(s))
+    s = replace(s, " and ", " ")
+    toks := split(s, " ")
+    total := 0.0
+    current := 0.0
+    (tok in toks) {
+        if (tok != "") {
+            parts := split(tok, "-")
+            (p in parts) {
+                if (p == "hundred") { current = current * 100 }
+                or (p == "thousand") { total = total + current * 1000; current = 0 }
+                or (p == "million") { total = total + current * 1000000; current = 0 }
+                or (p == "billion") { total = total + current * 1000000000; current = 0 }
+                or (p == "trillion") { total = total + current * 1000000000000; current = 0 }
+                else {
+                    v := nw_value(p)
+                    if (v >= 0) { current = current + v }
+                }
+            }
+        }
+    }
+    total + current
+}
+
+# 8. Convenience aliases
+
+# @desc Alias for number_to_words. Formula: num2words(n) = number_to_words(n)
+num2words(n:real) -> str = number_to_words(n)
+# @desc Alias for number_to_words_in. Formula: num2words_in(n) = number_to_words_in(n)
+num2words_in(n:real) -> str = number_to_words_in(n)
+# @desc Alias for number_to_roman. Formula: num2roman(n) = number_to_roman(n)
+num2roman(n:real) -> str = number_to_roman(n)
+# @desc Alias for number_to_ordinal. Formula: num2ordinal(n) = number_to_ordinal(n)
+num2ordinal(n:real) -> str = number_to_ordinal(n)
+# @desc Alias for words_to_number. Formula: words2num(s) = words_to_number(s)
+words2num(s:str) -> real = words_to_number(s)
