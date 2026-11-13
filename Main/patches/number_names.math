@@ -15,19 +15,115 @@
 
 # 1. Word tables (helpers)
 
-nw_one(d:real) -> str = (d == 1) ? "one" : (d == 2) ? "two" : (d == 3) ? "three" : (d == 4) ? "four" : (d == 5) ? "five" : (d == 6) ? "six" : (d == 7) ? "seven" : (d == 8) ? "eight" : (d == 9) ? "nine" : ""
+nw_one(d:real) -> str = switch (d) {
+    case 1: "one"
+    case 2: "two"
+    case 3: "three"
+    case 4: "four"
+    case 5: "five"
+    case 6: "six"
+    case 7: "seven"
+    case 8: "eight"
+    case 9: "nine"
+    else: ""
+}
 
-nw_teen(d:real) -> str = (d == 0) ? "ten" : (d == 1) ? "eleven" : (d == 2) ? "twelve" : (d == 3) ? "thirteen" : (d == 4) ? "fourteen" : (d == 5) ? "fifteen" : (d == 6) ? "sixteen" : (d == 7) ? "seventeen" : (d == 8) ? "eighteen" : (d == 9) ? "nineteen" : ""
+nw_teen(d:real) -> str = switch (d) {
+    case 0: "ten"
+    case 1: "eleven"
+    case 2: "twelve"
+    case 3: "thirteen"
+    case 4: "fourteen"
+    case 5: "fifteen"
+    case 6: "sixteen"
+    case 7: "seventeen"
+    case 8: "eighteen"
+    case 9: "nineteen"
+    else: ""
+}
 
-nw_ten(d:real) -> str = (d == 2) ? "twenty" : (d == 3) ? "thirty" : (d == 4) ? "forty" : (d == 5) ? "fifty" : (d == 6) ? "sixty" : (d == 7) ? "seventy" : (d == 8) ? "eighty" : (d == 9) ? "ninety" : ""
+nw_ten(d:real) -> str = switch (d) {
+    case 2: "twenty"
+    case 3: "thirty"
+    case 4: "forty"
+    case 5: "fifty"
+    case 6: "sixty"
+    case 7: "seventy"
+    case 8: "eighty"
+    case 9: "ninety"
+    else: ""
+}
 
-nw_value(w:str) -> real = (w == "zero") ? 0 : (w == "one") ? 1 : (w == "two") ? 2 : (w == "three") ? 3 : (w == "four") ? 4 : (w == "five") ? 5 : (w == "six") ? 6 : (w == "seven") ? 7 : (w == "eight") ? 8 : (w == "nine") ? 9 : (w == "ten") ? 10 : (w == "eleven") ? 11 : (w == "twelve") ? 12 : (w == "thirteen") ? 13 : (w == "fourteen") ? 14 : (w == "fifteen") ? 15 : (w == "sixteen") ? 16 : (w == "seventeen") ? 17 : (w == "eighteen") ? 18 : (w == "nineteen") ? 19 : (w == "twenty") ? 20 : (w == "thirty") ? 30 : (w == "forty") ? 40 : (w == "fifty") ? 50 : (w == "sixty") ? 60 : (w == "seventy") ? 70 : (w == "eighty") ? 80 : (w == "ninety") ? 90 : -1
+nw_value(w:str) -> real = switch (w) {
+    case "zero": 0
+    case "one": 1
+    case "two": 2
+    case "three": 3
+    case "four": 4
+    case "five": 5
+    case "six": 6
+    case "seven": 7
+    case "eight": 8
+    case "nine": 9
+    case "ten": 10
+    case "eleven": 11
+    case "twelve": 12
+    case "thirteen": 13
+    case "fourteen": 14
+    case "fifteen": 15
+    case "sixteen": 16
+    case "seventeen": 17
+    case "eighteen": 18
+    case "nineteen": 19
+    case "twenty": 20
+    case "thirty": 30
+    case "forty": 40
+    case "fifty": 50
+    case "sixty": 60
+    case "seventy": 70
+    case "eighty": 80
+    case "ninety": 90
+    else: -1
+}
 
-nw_one_ord(d:real) -> str = (d == 1) ? "first" : (d == 2) ? "second" : (d == 3) ? "third" : (d == 4) ? "fourth" : (d == 5) ? "fifth" : (d == 6) ? "sixth" : (d == 7) ? "seventh" : (d == 8) ? "eighth" : (d == 9) ? "ninth" : ""
+nw_one_ord(d:real) -> str = switch (d) {
+    case 1: "first"
+    case 2: "second"
+    case 3: "third"
+    case 4: "fourth"
+    case 5: "fifth"
+    case 6: "sixth"
+    case 7: "seventh"
+    case 8: "eighth"
+    case 9: "ninth"
+    else: ""
+}
 
-nw_teen_ord(d:real) -> str = (d == 0) ? "tenth" : (d == 1) ? "eleventh" : (d == 2) ? "twelfth" : (d == 3) ? "thirteenth" : (d == 4) ? "fourteenth" : (d == 5) ? "fifteenth" : (d == 6) ? "sixteenth" : (d == 7) ? "seventeenth" : (d == 8) ? "eighteenth" : (d == 9) ? "nineteenth" : ""
+nw_teen_ord(d:real) -> str = switch (d) {
+    case 0: "tenth"
+    case 1: "eleventh"
+    case 2: "twelfth"
+    case 3: "thirteenth"
+    case 4: "fourteenth"
+    case 5: "fifteenth"
+    case 6: "sixteenth"
+    case 7: "seventeenth"
+    case 8: "eighteenth"
+    case 9: "nineteenth"
+    else: ""
+}
 
-nw_ten_ord(d:real) -> str = (d == 2) ? "twentieth" : (d == 3) ? "thirtieth" : (d == 4) ? "fortieth" : (d == 5) ? "fiftieth" : (d == 6) ? "sixtieth" : (d == 7) ? "seventieth" : (d == 8) ? "eightieth" : (d == 9) ? "ninetieth" : ""
+nw_ten_ord(d:real) -> str = switch (d) {
+    case 2: "twentieth"
+    case 3: "thirtieth"
+    case 4: "fortieth"
+    case 5: "fiftieth"
+    case 6: "sixtieth"
+    case 7: "seventieth"
+    case 8: "eightieth"
+    case 9: "ninetieth"
+    else: ""
+}
 
 # 2. Chunk helpers
 
@@ -158,7 +254,36 @@ number_to_roman(n:real) -> str = {
 
 # 6. Ordinals (full range via suffixing the last word)
 
-ordinalize_word(w:str) -> str = (w == "one") ? "first" : (w == "two") ? "second" : (w == "three") ? "third" : (w == "four") ? "fourth" : (w == "five") ? "fifth" : (w == "six") ? "sixth" : (w == "seven") ? "seventh" : (w == "eight") ? "eighth" : (w == "nine") ? "ninth" : (w == "ten") ? "tenth" : (w == "eleven") ? "eleventh" : (w == "twelve") ? "twelfth" : (w == "thirteen") ? "thirteenth" : (w == "fourteen") ? "fourteenth" : (w == "fifteen") ? "fifteenth" : (w == "sixteen") ? "sixteenth" : (w == "seventeen") ? "seventeenth" : (w == "eighteen") ? "eighteenth" : (w == "nineteen") ? "nineteenth" : (w == "twenty") ? "twentieth" : (w == "thirty") ? "thirtieth" : (w == "forty") ? "fortieth" : (w == "fifty") ? "fiftieth" : (w == "sixty") ? "sixtieth" : (w == "seventy") ? "seventieth" : (w == "eighty") ? "eightieth" : (w == "ninety") ? "ninetieth" : (w + "th")
+ordinalize_word(w:str) -> str = switch (w) {
+    case "one": "first"
+    case "two": "second"
+    case "three": "third"
+    case "four": "fourth"
+    case "five": "fifth"
+    case "six": "sixth"
+    case "seven": "seventh"
+    case "eight": "eighth"
+    case "nine": "ninth"
+    case "ten": "tenth"
+    case "eleven": "eleventh"
+    case "twelve": "twelfth"
+    case "thirteen": "thirteenth"
+    case "fourteen": "fourteenth"
+    case "fifteen": "fifteenth"
+    case "sixteen": "sixteenth"
+    case "seventeen": "seventeenth"
+    case "eighteen": "eighteenth"
+    case "nineteen": "nineteenth"
+    case "twenty": "twentieth"
+    case "thirty": "thirtieth"
+    case "forty": "fortieth"
+    case "fifty": "fiftieth"
+    case "sixty": "sixtieth"
+    case "seventy": "seventieth"
+    case "eighty": "eightieth"
+    case "ninety": "ninetieth"
+    else: (w + "th")
+}
 
 # @desc Converts an integer to its ordinal word (first, second, twenty-first, one hundred first, ...). Formula: number_to_ordinal(n)
 # @param n: real — Positive integer
