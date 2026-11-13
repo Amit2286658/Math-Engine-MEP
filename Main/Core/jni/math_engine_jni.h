@@ -58,6 +58,7 @@ typedef JniMockEnv *JNIEnv;
 /* Initialize a portable mock JNIEnv for desktop unit testing of all JNI entry points */
 JNIEnv *mep_jni_mock_env(void);
 void    mep_jni_mock_free_byte_array(jbyteArray arr);
+void    mep_jni_mock_free_double_array(jdoubleArray arr);
 #endif
 
 #ifdef __cplusplus

@@ -80,6 +80,13 @@ void mep_jni_mock_free_byte_array(jbyteArray arr) {
         free(arr);
     }
 }
+
+void mep_jni_mock_free_double_array(jdoubleArray arr) {
+    if (arr) {
+        free(arr->data);
+        free(arr);
+    }
+}
 #endif
 
 /* Trim any incomplete trailing multi-byte UTF-8 sequence and replace bare NUL/0x80+
